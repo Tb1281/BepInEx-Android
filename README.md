@@ -91,15 +91,12 @@ export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370
 ./scripts/fetch_dotnet_runtime.sh /tmp/runtime
 
 # 3. Managed framework (clone pin, replay patches, compile, package).
-# Run from the repository root. bepinex_paths.sh resolves paths through
-# BASH_SOURCE, so interactive non-bash shells must export BEPINEX_SRC
-# instead of sourcing it (CI uses bash and sources the script directly).
+# Run from the repository root. The restore/build step is bash-only
+# (scripts/bepinex_paths.sh resolves paths through BASH_SOURCE); raw
+# `dotnet` commands need BEPINEX_SRC exported first on other shells.
 ./scripts/apply_patches.sh
 ./scripts/build_packages_parallel.sh
-export BEPINEX_SRC="$PWD/build/bepinex"  # default from scripts/bepinex_paths.sh
-dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/"
-dotnet build "$BEPINEX_SRC/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj" \
-  -c Release --no-restore -p:GeneratePackageOnBuild=false -p:SolutionDir="$BEPINEX_SRC/"
+./scripts/restore_and_build.sh
 ./scripts/package_bepinex_android.sh
 ./scripts/stage_launcher_inputs.sh out/runtime out/BepInEx.Android.zip
 

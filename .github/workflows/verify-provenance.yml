@@ -19,6 +19,7 @@ on:
       - 'scripts/build_native_deps.sh'
       - 'scripts/build_monomod.sh'
       - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/restore_and_build.sh'
       - 'scripts/stage_launcher_inputs.sh'
       - 'launcher/scripts/verify_*.sh'
       - 'launcher/app/src/main/java/net/dot/android/**'
@@ -48,6 +49,7 @@ on:
       - 'scripts/apply_patches.sh'
       - 'scripts/build_monomod.sh'
       - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/restore_and_build.sh'
       - 'scripts/report_patch_conflict.sh'
       - 'provenance/bepinex.env'
       - 'scripts/bepinex_paths.sh'
@@ -60,6 +62,7 @@ on:
       - 'scripts/build_native_deps.sh'
       - 'scripts/build_monomod.sh'
       - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/restore_and_build.sh'
       - 'scripts/stage_launcher_inputs.sh'
       - 'launcher/scripts/verify_*.sh'
       - 'launcher/app/src/main/java/net/dot/android/**'
@@ -85,6 +88,7 @@ on:
       - 'scripts/apply_patches.sh'
       - 'scripts/build_monomod.sh'
       - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/restore_and_build.sh'
       - 'scripts/report_patch_conflict.sh'
       - 'provenance/bepinex.env'
       - 'scripts/bepinex_paths.sh'
@@ -157,6 +161,7 @@ jobs:
           ./scripts/build_native_deps.sh
           ./scripts/apply_patches.sh
           ./scripts/build_packages_parallel.sh
+          ./scripts/restore_and_build.sh
           ./scripts/package_bepinex_android.sh
           ./scripts/stage_launcher_inputs.sh out/runtime out/BepInEx.Android.zip
 
@@ -371,31 +376,9 @@ jobs:
         run: ./scripts/build_packages_parallel.sh
 
       - name: The replayed port must build
-        run: |
-          # pipefail is required here, not cosmetic. GitHub runs a `run:` block
-          # with `bash -e {0}` and no pipefail, so `dotnet restore | tee` would
-          # report tee's exit status (always 0) and a restore that failed
-          # outright would leave an empty log, pass the grep below, and print
-          # "no version substitution".
-          set -o pipefail
-          . ./scripts/bepinex_paths.sh
-          dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/" -v normal 2>&1 |
-            tee /tmp/restore.log
-          # Scoped to the packages this repository builds and owns. A blanket
-          # NU1602/NU1603 check fails on upstream BepInEx's own pin,
-          # Samboy063.Cpp2IL.Core 2022.1.0-development.1452, which has never
-          # resolved and resolves to ...-pre-release.13 instead. That is a real
-          # upstream condition, it predates the Android port, and every build
-          # here - including the one tested on device - shipped it. Failing the
-          # whole job on it would hide the substitutions that matter: ours.
-          # See docs/progress.md for whether that pin should be corrected.
-          if grep -E 'NU160[23]' /tmp/restore.log | grep -qiE 'MonoMod\.|Il2CppInterop\.'; then
-            echo "::error::a package this repository builds fell back to a different version"
-            grep -E 'NU160[23]' /tmp/restore.log | grep -iE 'MonoMod\.|Il2CppInterop\.'
-            exit 1
-          fi
-          dotnet build "$BEPINEX_SRC/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj" \
-            -c Release --no-restore -p:GeneratePackageOnBuild=false -p:SolutionDir="$BEPINEX_SRC/"
+        # Single implementation in scripts/restore_and_build.sh, shared with
+        # build-bepinex.yml and the provenance staging above.
+        run: ./scripts/restore_and_build.sh
 
       - name: The port must not reintroduce desktop layers
         run: |
