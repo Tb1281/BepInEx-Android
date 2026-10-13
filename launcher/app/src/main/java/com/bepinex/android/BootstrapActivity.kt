@@ -149,6 +149,11 @@ class BootstrapActivity : Activity() {
         updateProgress(getString(R.string.bootstrap_status_installing_hooks), "", 70)
         BepInExLog.i("Installing Pine hooks...")
         try {
+            // Bridge first, hooks second: the bridge's one-time game-dex
+            // warmup (~3k resolutions) runs unhooked, then the loadClass
+            // hook only sees live Firebase traffic.
+            FirebaseBridgeLoader.install(this, gameContext.classLoader, targetPackage)
+            FirebaseBridgeLoader.prime()
             ClassLoaderHooks.installHooks(gameContext.classLoader)
             PackageManagerHooks.installHooks(packageManager)
             // The game package bounds which activities InstrumentationHooks may

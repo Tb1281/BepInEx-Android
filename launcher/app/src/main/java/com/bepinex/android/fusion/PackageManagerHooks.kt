@@ -28,6 +28,58 @@ object PackageManagerHooks {
      * silently swallow calls targeting PlayCore components.
      */
     fun installHooks(packageManager: PackageManager) {
+        hookComponentSettings(packageManager)
+        hookApplicationInfo(packageManager)
+    }
+
+    /**
+     * Report our own package as debuggable to game-side readers.
+     *
+     * The hosted game branches on FLAG_DEBUGGABLE (debuggable builds take its
+     * tested Auth-Prod/Firestore path and never touch the Firebase C++
+     * Realtime-Database path that cannot resolve its bridge classes in a
+     * hosted process). Our manifest is not debuggable, so release builds
+     * would take the production branch and die in Database::GetInstance.
+     * OR-ing the flag into the in-process copy only affects Java readers
+     * inside this process; the system's package record (signing, Play
+     * Integrity, JDWP) is untouched.
+     */
+    private fun hookApplicationInfo(packageManager: PackageManager) {
+        try {
+            val pmClass = packageManager.javaClass
+            val candidates = pmClass.declaredMethods.filter { m ->
+                m.name == "getApplicationInfo" && m.parameterTypes.isNotEmpty() &&
+                    m.parameterTypes[0] == String::class.java
+            }
+            if (candidates.isEmpty()) {
+                BepInExLog.w("PM getApplicationInfo not found on ${pmClass.name}")
+                return
+            }
+            for (method in candidates) {
+                try {
+                    method.isAccessible = true
+                    Pine.hook(method, object : MethodHook() {
+                        override fun afterCall(callFrame: Pine.CallFrame) {
+                            try {
+                                val info = callFrame.result as? android.content.pm.ApplicationInfo ?: return
+                                if (info.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) return
+                                info.flags = info.flags or android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE
+                                BepInExLog.d("PM spoof: FLAG_DEBUGGABLE set on ${info.packageName}")
+                            } catch (_: Exception) {
+                            }
+                        }
+                    })
+                    BepInExLog.i("Hooking PM: ${pmClass.name}.${method.name}/${method.parameterTypes.size}")
+                } catch (e: Exception) {
+                    BepInExLog.e("Failed to hook getApplicationInfo", e)
+                }
+            }
+        } catch (e: Exception) {
+            BepInExLog.e("Failed to install getApplicationInfo hook", e)
+        }
+    }
+
+    private fun hookComponentSettings(packageManager: PackageManager) {
         try {
             // We can't hook the abstract PackageManager method directly.
             // Find the concrete implementation class and hook that.
