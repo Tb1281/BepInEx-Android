@@ -18,7 +18,7 @@ against it. The pins plus the manifest are the baseline.
 | `libdobby.so` | [canyie/dobby](https://github.com/canyie/dobby), master via `build-native-deps` | `6813ca76ddeafcaece525bf8c6cde7ff4c21d3ce` |
 | `libpine.so` | [canyie/Pine](https://github.com/canyie/Pine), master via `build-native-deps` | `216d910f18b18430a5d21c510affb221a9833a55`, nested xz-embedded `d4a9bc83c72d8087fe36ff388e89599626da7873` |
 | MonoMod packages (`25.3.7-android.1`) | [MonoMod/MonoMod](https://github.com/MonoMod/MonoMod), reorganize + `references/monomod-android.patch` | `d2f2fd91f0daababe41b81239b3d53a4be77cd43` |
-| Il2CppInterop packages (`1.5.2-android.3`) | [BepInEx/Il2CppInterop](https://github.com/BepInEx/Il2CppInterop), master + `references/il2cppinterop-arm64-disarm.patch` | `81a6f78c8b653e0da4a3420ac4cd00819e8b6292` |
+| Il2CppInterop packages (`1.5.3-android.1`) | [BepInEx/Il2CppInterop](https://github.com/BepInEx/Il2CppInterop), master + `references/il2cppinterop-arm64-disarm.patch` | `81a6f78c8b653e0da4a3420ac4cd00819e8b6292` |
 | `libcoreclr.so`, `libclrjit.so`, PALs, BCL (`dotnet.zip`) | `microsoft.netcore.app.runtime.android-arm64` 10.0.12 from nuget.org via `fetch-runtime` | pack SHA-256 `7f67905e5e5324e0c2b03920b62a3b09c036737ba84f9e7cb61f7e058d285ad3` |
 | `libmain.so`, `libfusion.so` | `launcher/app/src/main/cpp/`, compiled by Gradle in `build-launcher-apk` | current commit |
 | `libc++_shared.so` | Pinned NDK `30.0.16248370`, copied in `build-launcher-apk` | NDK pin + manifest hash |

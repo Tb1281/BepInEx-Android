@@ -109,9 +109,13 @@ def main():
                 sys.exit(1)
             latest = max(latest, mtime)
         fixed = latest
-    date_time = datetime.datetime.fromtimestamp(
-        fixed, tz=datetime.timezone.utc
-    ).timetuple()[:6]
+    # Naive local time, not UTC: the input mtimes come from `unzip`, which
+    # interprets pack entry dates in the local timezone, so converting back
+    # in the same timezone round-trips to the pack dates on every machine.
+    # Forcing UTC here shifted every entry by the local UTC offset instead
+    # (measured: same pack produced 05:19:22 next to 14:19:22), which is how
+    # a KST checkout and a UTC runner disagreed about identical inputs.
+    date_time = datetime.datetime.fromtimestamp(fixed).timetuple()[:6]
 
     out_dir = os.path.dirname(os.path.abspath(output))
     if out_dir:

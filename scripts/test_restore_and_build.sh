@@ -37,7 +37,7 @@ case "${1:-}" in
     restore)
         case "${STUB_MODE:-ok}" in
             nu1602-monomod) echo "warning NU1602: MonoMod.Core 25.3.7-android.1 was not found, resolved MonoMod.Core 25.0.12 instead" ;;
-            nu1603-interop) echo "warning NU1603: Il2CppInterop.Runtime 1.5.2-android.3 is a prerelease, resolved Il2CppInterop.Runtime 1.5.2 instead" ;;
+            nu1603-interop) echo "warning NU1603: Il2CppInterop.Runtime 1.5.3-android.1 is a prerelease, resolved Il2CppInterop.Runtime 1.5.2 instead" ;;
             nu1602-cpp2il) echo "warning NU1602: Samboy063.Cpp2IL.Core 2022.1.0-development.1452 was not found" ;;
             restore-fail) echo "restore exploded"; exit 3 ;;
         esac
