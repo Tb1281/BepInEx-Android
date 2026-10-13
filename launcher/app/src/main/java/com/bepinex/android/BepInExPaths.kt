@@ -55,9 +55,9 @@ object BepInExPaths {
         )
 
     /**
-     * 게임 패키지에 해당하는 BepInEx 루트 디렉터리 반환.
-     * 순수 안드로이드 컨텍스트 메소드(Context.getExternalFilesDir)를 사용하여
-     * MANAGE_EXTERNAL_STORAGE 권한 없이 안전한 앱 전용 외부 저장소를 기본으로 사용합니다.
+     * BepInEx root directory for a game package.
+     * Uses plain Android context APIs (Context.getExternalFilesDir), so the
+     * default is app-specific external storage with no MANAGE_EXTERNAL_STORAGE.
      */
     fun getGameRootDir(packageName: String): File {
         val baseDir = requireContext().getExternalFilesDir(null) ?: requireContext().filesDir

@@ -42,12 +42,6 @@ import java.util.concurrent.CountDownLatch
  * The split is deliberate. Storage must stay in our sandbox or hosting has no point;
  * identity must answer as the game or the game's own SDKs cannot find their
  * configuration. Do not merge the two. See `docs/responsibility.md`.
- *
- * Note [CustomContextWrapper] also overrides `getPackageName()`/`getResources()` and
- * carries a correct diagnosis in its KDoc, but nothing instantiates it. It is a trap:
- * reading it suggests the identity problem is already handled here.
- *
- * @see UnityPlayerHooks.java in FusionCore main branch
  */
 object UnityPlayerHooks {
 

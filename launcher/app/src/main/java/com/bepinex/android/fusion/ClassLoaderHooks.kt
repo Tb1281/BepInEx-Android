@@ -15,7 +15,8 @@ import java.lang.reflect.Method
  * The hook wraps loadClass() on BOTH classloaders to enable cross-loading
  * when a class is not found in the default loader.
  *
- * @see ClassLoaderHooks.java in FusionCore main branch
+ * @see ClassLoaderHooks.kt in NextBep BepInEx.Android.Launcher (no equivalent
+ * exists in All-Of-Us FusionCore)
  */
 object ClassLoaderHooks {
 
