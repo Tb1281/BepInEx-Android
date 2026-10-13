@@ -186,7 +186,7 @@ val preparePrebuilts = tasks.register("preparePrebuilts") {
         if (missingLibs.isNotEmpty() || missingAssets.isNotEmpty()) {
             logger.lifecycle(
                 "[preparePrebuilts] Missing prebuilts (libs: $missingLibs, assets: $missingAssets). " +
-                    "Run scripts/download_prebuilts.sh with RELEASE_BASE_URL pointing at your own CI output."
+                    "Stage them with scripts/stage_launcher_inputs.sh (local builds) or install CI producer artifacts (see README, Building from Source)."
             )
         }
 
