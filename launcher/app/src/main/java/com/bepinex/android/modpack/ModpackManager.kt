@@ -305,11 +305,14 @@ class ModpackManager {
                     }
                 }
 
-                // Overlay config
+                // Overlay config (skip BepInEx.cfg: the core framework config is
+                // global, not per-modpack)
                 val modpackConfig = getModpackConfigDir(packageName, modpackName)
                 if (modpackConfig.isDirectory) {
                     modpackConfig.listFiles()?.forEach { cfg ->
-                        cfg.copyTo(File(configDir, cfg.name), overwrite = true)
+                        if (cfg.name != "BepInEx.cfg") {
+                            cfg.copyTo(File(configDir, cfg.name), overwrite = true)
+                        }
                     }
                 }
 
@@ -340,8 +343,9 @@ class ModpackManager {
         val allowedGuids = if (!modpackName.isNullOrEmpty()) {
             getModpackPluginGuids(packageName, modpackName)
         } else {
-            // Vanilla: no plugins, so only the core BepInEx config.
-            setOf("BepInEx")
+            // Vanilla: no plugins, so persist no plugin configs. BepInEx.cfg
+            // is global and never persisted per-state.
+            emptySet()
         }
         // Last-writer-wins: only copy a runtime config back when it is newer than
         // the modpack's copy (or the modpack has no copy). An unconditional copy
@@ -359,11 +363,14 @@ class ModpackManager {
     /**
      * Collects the BepInEx plugin GUIDs for every DLL in a modpack's plugins
      * dir, by scanning each DLL for reverse-domain strings (the BepInPlugin
-     * attribute GUID is stored as UTF-16 in the assembly metadata). Also
-     * includes "BepInEx" for the core BepInEx.cfg, which is not plugin-specific.
+     * attribute GUID is stored as UTF-16 in the assembly metadata).
+     *
+     * NOTE: BepInEx.cfg (the core framework config) is intentionally NOT
+     * included. It is global, not per-modpack: it is never persisted into a
+     * modpack and never deleted by a modpack switch.
      */
     private fun getModpackPluginGuids(packageName: String, modpackName: String): Set<String> {
-        val guids = mutableSetOf("BepInEx")
+        val guids = mutableSetOf<String>()
         val pluginsDir = getModpackPluginsDir(packageName, modpackName)
         if (!pluginsDir.isDirectory) return guids
         pluginsDir.walkTopDown()
@@ -457,8 +464,29 @@ class ModpackManager {
         } else {
             replaceDir(pluginsDir)
         }
-        syncDirContents(File(srcRoot, "config"), configDir)
+        syncConfigDir(File(srcRoot, "config"), configDir)
         BepInExLog.i("Restored runtime cfg from ${srcRoot.absolutePath}")
+    }
+
+    /**
+     * Syncs a modpack's config dir into the runtime config dir, like
+     * [syncDirContents], but preserves BepInEx.cfg: the core framework config
+     * is global, not per-modpack, so a modpack switch must neither delete nor
+     * overwrite it.
+     */
+    private fun syncConfigDir(source: File, dest: File) {
+        // Back up the global config before the sync wipes extras.
+        val globalCfg = File(dest, "BepInEx.cfg")
+        val globalBackup = if (globalCfg.isFile) globalCfg.readBytes() else null
+        val globalModified = if (globalCfg.isFile) globalCfg.lastModified() else 0L
+
+        syncDirContents(source, dest)
+
+        // Restore the global config.
+        if (globalBackup != null) {
+            globalCfg.writeBytes(globalBackup)
+            globalCfg.setLastModified(globalModified)
+        }
     }
 
     private fun stateRoot(packageName: String, modpackName: String?): File =
