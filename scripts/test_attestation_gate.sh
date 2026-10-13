@@ -42,7 +42,10 @@ target=""
 prev=""
 for a in "$@"; do
     [ "$prev" = "" ] || { [ "$prev" = "--source-ref" ] && ref="$a"; }
-    case "$a" in /*) target="$(basename "$a")" ;; esac
+    # The --bundle value is a path but not the attestation subject; skip it.
+    if [ "$prev" != "--bundle" ]; then
+        case "$a" in /*) target="$(basename "$a")" ;; esac
+    fi
     prev="$a"
 done
 want_repo="BepInEx-Android/BepInEx-Android"
@@ -59,7 +62,12 @@ if [ "$got_repo" != "$want_repo" ]; then
     echo '{"message":"no attestations found","status":"404"}' >&2
     exit 1
 fi
-if [ "${ref:-}" != "$WORK_HEAD_SHA" ]; then
+# With --bundle the caller verifies a downloaded Sigstore bundle instead of
+# querying the API; there is no --source-ref to check (the bundle carries its
+# own statement). Without --bundle the ref must match.
+has_bundle=0
+for a in "$@"; do [ "$a" = "--bundle" ] && has_bundle=1; done
+if [ "$has_bundle" -eq 0 ] && [ "${ref:-}" != "$WORK_HEAD_SHA" ]; then
     echo "commit mismatch" >&2
     exit 1
 fi
