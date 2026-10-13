@@ -1,0 +1,71 @@
+From e886a8ba13e6d95304ecf4d619c7ed540ff658f5 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Wed, 7 Oct 2026 22:11:12 +0900
+Subject: [PATCH] build: pin MonoMod to the locally rebuilt Android package
+
+The -star pins named packages that no longer resolve anywhere. NuGet reports
+them as unresolvable and silently substitutes the official release with an
+NU1602 warning, so the build succeeded against official MonoMod - the build
+whose PlatformTriple.CreateCurrentSystem throws NotImplementedException on
+OSKind.Android - while the shipped assemblies came from the fork. A pin that
+fails open is worse than one that fails.
+
+Official MonoMod is only the base, not the answer: the Android support is
+8 published commits on top of it, carried here as
+references/monomod-android.patch over the official MonoMod/MonoMod commit
+20ccecf. scripts/build_monomod.sh rebuilds all three packages from that pair,
+and asserts that the patched tree still reproduces the published work at the
+fork tip 9da670d6e, so drift in the patch fails the build.
+
+MonoMod.Utils moves 25.0.12 -> 25.3.7-android.1 because all three packages are
+produced by one build of one tree; a package set that mixes a Utils from a
+different upstream version with a RuntimeDetour from the patched tree is not
+something a single provenance record can describe.
+---
+ BepInEx.Core/BepInEx.Core.csproj                              | 4 ++--
+ BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj          | 4 ++--
+ .../Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj    | 2 +-
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/BepInEx.Core/BepInEx.Core.csproj b/BepInEx.Core/BepInEx.Core.csproj
+index 01a52d5..6ab84ac 100644
+--- a/BepInEx.Core/BepInEx.Core.csproj
++++ b/BepInEx.Core/BepInEx.Core.csproj
+@@ -10,8 +10,8 @@
+         <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All"/>
+         <PackageReference Include="HarmonyX" Version="2.10.2" />
+         <PackageReference Include="SemanticVersioning" Version="2.0.2"/>
+-        <PackageReference Include="MonoMod.Utils" Version="25.0.12-star"/>
+-        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4-star"/>
++        <PackageReference Include="MonoMod.Utils" Version="25.3.7-android.1"/>
++        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.7-android.1"/>
+     </ItemGroup>
+     <ItemGroup>
+         <Compile Remove="Contract\IPlugin.cs"/>
+diff --git a/BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj b/BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj
+index c6099ef..4a8b12a 100644
+--- a/BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj
++++ b/BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj
+@@ -9,7 +9,7 @@
+     <ItemGroup>
+         <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All"/>
+         <PackageReference Include="HarmonyX" Version="2.10.2" />
+-        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4-star"/>
+-        <PackageReference Include="MonoMod.Utils" Version="25.0.12-star"/>
++        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.7-android.1"/>
++        <PackageReference Include="MonoMod.Utils" Version="25.3.7-android.1"/>
+     </ItemGroup>
+ </Project>
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj b/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
+index 2ffd99d..a05d232 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
+@@ -22,7 +22,7 @@
+         <PackageReference Include="Il2CppInterop.Runtime" Version="[1.5.2-android.3]" />
+         <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
+         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="6.0.1" />
+-        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4-star" />
++        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.7-android.1" />
+         <PackageReference Include="Samboy063.Cpp2IL.Core" Version="2022.1.0-development.1452" />
+     </ItemGroup>
+     <ItemGroup>

@@ -1,0 +1,23 @@
+# Local build output
+build/
+out/
+.kotlin/
+launcher/.kotlin/
+
+# Game artifacts pulled off the device for offline analysis.
+# Proprietary, ~92MB, and reproducible from the installed game; only the digests
+# belong in the repository. See docs/thetower-6000.md.
+TheTower/
+Unlock/
+
+# Stray runtime log pulled from a device run.
+LogOutput.log
+
+# Packages rebuilt locally: scripts/build_il2cppinterop.sh
+/local-nuget/
+
+# Test output that used to be committed. scripts/ci_failure_notice.sh wrote
+# its report to ./failure.body instead of the file it hands to gh, so the stub
+# run left a plausible-looking failure record in the tree and it was committed by
+# accident. The script is fixed; this is here so a regression cannot land again.
+/failure.body

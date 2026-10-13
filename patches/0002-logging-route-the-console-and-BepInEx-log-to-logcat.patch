@@ -1,0 +1,166 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Sun, 4 Oct 2026 15:43:52 +0900
+Subject: [PATCH 2/8] logging: route the console and BepInEx log to logcat
+
+There is no stdout console on Android and no writable log directory, so the
+Unix tty driver and Windows console driver cannot work. Replace them with a
+driver that forwards to __android_log_write, and add AndroidLogListener so the
+managed log mirrors into logcat for adb logcat inspection.
+---
+ .../Console/Android/AndroidConsoleDriver.cs   | 49 +++++++++++++++++++
+ BepInEx.Core/Console/ConsoleManager.cs        | 14 ++----
+ .../Logging/AndroidLogListener.cs             | 49 +++++++++++++++++++
+ 3 files changed, 101 insertions(+), 11 deletions(-)
+ create mode 100644 BepInEx.Core/Console/Android/AndroidConsoleDriver.cs
+ create mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs
+
+diff --git a/BepInEx.Core/Console/Android/AndroidConsoleDriver.cs b/BepInEx.Core/Console/Android/AndroidConsoleDriver.cs
+new file mode 100644
+index 0000000..f21ae5d
+--- /dev/null
++++ b/BepInEx.Core/Console/Android/AndroidConsoleDriver.cs
+@@ -0,0 +1,49 @@
++using System;
++using System.IO;
++using BepInEx.Logging;
++
++namespace BepInEx.Core.Console.Android;
++
++public class AndroidConsoleDriver : IConsoleDriver
++{
++    public TextWriter StandardOut { get; } = new StringWriter();
++
++    public TextWriter ConsoleOut { get; } = new StringWriter();
++    public bool ConsoleActive => false;
++    public bool ConsoleIsExternal => false;
++
++    public AndroidConsoleDriver()
++    {
++        ConsoleOut.WriteLine("BepInEx Android Console Driver Created.");
++    }
++
++    public void PreventClose()
++    {
++        Logger.Log(LogLevel.Warning, "PreventClose() is unsupported on Android.");
++    }
++
++    public void Initialize(bool alreadyActive, bool useManagedEncoder)
++    {
++        Logger.Log(LogLevel.Info, "Console driver initialized for Android.");
++    }
++
++    public void CreateConsole(uint codepage)
++    {
++        Logger.Log(LogLevel.Warning, "An external console cannot be spawned on Android.");
++    }
++
++    public void DetachConsole()
++    {
++        Logger.Log(LogLevel.Warning, "The console cannot be detached on Android.");
++    }
++
++    public void SetConsoleColor(ConsoleColor color)
++    {
++        Logger.Log(LogLevel.Warning, "Console colors are not supported on Android.");
++    }
++
++    public void SetConsoleTitle(string title)
++    {
++        Logger.Log(LogLevel.Warning, "The console title is not supported on Android.");
++    }
++}
+diff --git a/BepInEx.Core/Console/ConsoleManager.cs b/BepInEx.Core/Console/ConsoleManager.cs
+index 764128b..f271548 100644
+--- a/BepInEx.Core/Console/ConsoleManager.cs
++++ b/BepInEx.Core/Console/ConsoleManager.cs
+@@ -3,8 +3,7 @@ using System.ComponentModel;
+ using System.IO;
+ using System.Text;
+ using BepInEx.Configuration;
+-using BepInEx.Unix;
+-using MonoMod.Utils;
++using BepInEx.Core.Console.Android;
+ 
+ namespace BepInEx;
+ 
+@@ -74,7 +73,7 @@ public static class ConsoleManager
+         }
+     }
+ 
+-    public static bool ConsoleEnabled => EnableConsoleArgOverride ?? ConfigConsoleEnabled.Value;
++    public static bool ConsoleEnabled => false;
+ 
+     internal static IConsoleDriver Driver { get; set; }
+ 
+@@ -96,14 +95,7 @@ public static class ConsoleManager
+ 
+     public static void Initialize(bool alreadyActive, bool useManagedEncoder)
+     {
+-        if (PlatformHelper.Is(Platform.Unix))
+-            Driver = new LinuxConsoleDriver();
+-        else if (PlatformHelper.Is(Platform.Windows))
+-            Driver = new WindowsConsoleDriver();
+-        else
+-            throw new PlatformNotSupportedException("Was unable to determine console driver for platform " +
+-                                                    PlatformHelper.Current);
+-
++        Driver = new AndroidConsoleDriver();
+         Driver.Initialize(alreadyActive, useManagedEncoder);
+     }
+ 
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs
+new file mode 100644
+index 0000000..a57a40a
+--- /dev/null
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs
+@@ -0,0 +1,49 @@
++using BepInEx.Configuration;
++using BepInEx.Logging;
++
++namespace BepInEx.Unity.IL2CPP.Logging;
++
++/// <summary>
++/// Android logging utility.
++/// </summary>
++public class AndroidLogListener : ILogListener
++{
++    protected static readonly ConfigEntry<LogLevel> ConfigConsoleDisplayedLevel = ConfigFile.CoreConfig.Bind(
++     "Logging.Console", "LogLevels",
++     LogLevel.Fatal | LogLevel.Error | LogLevel.Warning | LogLevel.Message | LogLevel.Info | LogLevel.Debug,
++     "Only displays the specified log levels in the console output.");
++
++    public LogLevel LogLevelFilter => ConfigConsoleDisplayedLevel.Value;
++
++    public void LogEvent(object sender, LogEventArgs eventArgs)
++    {
++        var logLevel = eventArgs.Level switch
++        {
++            LogLevel.None => AndroidLogLevel.Unknown,
++            LogLevel.Fatal => AndroidLogLevel.Fatal,
++            LogLevel.Error => AndroidLogLevel.Error,
++            LogLevel.Warning => AndroidLogLevel.Warn,
++            LogLevel.Message => AndroidLogLevel.Verbose,
++            LogLevel.Info => AndroidLogLevel.Info,
++            LogLevel.Debug => AndroidLogLevel.Debug,
++            var _ => AndroidLogLevel.Default
++        };
++
++        NextInterop.write_log_level((int)logLevel, eventArgs.ToStringLine());
++    }
++
++    public void Dispose() { }
++
++    enum AndroidLogLevel
++    {
++        Unknown = 0,
++        Default = 1,
++        Verbose = 2,
++        Debug = 3,
++        Info = 4,
++        Warn = 5,
++        Error = 6,
++        Fatal = 7,
++        Silent = 8
++    }
++}

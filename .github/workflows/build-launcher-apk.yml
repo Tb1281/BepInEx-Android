@@ -1,0 +1,290 @@
+name: build-launcher-apk
+on:
+  workflow_dispatch:
+    inputs:
+      # Each of the three artifacts below is produced by a *different* workflow
+      # run, so they cannot be reached through `needs`. They are named by run
+      # id, and each is checked against the commit it was built from below --
+      # because a run id alone says nothing about what was in it.
+      runtime_run_id:
+        description: 'Run id of a fetch-runtime run that produced runtime-android'
+        required: true
+        type: string
+      native_deps_run_id:
+        description: 'Run id of a build-native-deps run that produced native-deps'
+        required: true
+        type: string
+      bepinex_run_id:
+        description: 'Run id of a build-bepinex run that produced bepinex-managed'
+        required: true
+        type: string
+jobs:
+  apk:
+    # Pinned, not ubuntu-latest: the label migrates to Ubuntu 26 on 2026-10-19,
+    # and this job pins an exact NDK/CMake/build-tools version that must not be
+    # silently replaced by a newer image.
+    runs-on: ubuntu-24.04
+    # Declaring this block replaces the token's scopes entirely, so `contents: read`
+    # is restated rather than assumed - see the same note in fetch-runtime.yml,
+    # where omitting it broke checkout.
+    permissions:
+      contents: read
+      # actions/attest-build-provenance only, for the shipping-APK attestation.
+      # This job CONSUMES the producers' attestations with contents: read; it only
+      # mints its own, for the APK it builds.
+      attestations: write
+      id-token: write
+    steps:
+      # Egress audit on every job. A compromised action or build script
+      # exfiltrating data is otherwise invisible: the log shows green steps and
+      # nothing records where the runner talked to. `audit` only records — it
+      # never blocks — so this cannot break a build. Graduating to `block`
+      # needs a per-job allow-list measured from these logs first; an
+      # unmeasured block list is how a build fails on a mirror it never named.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: audit
+
+      # No submodules: this job consumes artifacts from the three producers and
+      # compiles only the launcher's own C++ and Kotlin. It never read third_party/,
+      # so submodules: true was fetching trees this job never opened.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Prepare Android SDK/NDK
+        run: |
+          sudo apt-get update -y >/dev/null
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
+
+      # The APK is assembled from CI outputs. Nothing is pulled from a third-party
+      # release feed. The runtime is fetched as a pinned Microsoft package by
+      # fetch-runtime; build-native-deps and build-bepinex compile the hook engines
+      # and the managed framework from this repository's pinned upstream sources.
+      # download-artifact cannot fetch several runs in one step: the run-id is a
+      # single value. Each artifact comes from its own run, so they are fetched
+      # separately into their own directories.
+      - name: Fetch the runtime artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: runtime-android
+          run-id: ${{ inputs.runtime_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: incoming/runtime-android
+
+      - name: Fetch the native hook engines artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: native-deps
+          run-id: ${{ inputs.native_deps_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: incoming/native-deps
+
+      - name: Fetch the managed framework artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: bepinex-managed
+          run-id: ${{ inputs.bepinex_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: incoming/bepinex-managed
+
+      - name: Assert the three runs were built from this commit
+        # A run id names a run, not its inputs. Without this check the APK can
+        # be assembled from a runtime fetched on one commit, hook engines from
+        # another and a managed framework from a third, and every individual
+        # step still passes. A script with a fixture rather than inline YAML,
+        # because the failure this repository has been bitten by three times is
+        # a check that quietly passes when its input is missing.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/verify_producer_commit.sh "$(git rev-parse HEAD)" "${{ inputs.runtime_run_id }}" "${{ inputs.native_deps_run_id }}" "${{ inputs.bepinex_run_id }}"
+
+      - name: Install runtime artifacts
+        run: |
+          set -euo pipefail
+          JNI=launcher/app/src/main/jniLibs/arm64-v8a
+          for d in runtime-android native-deps bepinex-managed; do
+            test -d "incoming/$d" || {
+              echo "missing $d artifact; check the run ids passed to this workflow" >&2
+              exit 1
+            }
+          done
+
+          cp incoming/runtime-android/out/runtime/native/*.so "$JNI/"
+          cp incoming/native-deps/launcher/app/src/main/jniLibs/arm64-v8a/*.so "$JNI/"
+          cp incoming/runtime-android/out/runtime/dotnet.zip launcher/app/src/main/assets/dotnet.zip
+          cp incoming/bepinex-managed/launcher/app/src/main/assets/BepInEx.Android.zip launcher/app/src/main/assets/
+
+          # libc++_shared.so comes from the NDK, not from any of the three jobs.
+          NDK_RUNTIME="$ANDROID_HOME/ndk/30.0.16248370/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
+          cp "$NDK_RUNTIME/libc++_shared.so" "$JNI/"
+
+      - name: The NDK-provided libc++ matches the pinned hash
+        # The one shipped binary with no producing workflow: verify_ci_artifacts
+        # reports it [N/A] and verify_attestation.sh skips it by design, so a
+        # substituted file at the NDK path passes both. The NDK copy and the
+        # committed copy are the same bytes (both NDK 30.0.16248370), so the
+        # provenance/sha256sums.txt entry covers this path too.
+        run: ./scripts/verify_ndk_libcxx.sh
+
+      - name: The installed artifacts match the hashes their producers recorded
+        # Before the Gradle build, not after: a substituted artifact should cost
+        # seconds, not the ten minutes assembleDebug takes.
+        #
+        # The three producer jobs each wrote a .sha256 next to their output and
+        # shipped it inside their artifact. Until this step, this job downloaded
+        # all three and never read them, so the artifacts it installed were
+        # compared to nothing at all.
+        run: ./scripts/verify_ci_artifacts.sh incoming
+
+      # verify_ci_artifacts.sh binds each file to the run that produced it, which
+      # is a statement about bytes, not about who ran that run. A substituted
+      # artifact uploaded by someone with write access, together with a matching
+      # .sha256 next to it, passes that gate completely. This one closes it: each
+      # producer attests its own output (see .github/actions/attest-inputs), and
+      # this asks GitHub whether the bytes on disk carry an attestation from THIS
+      # repository, produced at THIS commit.
+      #
+      # It is a script with a fixture (scripts/test_attestation_gate.sh) rather
+      # than inline YAML, because the failure this repository has been bitten by
+      # three times is a verification step that quietly passes when its input is
+      # missing. A YAML block cannot be tested that way; a script can, and is.
+      #
+      # Reads the attestation API with `contents: read`; no attestations: write is
+      # granted here - only the three producers mint statements.
+      - name: Each installed artifact carries an attestation from its producer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/verify_attestation.sh .
+
+      - name: Re-verify provenance of the installed artifacts
+        run: |
+          # The committed manifest describes the committed artifacts, not these.
+          # CI-produced artifacts legitimately differ - the managed assemblies
+          # embed the commit they were built from - so provenance/sha256sums.txt
+          # cannot be the comparison for this path. scripts/verify_ci_artifacts.sh
+          # above is: each file against the hash recorded by the run that produced
+          # it. These three checks answer different questions and neither replaces
+          # the other: that one is byte identity, these three are structure.
+          #
+          # The pack check takes its expected framework version from
+          # provenance/dotnet-runtime.env, so it cannot drift away from the
+          # runtime that was actually fetched.
+          ./launcher/scripts/verify_crypto_pal.sh
+          ./launcher/scripts/verify_crypto_java.sh
+          ./scripts/verify_dotnet_pack.sh launcher/app/src/main/assets/dotnet.zip
+
+      - name: Gradle build debug APK
+        working-directory: launcher
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: zipalign 16k check & fix
+        working-directory: launcher
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
+          "$ZIPALIGN" -v -c -P 16 4 "$APK" > zipalign.log 2>&1 || true
+          cat zipalign.log
+          if ! "$ZIPALIGN" -c -P 16 4 "$APK"; then
+            "$ZIPALIGN" -f -v -P 16 4 "$APK" app/build/outputs/apk/debug/app-debug-aligned.apk
+          else
+            cp "$APK" app/build/outputs/apk/debug/app-debug-aligned.apk
+          fi
+
+      # The zip's local headers and central directory must agree. Incremental
+      # builds have packaged duplicate local entries twice (958 vs 475, then
+      # 478 vs 475) — working APKs carrying dead weight, caught only by
+      # counting. verify_prebuilts.sh guards the inputs; this guards the output.
+      - name: The packaged APK has no duplicate zip entries
+        working-directory: launcher
+        run: |
+          ../scripts/verify_apk_entries.sh app/build/outputs/apk/debug/app-debug-aligned.apk
+
+      # The same gate again, now that an APK exists.
+      #
+      # verify_crypto_java.sh has a fifth stage that reads the descriptors out of
+      # the built dex, and it skips itself when there is no APK to read. On a clean
+      # runner the copy above runs before Gradle, so that stage has never run here:
+      # the gate reported PASS while the half it exists for - the dex the PAL will
+      # actually look up - was never examined.
+      #
+      # That is the same failure this job was bitten by three times: a verification
+      # step that quietly passes because its input is missing. It is not enough for
+      # the earlier call to be correct, it has to be correct after the artifact
+      # exists. Kept as a separate step so the ordering is visible in the log.
+      - name: Re-verify the PAL contract against the built dex
+        working-directory: launcher
+        run: |
+          ./scripts/verify_crypto_java.sh
+
+      - name: Record APK checksums
+        run: |
+          ( cd launcher/app/src/main/jniLibs/arm64-v8a && sha256sum *.so ) > apk-native.sha256
+          sha256sum launcher/app/src/main/assets/*.zip >> apk-native.sha256
+          sha256sum launcher/app/build/outputs/apk/debug/app-debug-aligned.apk >> apk-native.sha256
+          cat apk-native.sha256
+
+      # Source SBOM in SPDX 2.3: what upstream went into this APK, not what
+      # bytes came out. Generated from provenance/*.env plus the Gradle catalog,
+      # so a pin bump without an SBOM regeneration is impossible by
+      # construction — the file is written here, from this commit, every run.
+      # Attested together with the APK below, so the statement covers both the
+      # artifact and its dependency list. A consumer that wants a built-artifact
+      # inventory instead can run `syft app-debug-aligned.apk -o spdx-json`;
+      # the two documents compose rather than replace each other.
+      - name: Generate the source SBOM
+        run: |
+          python3 scripts/generate_sbom.py --output sbom.spdx.json
+          sha256sum sbom.spdx.json | tee -a apk-native.sha256
+
+      # Attest the shipping APK itself, not just its inputs.
+      #
+      # Every attestation above describes a file that goes *into* the APK. That
+      # leaves the gap this repository has already measured: AGP strips
+      # libdobby.so, libpine.so and libc++_shared.so while packaging, so the bytes
+      # inside the APK are not the bytes those attestations cover. The gate in
+      # scripts/verify_attestation.sh speaks about "inputs to packaging", and
+      # until now nothing attested the artifact a user actually installs.
+      #
+      # Attested AFTER zipalign so the statement covers the final aligned file
+      # that is uploaded. Attesting the pre-align APK would leave the shipped
+      # bytes unsigned, which is the same class of mistake as recording a hash
+      # nobody compares.
+      #
+      # The SBOM is attested in the same statement: it is generated above from
+      # this commit's pins, so one statement binds this repository, this
+      # workflow and this commit to both the bytes and their dependency list.
+      #
+      # This job does not verify its own attestation - it would be checking
+      # itself in the same run. The value is that the uploaded APK carries a
+      # statement naming this repository, this workflow and this commit, so any
+      # later gate or a human can run
+      # `gh attestation verify app-debug-aligned.apk --repo ...`.
+      #
+      # attestations: write is needed here for this step; the three producers
+      # mint the per-input statements that the earlier gate consumed.
+      - name: Attest the shipping APK
+        uses: ./.github/actions/attest-inputs
+        with:
+          bundle-output: launcher-apk.attestation.json
+          paths: |
+            launcher/app/build/outputs/apk/debug/app-debug-aligned.apk
+            sbom.spdx.json
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: launcher-apk-aligned
+          path: |
+            launcher/app/build/outputs/apk/debug/app-debug-aligned.apk
+            launcher-apk.attestation.json
+            apk-native.sha256
+            sbom.spdx.json
+          retention-days: 1

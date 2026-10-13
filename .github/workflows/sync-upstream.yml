@@ -1,0 +1,208 @@
+name: sync-upstream
+on:
+  schedule:
+    # Run once a day at 04:00 UTC (13:00 KST) to track upstream changes without exhausting minutes.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force a full build and release even if upstream has not moved'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  sync:
+    # Pinned, not ubuntu-latest: the label migrates to Ubuntu 26 on 2026-10-19.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write      # create-pull-request, GitHub Release creation
+      pull-requests: write # opens the sync PR
+      issues: write        # scripts/ci_failure_notice.sh only
+      # Attesting the sync-built APK before release. Without these the release
+      # below ships an APK no one can verify (see the attest step).
+      attestations: write
+      id-token: write
+    steps:
+      # Egress audit on every job. A compromised action or build script
+      # exfiltrating data is otherwise invisible: the log shows green steps and
+      # nothing records where the runner talked to. `audit` only records — it
+      # never blocks — so this cannot break a build. Graduating to `block`
+      # needs a per-job allow-list measured from these logs first; an
+      # unmeasured block list is how a build fails on a mirror it never named.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # fetch-depth: 0 needed for ancestry assertions comparing origin/master
+          fetch-depth: 0
+
+      # No download caches — see build-bepinex.yml for why (323 MB vs the
+      # private 500 MB quota blocked verification the day they were added).
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.401'
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Check all upstream pins for drift and report to summary
+      - name: Report drift of every other upstream pin
+        run: ./scripts/check_upstream_pins.sh
+
+      # Advance pristine upstream pin and detect if moved
+      - name: Advance the pristine upstream pin
+        id: sync
+        run: ./scripts/sync_upstream.sh
+
+      # Only proceed with build & release if upstream moved or force requested
+      - name: Prepare Android SDK and NDK
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
+
+      # Both package sets before anything that restores against local-nuget.
+      # Built concurrently (waits for both, fails if either failed); the patch
+      # replay below touches only the BepInEx clone, so building Il2CppInterop
+      # before it rather than after changes no dependency, only wall time.
+      - name: Rebuild the MonoMod and Il2CppInterop packages
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: ./scripts/build_packages_parallel.sh
+
+      # Replay the patch queue. On conflict this fails, triggering ci_failure_notice
+      - name: Replay the Android patch queue
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: ./scripts/apply_patches.sh
+
+      - name: Package BepInEx managed framework
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: ./scripts/package_bepinex_android.sh
+
+      - name: Build native hook engines
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          ./scripts/build_native_deps.sh
+          cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" launcher/app/src/main/jniLibs/arm64-v8a/
+
+      - name: Verify 16KB alignment and crypto PAL
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: |
+          ./scripts/check_elf_alignment.sh launcher/app/src/main/jniLibs/arm64-v8a
+          ./launcher/scripts/verify_crypto_pal.sh launcher/app/src/main/jniLibs/arm64-v8a
+          # Same boundary as build-launcher-apk: the NDK-copied libc++ has no
+          # producing run, so the producer gates skip it. The manifest entry
+          # covers it (NDK 30.0.16248370 on both paths).
+          ./scripts/verify_ndk_libcxx.sh
+
+      - name: Assemble and 16KB-align Debug APK
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        working-directory: launcher
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          OUT="app/build/outputs/apk/debug/app-debug-aligned.apk"
+          ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
+          "$ZIPALIGN" -f -P 16 4 "$APK" "$OUT"
+
+      # Local headers and central directory must agree (incremental builds
+      # have shipped duplicates twice); see build-launcher-apk.yml.
+      - name: The packaged APK has no duplicate zip entries
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        working-directory: launcher
+        run: |
+          ../scripts/verify_apk_entries.sh app/build/outputs/apk/debug/app-debug-aligned.apk
+
+      # Source SBOM for this release: same generator the shipping path
+      # uses, so a sync release and a manual build describe the same pins.
+      # Its own step (not inside Publish below) because the attestation after
+      # it covers both files — attesting before the SBOM exists would sign
+      # the APK next to nothing.
+      - name: Generate the source SBOM
+        if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
+        run: python3 scripts/generate_sbom.py --output sbom.spdx.json
+
+      # Publish automated Release directly to GitHub Releases (bypassing Actions 500MB storage quota)
+      - name: Attest the sync-built APK and SBOM
+        if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
+        uses: ./.github/actions/attest-inputs
+        with:
+          bundle-output: sync-apk.attestation.json
+          paths: |
+            launcher/app/build/outputs/apk/debug/app-debug-aligned.apk
+            sbom.spdx.json
+
+      - name: Publish Release with Checksums
+        if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="launcher/app/build/outputs/apk/debug/app-debug-aligned.apk"
+          SHA="$(sha256sum "$APK" | awk '{print $1}')"
+          echo "$SHA  app-debug-aligned.apk" > "$APK.sha256"
+
+          NEW_COMMIT="${{ steps.sync.outputs.new }}"
+          OLD_COMMIT="${{ steps.sync.outputs.old }}"
+          TAG_NAME="sync-$(date +'%Y%m%d')-${NEW_COMMIT:0:7}"
+
+          cat <<EOF > release-notes.md
+          ### 🚀 Automated Upstream Sync Build
+          - **Upstream Old:** \`${OLD_COMMIT}\`
+          - **Upstream New:** \`${NEW_COMMIT}\`
+          - **Build Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+
+          ### 🔒 Checksums (SHA-256)
+          \`\`\`
+          $(cat "$APK.sha256")
+          $(sha256sum sbom.spdx.json)
+          \`\`\`
+
+          ### 📦 SBOM
+          \`sbom.spdx.json\` is the SPDX 2.3 source SBOM for this release.
+
+          ### 🔏 Provenance
+          \`sync-apk.attestation.json\` binds this repository, this workflow
+          run and this commit to the APK and SBOM bytes above. Verify with:
+          \`\`\`
+          gh attestation verify app-debug-aligned.apk --repo $GITHUB_REPOSITORY
+          \`\`\`
+          (On a private repository the bundle is the fallback CI provenance
+          statement; it becomes a Sigstore attestation automatically if the
+          repository is made public.)
+          EOF
+
+          gh release create "$TAG_NAME" "$APK" "$APK.sha256" sbom.spdx.json sync-apk.attestation.json \
+            --title "BepInEx Android Sync (${NEW_COMMIT:0:7})" \
+            --notes-file release-notes.md
+
+      - name: Create PR for pin update
+        if: steps.sync.outputs.moved == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        with:
+          branch: upstream-sync
+          title: 'sync: BepInEx upstream update (${{ steps.sync.outputs.new }})'
+          commit-message: 'sync: BepInEx upstream update to ${{ steps.sync.outputs.new }}'
+          body: |
+            Automated upstream sync of the BepInEx pin (`provenance/bepinex.env`) with the patch queue replayed on top.
+            Release has been created with the built APK.
+
+      # Record failure to Issue or close open issue on success
+      - name: Record the failure, or clear the record
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            ./scripts/ci_failure_notice.sh sync-upstream passed
+          else
+            ./scripts/ci_failure_notice.sh sync-upstream failed
+          fi

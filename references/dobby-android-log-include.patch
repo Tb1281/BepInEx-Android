@@ -1,0 +1,20 @@
+--- a/external/logging/logging.c
++++ b/external/logging/logging.c
+@@ -14,6 +14,9 @@
+ #include <fcntl.h>
+ #include <sys/types.h>
+ #endif
++#if defined(__ANDROID__)
++#include <android/log.h>
++#endif
+ 
+ #if defined(__APPLE__)
+ #include <dlfcn.h>
+@@ -111,7 +114,6 @@
+   if (!syslog_enabled && !file_log_enabled) {
+ #if defined(__ANDROID__)
+ #define ANDROID_LOG_TAG "Dobby"
+-#include <android/log.h>
+     __android_log_vprint(ANDROID_LOG_INFO, ANDROID_LOG_TAG, fmt, ap);
+ #else
+     vprintf(fmt, ap);

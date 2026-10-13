@@ -1,0 +1,2653 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Sun, 4 Oct 2026 15:45:12 +0900
+Subject: [PATCH 6/8] core: delete the Mono runtime
+
+BepInEx ships two runtime backends: the Mono one (BepInEx.Unity.Mono and
+BepInEx.Unity.Mono.Preloader) and the IL2CPP one. A Unity IL2CPP game embeds
+neither Mono nor BepInEx's own UnityEngine bindings, so the Mono projects are
+dead weight that only exists to be compiled and shipped.
+
+Removing them also removes the entrypoint patcher, the TraceFix/XTermFix/
+UnityPatches runtime fixes and the BaseUnityPlugin/UnityChainloader plumbing
+that cannot run on Android.
+---
+ .../BepInEx.Unity.Mono.Preloader.csproj       |  21 -
+ .../DoorstopEntrypoint.cs                     |  37 -
+ .../EntrypointPatcher.cs                      | 136 ---
+ .../RuntimeFixes/TraceFix.cs                  |  73 --
+ .../RuntimeFixes/UnityPatches.cs              |  33 -
+ .../RuntimeFixes/XTermFix.cs                  | 133 ---
+ .../UnityPreloader.cs                         | 152 ---
+ .../UnityPreloaderRunner.cs                   | 110 ---
+ .../Utils/MonoAssemblyHelper.cs               | 119 ---
+ .../BepInEx.Unity.Mono/BaseUnityPlugin.cs     |  53 --
+ .../BepInEx.Unity.Mono.csproj                 |  23 -
+ .../BepInEx.Unity.Mono/BepInExInstance.cs     |   8 -
+ .../Configuration/KeyboardShortcut.cs         | 178 ----
+ .../Logging/UnityLogListener.cs               |  81 --
+ .../BepInEx.Unity.Mono/ThreadingHelper.cs     | 363 -------
+ .../Unity/BepInEx.Unity.Mono/UnityInput.cs    | 898 ------------------
+ .../UnityTomlTypeConverters.cs                |  83 --
+ 17 files changed, 2501 deletions(-)
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/BepInEx.Unity.Mono.Preloader.csproj
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/DoorstopEntrypoint.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/EntrypointPatcher.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/TraceFix.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/UnityPatches.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/XTermFix.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloader.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloaderRunner.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono.Preloader/Utils/MonoAssemblyHelper.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono/BaseUnityPlugin.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono/BepInEx.Unity.Mono.csproj
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono/BepInExInstance.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono/Configuration/KeyboardShortcut.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono/Logging/UnityLogListener.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono/ThreadingHelper.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono/UnityInput.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.Mono/UnityTomlTypeConverters.cs
+
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/BepInEx.Unity.Mono.Preloader.csproj b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/BepInEx.Unity.Mono.Preloader.csproj
+deleted file mode 100644
+index 7a33d1d..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/BepInEx.Unity.Mono.Preloader.csproj
++++ /dev/null
+@@ -1,21 +0,0 @@
+-﻿<Project Sdk="Microsoft.NET.Sdk">
+-    <PropertyGroup>
+-        <TargetFrameworks>net35;netstandard2.0</TargetFrameworks>
+-        <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+-        <Description>BepInEx preloader module for UnityMono games</Description>
+-    </PropertyGroup>
+-    <PropertyGroup Condition="'$(TargetFramework)' == 'net35'">
+-        <!-- Output only net35 version to distribution; netstadnard is only used for generating NuGet package -->
+-        <OutputPath>$(BuildDir)/Unity.Mono</OutputPath>
+-        <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+-    </PropertyGroup>
+-    <ItemGroup>
+-        <ProjectReference Include="..\..\..\BepInEx.Core\BepInEx.Core.csproj"/>
+-        <ProjectReference Include="..\..\..\BepInEx.Preloader.Core\BepInEx.Preloader.Core.csproj"/>
+-        <ProjectReference Include="..\BepInEx.Unity.Common\BepInEx.Unity.Common.csproj"/>
+-    </ItemGroup>
+-    <ItemGroup>
+-        <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All"/>
+-        <PackageReference Include="HarmonyX" Version="2.10.2" />
+-    </ItemGroup>
+-</Project>
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/DoorstopEntrypoint.cs b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/DoorstopEntrypoint.cs
+deleted file mode 100644
+index 4fb7ea4..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/DoorstopEntrypoint.cs
++++ /dev/null
+@@ -1,37 +0,0 @@
+-﻿using System;
+-using System.IO;
+-using BepInEx.Preloader.Core;
+-using BepInEx.Unity.Mono.Preloader;
+-
+-// ReSharper disable once CheckNamespace
+-namespace Doorstop;
+-
+-internal static class Entrypoint
+-{
+-    /// <summary>
+-    ///     The main entrypoint of BepInEx, called from Doorstop.
+-    /// </summary>
+-    public static void Start()
+-    {
+-        // We set it to the current directory first as a fallback, but try to use the same location as the .exe file.
+-        var silentExceptionLog = $"preloader_{DateTime.Now:yyyyMMdd_HHmmss_fff}.log";
+-
+-        try
+-        {
+-            EnvVars.LoadVars();
+-
+-            var gamePath = Path.GetDirectoryName(EnvVars.DOORSTOP_PROCESS_PATH) ?? ".";
+-            silentExceptionLog = Path.Combine(gamePath, silentExceptionLog);
+-
+-            // In some versions of Unity 4, Mono tries to resolve BepInEx.dll prematurely because of the call to Paths.SetExecutablePath
+-            // To prevent that, we have to use reflection and a separate startup class so that we can install required assembly resolvers before the main code
+-            typeof(Entrypoint).Assembly.GetType($"BepInEx.Unity.Mono.Preloader.{nameof(UnityPreloaderRunner)}")
+-                              ?.GetMethod(nameof(UnityPreloaderRunner.PreloaderPreMain))
+-                              ?.Invoke(null, null);
+-        }
+-        catch (Exception ex)
+-        {
+-            File.WriteAllText(silentExceptionLog, ex.ToString());
+-        }
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/EntrypointPatcher.cs b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/EntrypointPatcher.cs
+deleted file mode 100644
+index fb2f834..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/EntrypointPatcher.cs
++++ /dev/null
+@@ -1,136 +0,0 @@
+-using System;
+-using System.Collections.Generic;
+-using System.IO;
+-using System.Linq;
+-using BepInEx.Bootstrap;
+-using BepInEx.Configuration;
+-using BepInEx.Logging;
+-using BepInEx.Preloader.Core.Patching;
+-using BepInEx.Unity.Common;
+-using Mono.Cecil;
+-using Mono.Cecil.Cil;
+-
+-namespace BepInEx.Unity.Mono.Preloader;
+-
+-[PatcherPluginInfo("io.bepinex.entrypointpatcher", "BepInEx Entrypoint", "1.0")]
+-internal class EntrypointPatcher : BasePatcher
+-{
+-    private static readonly ConfigEntry<string> ConfigEntrypointAssembly = ConfigFile.CoreConfig.Bind(
+-     "Preloader.Entrypoint", "Assembly",
+-     DefaultEntrypointAssembly,
+-     "The local filename of the assembly to target.");
+-
+-    private static readonly ConfigEntry<string> ConfigEntrypointType = ConfigFile.CoreConfig.Bind(
+-     "Preloader.Entrypoint", "Type",
+-     DefaultEntrypointType,
+-     "The name of the type in the entrypoint assembly to search for the entrypoint method.");
+-
+-    private static readonly ConfigEntry<string> ConfigEntrypointMethod = ConfigFile.CoreConfig.Bind(
+-     "Preloader.Entrypoint", "Method",
+-     ".cctor",
+-     "The name of the method in the specified entrypoint assembly and type to hook and load Chainloader from.");
+-
+-    private static string DefaultEntrypointAssembly =>
+-        UnityInfo.Version.LessThan(2017) ? "UnityEngine.dll" : "UnityEngine.CoreModule.dll";
+-
+-    private static string DefaultEntrypointType => UnityInfo.Version.LessThan(5) ? "MonoBehaviour" : "Application";
+-
+-    private bool HasLoaded { get; set; }
+-
+-    [TargetAssembly(TargetAssemblyAttribute.AllAssemblies)]
+-    public bool PatchEntrypoint(ref AssemblyDefinition assembly, string filename)
+-    {
+-        if (HasLoaded || filename != ConfigEntrypointAssembly.Value)
+-            return false;
+-
+-        if (assembly.MainModule.AssemblyReferences.Any(x => x.Name.Contains("BepInEx")))
+-            throw new
+-                Exception("BepInEx has been detected to be patched! Please unpatch before using a patchless variant!");
+-
+-        var entrypointType = ConfigEntrypointType.Value;
+-        var entrypointMethod = ConfigEntrypointMethod.Value;
+-
+-        Log.Log(LogLevel.Debug, $"Hooking chainloader into {entrypointType}::{entrypointMethod}");
+-
+-        var isCctor = entrypointMethod.IsNullOrWhiteSpace() || entrypointMethod == ".cctor";
+-
+-
+-        var entryType = assembly.MainModule.Types.FirstOrDefault(x => x.Name == entrypointType);
+-
+-        if (entryType == null)
+-            throw new Exception("The entrypoint type is invalid! Please check your config/BepInEx.cfg file");
+-
+-        var chainloaderAssemblyPath = Path.Combine(Paths.BepInExAssemblyDirectory, "BepInEx.Unity.Mono.dll");
+-
+-        var readerParameters = new ReaderParameters
+-        {
+-            AssemblyResolver = TypeLoader.CecilResolver
+-        };
+-
+-        using (var chainloaderAssemblyDefinition =
+-               AssemblyDefinition.ReadAssembly(chainloaderAssemblyPath, readerParameters))
+-        {
+-            var chainloaderType =
+-                chainloaderAssemblyDefinition.MainModule.Types.First(x => x.Name == "UnityChainloader");
+-
+-            var originalStartMethod = chainloaderType.EnumerateAllMethods().First(x => x.Name == "StaticStart");
+-
+-            var startMethod = assembly.MainModule.ImportReference(originalStartMethod);
+-
+-            var methods = new List<MethodDefinition>();
+-
+-            if (isCctor)
+-            {
+-                var cctor = entryType.Methods.FirstOrDefault(m => m.IsConstructor && m.IsStatic);
+-
+-                if (cctor == null)
+-                {
+-                    cctor = new MethodDefinition(".cctor",
+-                                                 MethodAttributes.Static | MethodAttributes.Private
+-                                                                         | MethodAttributes.HideBySig |
+-                                                                           MethodAttributes.SpecialName
+-                                                                         | MethodAttributes.RTSpecialName,
+-                                                 assembly.MainModule.ImportReference(typeof(void)));
+-
+-                    entryType.Methods.Add(cctor);
+-                    var il = cctor.Body.GetILProcessor();
+-                    il.Append(il.Create(OpCodes.Ret));
+-                }
+-
+-                methods.Add(cctor);
+-            }
+-            else
+-            {
+-                methods.AddRange(entryType.Methods.Where(x => x.Name == entrypointMethod));
+-            }
+-
+-            if (!methods.Any())
+-                throw new Exception("The entrypoint method is invalid! Please check your config.ini");
+-
+-            foreach (var method in methods)
+-            {
+-                var il = method.Body.GetILProcessor();
+-
+-                var ins = il.Body.Instructions.First();
+-
+-                il.InsertBefore(ins,
+-                                il.Create(OpCodes.Ldnull)); // gameExePath (always null, we initialize the Paths class in Entrypoint)
+-
+-                il.InsertBefore(ins,
+-                                il.Create(OpCodes.Call,
+-                                          startMethod)); // UnityChainloader.StaticStart(string gameExePath)
+-            }
+-        }
+-
+-        HasLoaded = true;
+-
+-        return true;
+-    }
+-
+-    public override void Finalizer()
+-    {
+-        if (!HasLoaded)
+-            Log.Log(LogLevel.Fatal,
+-                    $"Failed to patch BepInEx chainloader into assembly '{ConfigEntrypointAssembly.Value}', either due to error or not being able to find it. Is it spelled correctly?");
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/TraceFix.cs b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/TraceFix.cs
+deleted file mode 100644
+index b88153b..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/TraceFix.cs
++++ /dev/null
+@@ -1,73 +0,0 @@
+-﻿using System;
+-using System.Diagnostics;
+-using System.Linq;
+-using System.Reflection;
+-using HarmonyLib;
+-
+-namespace BepInEx.Unity.Mono.Preloader.RuntimeFixes;
+-
+-/// <summary>
+-///     This exists because the Mono implementation of <see cref="Trace" /> is/was broken, and would call Write directly
+-///     instead of calling TraceEvent.
+-/// </summary>
+-internal static class TraceFix
+-{
+-    private static Type TraceImplType;
+-
+-    private static object ListenersSyncRoot;
+-    private static TraceListenerCollection Listeners;
+-    private static PropertyInfo prop_AutoFlush;
+-
+-    private static bool AutoFlush => (bool) prop_AutoFlush.GetValue(null, null);
+-
+-
+-    public static void ApplyFix()
+-    {
+-        TraceImplType = AppDomain.CurrentDomain.GetAssemblies()
+-                                 .First(x => x.GetName().Name == "System")
+-                                 .GetTypes()
+-                                 .FirstOrDefault(x => x.Name == "TraceImpl");
+-        // assembly that has already fixed this
+-        if (TraceImplType == null) return;
+-
+-        ListenersSyncRoot = AccessTools.Property(TraceImplType, "ListenersSyncRoot").GetValue(null, null);
+-
+-        Listeners = (TraceListenerCollection) AccessTools.Property(TraceImplType, "Listeners").GetValue(null, null);
+-
+-        prop_AutoFlush = AccessTools.Property(TraceImplType, "AutoFlush");
+-
+-
+-        var instance = new Harmony("com.bepis.bepinex.tracefix");
+-
+-        instance.Patch(
+-                       typeof(Trace).GetMethod("DoTrace", BindingFlags.Static | BindingFlags.NonPublic),
+-                       new HarmonyMethod(typeof(TraceFix).GetMethod(nameof(DoTraceReplacement),
+-                                                                    BindingFlags.Static | BindingFlags.NonPublic)));
+-    }
+-
+-
+-    private static bool DoTraceReplacement(string kind, Assembly report, string message)
+-    {
+-        var arg = string.Empty;
+-        try
+-        {
+-            arg = report.GetName().Name;
+-        }
+-        catch (MethodAccessException) { }
+-
+-        var type = (TraceEventType) Enum.Parse(typeof(TraceEventType), kind);
+-
+-        lock (ListenersSyncRoot)
+-        {
+-            foreach (var obj in Listeners)
+-            {
+-                var traceListener = (TraceListener) obj;
+-                traceListener.TraceEvent(new TraceEventCache(), arg, type, 0, message);
+-
+-                if (AutoFlush) traceListener.Flush();
+-            }
+-        }
+-
+-        return false;
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/UnityPatches.cs b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/UnityPatches.cs
+deleted file mode 100644
+index 993a1c7..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/UnityPatches.cs
++++ /dev/null
+@@ -1,33 +0,0 @@
+-﻿using System.IO;
+-using System.Reflection;
+-using BepInEx.Unity.Mono.Preloader.Utils;
+-using HarmonyLib;
+-
+-namespace BepInEx.Unity.Mono.Preloader.RuntimeFixes;
+-
+-internal static class UnityPatches
+-{
+-    private static Harmony HarmonyInstance { get; set; }
+-
+-    public static void Apply()
+-    {
+-        HarmonyInstance = Harmony.CreateAndPatchAll(typeof(UnityPatches));
+-
+-        try
+-        {
+-            TraceFix.ApplyFix();
+-        }
+-        catch { } //ignore everything, if it's thrown an exception, we're using an assembly that has already fixed this
+-    }
+-
+-    [HarmonyPrefix]
+-    [HarmonyPatch(typeof(Assembly), nameof(Assembly.LoadFile), typeof(string))]
+-    [HarmonyPatch(typeof(Assembly), nameof(Assembly.LoadFrom), typeof(string))]
+-    public static bool LoadFilePrefix(string __0, ref Assembly __result)
+-    {
+-        if (!File.Exists(__0))
+-            throw new FileNotFoundException(__0);
+-        __result = MonoAssemblyHelper.Load(__0);
+-        return false;
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/XTermFix.cs b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/XTermFix.cs
+deleted file mode 100644
+index ab33789..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/XTermFix.cs
++++ /dev/null
+@@ -1,133 +0,0 @@
+-﻿using System;
+-using System.Collections.Generic;
+-using System.Linq;
+-using System.Reflection.Emit;
+-using HarmonyLib;
+-using MonoMod.RuntimeDetour;
+-using MonoMod.RuntimeDetour.Platforms;
+-using MonoMod.Utils;
+-
+-namespace BepInEx.Unity.Mono.Preloader.RuntimeFixes;
+-
+-internal static class XTermFix
+-{
+-    public static int intOffset;
+-
+-    public static void Apply()
+-    {
+-        if (PlatformHelper.Is(Platform.Windows))
+-            return;
+-
+-        if (typeof(Console).Assembly.GetType("System.ConsoleDriver") == null)
+-            // Mono version is too old, use our own TTY implementation instead
+-            return;
+-
+-        if (AccessTools.Method("System.TermInfoReader:DetermineVersion") != null)
+-            // Fix has been applied officially
+-            return;
+-
+-        // Apparently on older Unity versions (4.x), using Process.Start can run Console..cctor
+-        // And since MonoMod's PlatformHelper (used by DetourHelper.Native) runs Process.Start to determine ARM/x86 platform,
+-        // this causes a crash owing to TermInfoReader running before it can be patched and fixed
+-        // Because Doorstop does not support ARM at the moment, we can get away with just forcing x86 detour platform.
+-        // TODO: Figure out a way to detect ARM on Unix without running Process.Start
+-        DetourHelper.Native = new DetourNativeX86Platform();
+-
+-        var harmony = new Harmony("com.bepinex.xtermfix");
+-
+-        harmony.Patch(AccessTools.Method("System.TermInfoReader:ReadHeader"),
+-                      new HarmonyMethod(typeof(XTermFix), nameof(ReadHeaderPrefix)));
+-
+-        harmony.Patch(AccessTools.Method("System.TermInfoReader:Get", new[] { AccessTools.TypeByName("System.TermInfoNumbers") }),
+-                      transpiler: new HarmonyMethod(typeof(XTermFix), nameof(GetTermInfoNumbersTranspiler)));
+-
+-        harmony.Patch(AccessTools.Method("System.TermInfoReader:Get", new[] { AccessTools.TypeByName("System.TermInfoStrings") }),
+-                      transpiler: new HarmonyMethod(typeof(XTermFix), nameof(GetTermInfoStringsTranspiler)));
+-
+-        harmony.Patch(AccessTools.Method("System.TermInfoReader:GetStringBytes", new[] { AccessTools.TypeByName("System.TermInfoStrings") }),
+-                      transpiler: new HarmonyMethod(typeof(XTermFix), nameof(GetTermInfoStringsTranspiler)));
+-
+-        DetourHelper.Native = null;
+-    }
+-
+-    public static int GetInt32(byte[] buffer, int offset)
+-    {
+-        int b1 = buffer[offset];
+-        int b2 = buffer[offset + 1];
+-        int b3 = buffer[offset + 2];
+-        int b4 = buffer[offset + 3];
+-
+-        return b1 | (b2 << 8) | (b3 << 16) | (b4 << 24);
+-    }
+-
+-    public static short GetInt16(byte[] buffer, int offset)
+-    {
+-        int b1 = buffer[offset];
+-        int b2 = buffer[offset + 1];
+-
+-        return (short) (b1 | (b2 << 8));
+-    }
+-
+-    public static int GetInteger(byte[] buffer, int offset) =>
+-        intOffset == 2
+-            ? GetInt16(buffer, offset)
+-            : GetInt32(buffer, offset);
+-
+-    public static void DetermineVersion(short magic)
+-    {
+-        if (magic == 0x11a)
+-            intOffset = 2;
+-        else if (magic == 0x21e)
+-            intOffset = 4;
+-        else
+-            throw new Exception($"Unknown xterm header format: {magic}");
+-    }
+-
+-    public static bool ReadHeaderPrefix(byte[] buffer,
+-                                        ref int position,
+-                                        ref short ___boolSize,
+-                                        ref short ___numSize,
+-                                        ref short ___strOffsets)
+-    {
+-        var magic = GetInt16(buffer, position);
+-        position += 2;
+-        DetermineVersion(magic);
+-
+-        // nameSize = GetInt16(buffer, position);
+-        position += 2;
+-        ___boolSize = GetInt16(buffer, position);
+-        position += 2;
+-        ___numSize = GetInt16(buffer, position);
+-        position += 2;
+-        ___strOffsets = GetInt16(buffer, position);
+-        position += 2;
+-        // strSize = GetInt16(buffer, position);
+-        position += 2;
+-
+-        return false;
+-    }
+-
+-    public static IEnumerable<CodeInstruction> GetTermInfoNumbersTranspiler(IEnumerable<CodeInstruction> instructions)
+-    {
+-        // This implementation does not seem to have changed so I will be using indexes like the lazy fuck I am
+-
+-        var list = instructions.ToList();
+-
+-        list[31] = new CodeInstruction(OpCodes.Ldsfld, AccessTools.Field(typeof(XTermFix), nameof(intOffset)));
+-        list[36] = new CodeInstruction(OpCodes.Nop);
+-        list[39] = new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(XTermFix), nameof(GetInteger)));
+-
+-        return list;
+-    }
+-
+-    public static IEnumerable<CodeInstruction> GetTermInfoStringsTranspiler(IEnumerable<CodeInstruction> instructions)
+-    {
+-        // This implementation does not seem to have changed so I will be using indexes like the lazy fuck I am
+-
+-        var list = instructions.ToList();
+-
+-        list[32] = new CodeInstruction(OpCodes.Ldsfld, AccessTools.Field(typeof(XTermFix), nameof(intOffset)));
+-
+-        return list;
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloader.cs b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloader.cs
+deleted file mode 100644
+index 6cc3b33..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloader.cs
++++ /dev/null
+@@ -1,152 +0,0 @@
+-using System;
+-using System.IO;
+-using System.Linq;
+-using BepInEx.Bootstrap;
+-using BepInEx.Configuration;
+-using BepInEx.Logging;
+-using BepInEx.Preloader.Core;
+-using BepInEx.Preloader.Core.Logging;
+-using BepInEx.Preloader.Core.Patching;
+-using BepInEx.Preloader.RuntimeFixes;
+-using BepInEx.Unity.Common;
+-using BepInEx.Unity.Mono.Preloader.RuntimeFixes;
+-using BepInEx.Unity.Mono.Preloader.Utils;
+-
+-namespace BepInEx.Unity.Mono.Preloader;
+-
+-/// <summary>
+-///     The main entrypoint of BepInEx, and initializes all patchers and the chainloader.
+-/// </summary>
+-internal static class UnityPreloader
+-{
+-    #region Config
+-
+-    internal static readonly ConfigEntry<bool> ConfigApplyRuntimePatches = ConfigFile.CoreConfig.Bind(
+-     "Preloader", "ApplyRuntimePatches",
+-     true,
+-     "Enables or disables runtime patches.\nThis should always be true, unless you cannot start the game due to a Harmony related issue (such as running .NET Standard runtime) or you know what you're doing.");
+-
+-    #endregion
+-
+-    /// <summary>
+-    ///     The log writer that is specific to the preloader.
+-    /// </summary>
+-    private static PreloaderConsoleListener PreloaderLog { get; set; }
+-
+-    private static ManualLogSource Log => PreloaderLogger.Log;
+-
+-    public static void Run()
+-    {
+-        try
+-        {
+-            HarmonyBackendFix.Initialize();
+-            UnityInfo.Initialize(Paths.ExecutablePath, Paths.GameDataPath);
+-
+-            ConsoleManager.Initialize(false, false);
+-            AllocateConsole();
+-
+-            Utility.TryDo(() =>
+-            {
+-                if (ConfigApplyRuntimePatches.Value)
+-                    UnityPatches.Apply();
+-            }, out var runtimePatchException);
+-
+-            Logger.Sources.Add(new HarmonyLogSource());
+-            Logger.Sources.Add(TraceLogSource.CreateSource());
+-
+-            PreloaderLog = new PreloaderConsoleListener();
+-            Logger.Listeners.Add(PreloaderLog);
+-
+-            ChainloaderLogHelper.PrintLogInfo(Log);
+-            Log.Log(LogLevel.Info, $"Running under Unity {UnityInfo.Version}");
+-            Log.Log(LogLevel.Info, $"CLR runtime version: {Environment.Version}");
+-            Log.Log(LogLevel.Info, $"Supports SRE: {Utility.CLRSupportsDynamicAssemblies}");
+-
+-            Log.Log(LogLevel.Debug, $"Game executable path: {Paths.ExecutablePath}");
+-            Log.Log(LogLevel.Debug, $"Unity Managed directory: {Paths.ManagedPath}");
+-            Log.Log(LogLevel.Debug, $"BepInEx root path: {Paths.BepInExRootPath}");
+-
+-            if (runtimePatchException != null)
+-                Log.Log(LogLevel.Warning,
+-                        $"Failed to apply runtime patches for Mono. See more info in the output log. Error message: {runtimePatchException.Message}");
+-
+-            Log.Log(LogLevel.Message, "Preloader started");
+-
+-            TypeLoader.SearchDirectories.UnionWith(Paths.DllSearchPaths);
+-
+-            using (var assemblyPatcher = new AssemblyPatcher(MonoAssemblyHelper.LoadFromMemory))
+-            {
+-                assemblyPatcher.AddPatchersFromDirectory(Paths.BepInExAssemblyDirectory);
+-                assemblyPatcher.AddPatchersFromDirectory(Paths.PatcherPluginPath);
+-
+-                Log.Log(LogLevel.Info,
+-                        $"{assemblyPatcher.PatcherContext.PatcherPlugins.Count} patcher plugin{(assemblyPatcher.PatcherContext.PatcherPlugins.Count == 1 ? "" : "s")} loaded");
+-
+-                assemblyPatcher.LoadAssemblyDirectories(Paths.DllSearchPaths);
+-
+-                Log.Log(LogLevel.Info,
+-                        $"{assemblyPatcher.PatcherContext.AvailableAssemblies.Count} assemblies discovered");
+-
+-                assemblyPatcher.PatchAndLoad();
+-            }
+-
+-            Log.Log(LogLevel.Message, "Preloader finished");
+-            Logger.Listeners.Remove(PreloaderLog);
+-            PreloaderLog.Dispose();
+-        }
+-        catch (Exception ex)
+-        {
+-            try
+-            {
+-                Log.Log(LogLevel.Fatal, "Could not run preloader!");
+-                Log.Log(LogLevel.Fatal, ex);
+-
+-                if (!ConsoleManager.ConsoleActive)
+-                {
+-                    //if we've already attached the console, then the log will already be written to the console
+-                    AllocateConsole();
+-                    Console.Write(PreloaderLog);
+-                }
+-            }
+-            catch { }
+-
+-            var log = string.Empty;
+-
+-            try
+-            {
+-                // We could use platform-dependent newlines, however the developers use Windows so this will be easier to read :)
+-
+-                log = string.Join("\r\n", PreloaderConsoleListener.LogEvents.Select(x => x.ToString()).ToArray());
+-                log += "\r\n";
+-
+-                PreloaderLog?.Dispose();
+-                PreloaderLog = null;
+-            }
+-            catch { }
+-
+-            File.WriteAllText(
+-                              Path.Combine(Paths.GameRootPath, $"preloader_{DateTime.Now:yyyyMMdd_HHmmss_fff}.log"),
+-                              log + ex);
+-        }
+-    }
+-
+-    /// <summary>
+-    ///     Allocates a console window for use by BepInEx safely.
+-    /// </summary>
+-    public static void AllocateConsole()
+-    {
+-        if (!ConsoleManager.ConsoleEnabled)
+-            return;
+-
+-        try
+-        {
+-            ConsoleManager.CreateConsole();
+-            Logger.Listeners.Add(new ConsoleLogListener());
+-        }
+-        catch (Exception ex)
+-        {
+-            Log.LogError("Failed to allocate console!");
+-            Log.LogError(ex);
+-        }
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloaderRunner.cs b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloaderRunner.cs
+deleted file mode 100644
+index 0f063da..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloaderRunner.cs
++++ /dev/null
+@@ -1,110 +0,0 @@
+-using System;
+-using System.IO;
+-using System.Linq;
+-using System.Reflection;
+-using BepInEx.Preloader.Core;
+-using BepInEx.Preloader.RuntimeFixes;
+-using BepInEx.Unity.Mono.Preloader.RuntimeFixes;
+-using BepInEx.Unity.Mono.Preloader.Utils;
+-
+-namespace BepInEx.Unity.Mono.Preloader;
+-
+-internal static class UnityPreloaderRunner
+-{
+-    // This is a list of important assemblies in BepInEx core folder that should be force-loaded
+-    // Some games can ship these assemblies in Managed folder, in which case assembly resolving bypasses our LocalResolve
+-    // On the other hand, renaming these assemblies is not viable because 3rd party assemblies
+-    // that we don't build (e.g. MonoMod, Harmony, many plugins) depend on them
+-    // As such, we load them early so that the game uses our version instead
+-    // These assemblies should be known to be rarely edited and are known to be shipped as-is with Unity assets
+-    private static readonly string[] CriticalAssemblies =
+-    {
+-        "Mono.Cecil.dll",
+-        "Mono.Cecil.Mdb.dll",
+-        "Mono.Cecil.Pdb.dll",
+-        "Mono.Cecil.Rocks.dll",
+-        "MonoMod.Utils.dll",
+-        "MonoMod.RuntimeDetour.dll",
+-        "0Harmony.dll"
+-    };
+-
+-    private static void LoadCriticalAssemblies()
+-    {
+-        foreach (var criticalAssembly in CriticalAssemblies)
+-            try
+-            {
+-                MonoAssemblyHelper.Load(Path.Combine(Paths.BepInExAssemblyDirectory, criticalAssembly));
+-            }
+-            catch (Exception)
+-            {
+-                // Suppress error for now
+-                // TODO: Should we crash here if load fails? Can't use logging at this point
+-            }
+-    }
+-
+-    public static void PreloaderPreMain()
+-    {
+-        PlatformUtils.SetPlatform();
+-
+-        var bepinPath = Utility.ParentDirectory(Path.GetFullPath(EnvVars.DOORSTOP_INVOKE_DLL_PATH), 2);
+-
+-        Paths.SetExecutablePath(EnvVars.DOORSTOP_PROCESS_PATH,
+-                                bepinPath,
+-                                EnvVars.DOORSTOP_MANAGED_FOLDER_DIR,
+-                                true,
+-                                EnvVars.DOORSTOP_DLL_SEARCH_DIRS);
+-
+-        LoadCriticalAssemblies();
+-        AppDomain.CurrentDomain.AssemblyResolve += LocalResolve;
+-        PreloaderMain();
+-    }
+-
+-    private static void PreloaderMain()
+-    {
+-        if (UnityPreloader.ConfigApplyRuntimePatches.Value)
+-        {
+-            XTermFix.Apply();
+-            ConsoleSetOutFix.Apply();
+-        }
+-
+-        UnityPreloader.Run();
+-    }
+-
+-    private static Assembly LocalResolve(object sender, ResolveEventArgs args)
+-    {
+-        if (!Utility.TryParseAssemblyName(args.Name, out var assemblyName))
+-            return null;
+-
+-        // Use parse assembly name on managed side because native GetName() can fail on some locales
+-        // if the game path has "exotic" characters
+-
+-        var validAssemblies = AppDomain.CurrentDomain
+-                                       .GetAssemblies()
+-                                       .Select(a => new
+-                                       {
+-                                           assembly = a,
+-                                           name = Utility.TryParseAssemblyName(a.FullName, out var name)
+-                                                      ? name
+-                                                      : null
+-                                       })
+-                                       .Where(a => a.name != null && a.name.Name == assemblyName.Name)
+-                                       .OrderByDescending(a => a.name.Version)
+-                                       .ToList();
+-
+-        // First try to match by version, then just pick the best match (generally highest)
+-        // This should mainly affect cases where the game itself loads some assembly (like Mono.Cecil) 
+-        var foundMatch = validAssemblies.FirstOrDefault(a => a.name.Version == assemblyName.Version) ??
+-                         validAssemblies.FirstOrDefault();
+-        var foundAssembly = foundMatch?.assembly;
+-
+-        if (foundAssembly != null)
+-            return foundAssembly;
+-
+-        if (MonoAssemblyHelper.TryResolveDllAssembly(assemblyName, Paths.BepInExAssemblyDirectory, out foundAssembly)
+-         || MonoAssemblyHelper.TryResolveDllAssembly(assemblyName, Paths.PatcherPluginPath, out foundAssembly)
+-         || MonoAssemblyHelper.TryResolveDllAssembly(assemblyName, Paths.PluginPath, out foundAssembly))
+-            return foundAssembly;
+-
+-        return null;
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/Utils/MonoAssemblyHelper.cs b/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/Utils/MonoAssemblyHelper.cs
+deleted file mode 100644
+index 3727e33..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono.Preloader/Utils/MonoAssemblyHelper.cs
++++ /dev/null
+@@ -1,119 +0,0 @@
+-﻿using System;
+-using System.IO;
+-using System.Linq;
+-using System.Reflection;
+-using System.Runtime.InteropServices;
+-using BepInEx.Preloader.Core;
+-using Mono.Cecil;
+-using MonoMod.Utils;
+-
+-namespace BepInEx.Unity.Mono.Preloader.Utils;
+-
+-internal static class MonoAssemblyHelper
+-{
+-    static MonoAssemblyHelper()
+-    {
+-        // We can't use mono's __Internal because on Windows it will use GetModuleHandleW(NULL) that will
+-        // in turn return the module to the EXE and not mono.dll (at least on Unity versions < 5).
+-        typeof(MonoAssemblyHelper).ResolveDynDllImports(new()
+-        {
+-            ["mono"] = new()
+-            {
+-                EnvVars.DOORSTOP_MONO_LIB_PATH
+-            }
+-        });
+-    }
+-
+-    private static ReadAssemblyResult ReadAssemblyData(string filePath)
+-    {
+-        return ReadAssemblyData(File.ReadAllBytes(filePath));
+-    }
+-
+-    private static ReadAssemblyResult ReadAssemblyData(byte[] assemblyData)
+-    {
+-        using var ms = new MemoryStream(assemblyData);
+-        using var ad = AssemblyDefinition.ReadAssembly(ms);
+-
+-        return new ReadAssemblyResult
+-        {
+-            AssemblyName = ad.Name.Name,
+-            AssemblyData = assemblyData
+-        };
+-    }
+-
+-    private static Assembly GetAssemblyByName(string assemblyName)
+-    {
+-        return AppDomain.CurrentDomain.GetAssemblies()
+-                        .FirstOrDefault(a => Utility.TryParseAssemblyName(a.FullName, out var name) &&
+-                                             name.Name == assemblyName);
+-    }
+-
+-    public static bool TryResolveDllAssembly(AssemblyName assemblyName, string directory, out Assembly assembly) =>
+-        Utility.TryResolveDllAssembly(assemblyName, directory, Load, out assembly);
+-
+-    public static Assembly LoadFromMemory(byte[] data, string filePath)
+-    {
+-        var fullPath = Path.GetFullPath(filePath);
+-        return ReadAssemblyData(data).Load(fullPath);
+-    }
+-
+-    public static Assembly Load(string filePath)
+-    {
+-        var fullPath = Path.GetFullPath(filePath);
+-        return ReadAssemblyData(fullPath).Load(fullPath);
+-    }
+-
+-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+-    private delegate nint ImageOpenDelegate(nint data,
+-                                            uint dataLength,
+-                                            bool needCopy,
+-                                            out MonoImageOpenStatus status,
+-                                            bool refOnly,
+-                                            [MarshalAs(UnmanagedType.LPStr)] string name);
+-
+-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+-    private delegate nint AssemblyLoadDelegate(nint image,
+-                                               [MarshalAs(UnmanagedType.LPStr)] string fileName,
+-                                               out MonoImageOpenStatus status,
+-                                               bool refOnly);
+-
+-    private enum MonoImageOpenStatus
+-    {
+-        MONO_IMAGE_OK,
+-        MONO_IMAGE_ERROR_ERRNO,
+-        MONO_IMAGE_MISSING_ASSEMBLYREF,
+-        MONO_IMAGE_IMAGE_INVALID
+-    }
+-
+-    private class ReadAssemblyResult
+-    {
+-        public byte[] AssemblyData;
+-        public string AssemblyName;
+-
+-        public unsafe Assembly Load(string fullPath)
+-        {
+-            var assembly = GetAssemblyByName(AssemblyName);
+-            if (assembly != null)
+-                return assembly;
+-
+-            fixed (byte* data = &AssemblyData[0])
+-            {
+-                var image = imageOpen((nint) data, (uint) AssemblyData.Length, true,
+-                                      out var status, false, fullPath);
+-                if (status != MonoImageOpenStatus.MONO_IMAGE_OK)
+-                    throw new BadImageFormatException($"Failed to load image {fullPath}: {status}");
+-                assemblyLoad(image, fullPath, out status, false);
+-                if (status != MonoImageOpenStatus.MONO_IMAGE_OK)
+-                    throw new BadImageFormatException($"Failed to load assembly {fullPath}: {status}");
+-                return GetAssemblyByName(AssemblyName);
+-            }
+-        }
+-    }
+-#pragma warning disable CS0649
+-    [DynDllImport("mono", "mono_image_open_from_data_with_name")]
+-    private static ImageOpenDelegate imageOpen;
+-
+-    [DynDllImport("mono", "mono_assembly_load_from_full")]
+-    private static AssemblyLoadDelegate assemblyLoad;
+-#pragma warning restore CS0649
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/BaseUnityPlugin.cs b/Runtimes/Unity/BepInEx.Unity.Mono/BaseUnityPlugin.cs
+deleted file mode 100644
+index 4043771..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono/BaseUnityPlugin.cs
++++ /dev/null
+@@ -1,53 +0,0 @@
+-﻿using System;
+-using BepInEx.Configuration;
+-using BepInEx.Logging;
+-using UnityEngine;
+-
+-namespace BepInEx.Unity.Mono;
+-
+-/// <summary>
+-///     The base plugin type that is used by the BepInEx plugin loader.
+-/// </summary>
+-public abstract class BaseUnityPlugin : MonoBehaviour
+-{
+-    /// <summary>
+-    ///     Create a new instance of a plugin and all of its tied in objects.
+-    /// </summary>
+-    /// <exception cref="InvalidOperationException">BepInPlugin attribute is missing.</exception>
+-    protected BaseUnityPlugin()
+-    {
+-        var metadata = MetadataHelper.GetMetadata(this);
+-        if (metadata == null)
+-            throw new InvalidOperationException("Can't create an instance of " + GetType().FullName +
+-                                                " because it inherits from BaseUnityPlugin and the BepInPlugin attribute is missing.");
+-
+-        Info = new PluginInfo
+-        {
+-            Metadata = metadata,
+-            Instance = this,
+-            Dependencies = MetadataHelper.GetDependencies(GetType()),
+-            Processes = MetadataHelper.GetAttributes<BepInProcess>(GetType()),
+-            Location = GetType().Assembly.Location
+-        };
+-
+-        Logger = BepInEx.Logging.Logger.CreateLogSource(metadata.Name);
+-
+-        Config = new ConfigFile(Utility.CombinePaths(Paths.ConfigPath, metadata.GUID + ".cfg"), false, metadata);
+-    }
+-
+-    /// <summary>
+-    ///     Information about this plugin as it was loaded.
+-    /// </summary>
+-    public PluginInfo Info { get; }
+-
+-    /// <summary>
+-    ///     Logger instance tied to this plugin.
+-    /// </summary>
+-    protected ManualLogSource Logger { get; }
+-
+-    /// <summary>
+-    ///     Default config file tied to this plugin. The config file will not be created until
+-    ///     any settings are added and changed, or <see cref="ConfigFile.Save" /> is called.
+-    /// </summary>
+-    public ConfigFile Config { get; }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/BepInEx.Unity.Mono.csproj b/Runtimes/Unity/BepInEx.Unity.Mono/BepInEx.Unity.Mono.csproj
+deleted file mode 100644
+index 81b0d72..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono/BepInEx.Unity.Mono.csproj
++++ /dev/null
+@@ -1,23 +0,0 @@
+-﻿<Project Sdk="Microsoft.NET.Sdk">
+-    <PropertyGroup>
+-        <Description>BepInEx support library for Mono Unity games</Description>
+-        <TargetFrameworks>net35;netstandard2.0</TargetFrameworks>
+-        <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+-    </PropertyGroup>
+-    <PropertyGroup Condition="'$(TargetFramework)' == 'net35'">
+-        <!-- Output only net35 version to distribution; netstadnard is only used for generating NuGet package -->
+-        <OutputPath>$(BuildDir)/Unity.Mono</OutputPath>
+-        <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+-    </PropertyGroup>
+-    <ItemGroup>
+-        <ProjectReference Include="..\..\..\BepInEx.Core\BepInEx.Core.csproj"/>
+-        <ProjectReference Include="..\..\..\BepInEx.Preloader.Core\BepInEx.Preloader.Core.csproj" PrivateAssets="All"/>
+-        <ProjectReference Include="..\BepInEx.Unity.Mono.Preloader\BepInEx.Unity.Mono.Preloader.csproj" PrivateAssets="All"/>
+-    </ItemGroup>
+-    <ItemGroup>
+-        <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All"/>
+-        <PackageReference Include="HarmonyX" Version="2.10.2" />
+-        <PackageReference Include="UnityEngine" Version="5.6.1" IncludeAssets="compile"/>
+-        <PackageReference Include="Unity.InputSystem" version="1.5.0" IncludeAssets="compile"/>
+-    </ItemGroup>
+-</Project>
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/BepInExInstance.cs b/Runtimes/Unity/BepInEx.Unity.Mono/BepInExInstance.cs
+deleted file mode 100644
+index 703e6c2..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono/BepInExInstance.cs
++++ /dev/null
+@@ -1,8 +0,0 @@
+-﻿using BepInEx.Unity.Mono.Bootstrap;
+-
+-namespace BepInEx.Unity.Mono;
+-
+-public static class BepInExInstance
+-{
+-    public static UnityChainloader Chainloader { get; }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/Configuration/KeyboardShortcut.cs b/Runtimes/Unity/BepInEx.Unity.Mono/Configuration/KeyboardShortcut.cs
+deleted file mode 100644
+index 9867f0b..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono/Configuration/KeyboardShortcut.cs
++++ /dev/null
+@@ -1,178 +0,0 @@
+-﻿using System;
+-using System.Collections.Generic;
+-using System.Linq;
+-using BepInEx.Configuration;
+-using BepInEx.Logging;
+-using UnityEngine;
+-using Logger = BepInEx.Logging.Logger;
+-
+-namespace BepInEx.Unity.Mono.Configuration;
+-
+-/// <summary>
+-///     A keyboard shortcut that can be used in Update method to check if user presses a key combo. The shortcut is only
+-///     triggered when the user presses the exact combination. For example, <c>F + LeftCtrl</c> will trigger only if user
+-///     presses and holds only LeftCtrl, and then presses F. If any other keys are pressed, the shortcut will not trigger.
+-///     Can be used as a value of a setting in <see cref="ConfigFile.Bind{T}(ConfigDefinition,T,ConfigDescription)" />
+-///     to allow user to change this shortcut and have the changes saved.
+-///     How to use: Use <see cref="IsDown" /> in this class instead of <see cref="Input.GetKeyDown(KeyCode)" /> in the
+-///     Update loop.
+-/// </summary>
+-public struct KeyboardShortcut
+-{
+-    static KeyboardShortcut()
+-    {
+-        TomlTypeConverter.AddConverter(
+-                                       typeof(KeyboardShortcut),
+-                                       new TypeConverter
+-                                       {
+-                                           ConvertToString = (o, type) => ((KeyboardShortcut) o).Serialize(),
+-                                           ConvertToObject = (s, type) => Deserialize(s)
+-                                       });
+-    }
+-
+-    /// <summary>
+-    ///     Shortcut that never triggers.
+-    /// </summary>
+-    public static readonly KeyboardShortcut Empty = new();
+-
+-    // Don't block hotkeys if mouse is being pressed, e.g. when shooting and trying to strafe
+-    private static KeyCode[] modifierBlockKeyCodes;
+-
+-    private readonly KeyCode[] _allKeys;
+-
+-    /// <summary>
+-    ///     Create a new keyboard shortcut.
+-    /// </summary>
+-    /// <param name="mainKey">Main key to press</param>
+-    /// <param name="modifiers">Keys that should be held down before main key is registered</param>
+-    public KeyboardShortcut(KeyCode mainKey, params KeyCode[] modifiers) : this(new[] { mainKey }.Concat(modifiers)
+-                                                                                    .ToArray())
+-    {
+-        if (mainKey == KeyCode.None && modifiers.Any())
+-            throw new
+-                ArgumentException($"Can't set {nameof(mainKey)} to KeyCode.None if there are any {nameof(modifiers)}");
+-    }
+-
+-    private KeyboardShortcut(KeyCode[] keys)
+-    {
+-        _allKeys = SanitizeKeys(keys);
+-    }
+-
+-    private static KeyCode[] SanitizeKeys(params KeyCode[] keys)
+-    {
+-        if (keys.Length == 0 || keys[0] == KeyCode.None)
+-            return new[] { KeyCode.None };
+-
+-        return new[] { keys[0] }.Concat(keys.Skip(1).Distinct().Where(x => x != keys[0]).OrderBy(x => (int) x))
+-                                .ToArray();
+-    }
+-
+-    /// <summary>
+-    ///     Main key of the key combination. It has to be pressed / let go last for the combination to be triggered.
+-    ///     If the combination is empty, <see cref="KeyCode.None" /> is returned.
+-    /// </summary>
+-    public KeyCode MainKey => _allKeys != null && _allKeys.Length > 0 ? _allKeys[0] : KeyCode.None;
+-
+-    /// <summary>
+-    ///     Modifiers of the key combination, if any.
+-    /// </summary>
+-    public IEnumerable<KeyCode> Modifiers => _allKeys?.Skip(1) ?? Enumerable.Empty<KeyCode>();
+-
+-    /// <summary>
+-    ///     Attempt to deserialize key combination from the string.
+-    /// </summary>
+-    public static KeyboardShortcut Deserialize(string str)
+-    {
+-        try
+-        {
+-            var parts = str.Split(new[] { ' ', '+', ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries)
+-                           .Select(x => (KeyCode) Enum.Parse(typeof(KeyCode), x)).ToArray();
+-            return new KeyboardShortcut(parts);
+-        }
+-        catch (SystemException ex)
+-        {
+-            Logger.Log(LogLevel.Error, "Failed to read keybind from settings: " + ex.Message);
+-            return Empty;
+-        }
+-    }
+-
+-    /// <summary>
+-    ///     Serialize the key combination into a user readable string.
+-    /// </summary>
+-    public string Serialize()
+-    {
+-        if (_allKeys == null) return string.Empty;
+-        return string.Join(" + ", _allKeys.Select(x => x.ToString()).ToArray());
+-    }
+-
+-    /// <summary>
+-    ///     Check if the main key was just pressed (Input.GetKeyDown), and specified modifier keys are all pressed
+-    /// </summary>
+-    public bool IsDown()
+-    {
+-        var mainKey = MainKey;
+-        if (mainKey == KeyCode.None) return false;
+-
+-        return UnityInput.Current.GetKeyDown(mainKey) && ModifierKeyTest();
+-    }
+-
+-    /// <summary>
+-    ///     Check if the main key is currently held down (Input.GetKey), and specified modifier keys are all pressed
+-    /// </summary>
+-    public bool IsPressed()
+-    {
+-        var mainKey = MainKey;
+-        if (mainKey == KeyCode.None) return false;
+-
+-        return UnityInput.Current.GetKey(mainKey) && ModifierKeyTest();
+-    }
+-
+-    /// <summary>
+-    ///     Check if the main key was just lifted (Input.GetKeyUp), and specified modifier keys are all pressed.
+-    /// </summary>
+-    public bool IsUp()
+-    {
+-        var mainKey = MainKey;
+-        if (mainKey == KeyCode.None) return false;
+-
+-        return UnityInput.Current.GetKeyUp(mainKey) && ModifierKeyTest();
+-    }
+-
+-    private bool ModifierKeyTest()
+-    {
+-        var allKeys = _allKeys;
+-        var mainKey = MainKey;
+-
+-        var allModifiersPressed = allKeys.All(c => c == mainKey || UnityInput.Current.GetKey(c));
+-        if (!allModifiersPressed) return false;
+-
+-        // Lazy init to make sure the game is initialized, and we're in main thread before calling UnityInput.Current
+-        modifierBlockKeyCodes ??= UnityInput.Current.SupportedKeyCodes.Except([KeyCode.Mouse0, KeyCode.Mouse1,
+-            KeyCode.Mouse2, KeyCode.Mouse3, KeyCode.Mouse4, KeyCode.Mouse5, KeyCode.Mouse6, KeyCode.None
+-        ]).ToArray();
+-
+-        bool noOtherModifiersPressed = modifierBlockKeyCodes.All(c => !UnityInput.Current.GetKey(c) || allKeys.Contains(c));
+-        return noOtherModifiersPressed;
+-    }
+-
+-    /// <inheritdoc />
+-    public override string ToString()
+-    {
+-        if (MainKey == KeyCode.None) return "Not set";
+-
+-        return string.Join(" + ", _allKeys.Select(c => c.ToString()).ToArray());
+-    }
+-
+-    /// <inheritdoc />
+-    public override bool Equals(object obj) =>
+-        obj is KeyboardShortcut shortcut && MainKey == shortcut.MainKey &&
+-        Modifiers.SequenceEqual(shortcut.Modifiers);
+-
+-    /// <inheritdoc />
+-    public override int GetHashCode()
+-    {
+-        if (MainKey == KeyCode.None) return 0;
+-
+-        return _allKeys.Aggregate(_allKeys.Length, (current, item) => unchecked(current * 31 + (int) item));
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/Logging/UnityLogListener.cs b/Runtimes/Unity/BepInEx.Unity.Mono/Logging/UnityLogListener.cs
+deleted file mode 100644
+index 5931390..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono/Logging/UnityLogListener.cs
++++ /dev/null
+@@ -1,81 +0,0 @@
+-﻿using System;
+-using System.Reflection;
+-using System.Runtime.CompilerServices;
+-using System.Text;
+-using BepInEx.Configuration;
+-using BepInEx.Logging;
+-using UnityEngine;
+-using Logger = BepInEx.Logging.Logger;
+-
+-namespace BepInEx.Unity.Mono.Logging
+-{
+-    /// <summary>
+-    ///     Logs entries using Unity specific outputs.
+-    /// </summary>
+-    public class UnityLogListener : ILogListener
+-    {
+-        internal static readonly Action<string> WriteStringToUnityLog;
+-
+-        protected static readonly ConfigEntry<LogLevel> ConfigUnityLogLevel = ConfigFile.CoreConfig.Bind(
+-         "Logging.Unity", "LogLevels",
+-         LogLevel.Fatal | LogLevel.Error | LogLevel.Warning | LogLevel.Message | LogLevel.Info,
+-         "What log levels to log to Unity's output log.");
+-
+-        private readonly ConfigEntry<bool> LogConsoleToUnity = ConfigFile.CoreConfig.Bind("Logging",
+-            "LogConsoleToUnityLog", false,
+-            new StringBuilder()
+-                .AppendLine("If enabled, writes Standard Output messages to Unity log")
+-                .AppendLine("NOTE: By default, Unity does so automatically. Only use this option if no console messages are visible in Unity log")
+-                .ToString());
+-
+-        static UnityLogListener()
+-        {
+-            foreach (var methodInfo in typeof(UnityLogWriter).GetMethods(BindingFlags.Static | BindingFlags.Public))
+-            {
+-                try
+-                {
+-                    methodInfo.Invoke(null, new object[] { "" });
+-                }
+-                catch
+-                {
+-                    continue;
+-                }
+-
+-                WriteStringToUnityLog = (Action<string>) Delegate.CreateDelegate(typeof(Action<string>), methodInfo);
+-                break;
+-            }
+-
+-            if (WriteStringToUnityLog == null)
+-                Logger.Log(LogLevel.Error, "Unable to start Unity log writer");
+-        }
+-
+-        /// <inheritdoc />
+-        public LogLevel LogLevelFilter => ConfigUnityLogLevel.Value;
+-
+-        /// <inheritdoc />
+-        public void LogEvent(object sender, LogEventArgs eventArgs)
+-        {
+-            if (eventArgs.Source is UnityLogSource)
+-                return;
+-
+-            // Special case: don't write console twice since Unity can already do that
+-            if (LogConsoleToUnity.Value || eventArgs.Source.SourceName != "Console")
+-                WriteStringToUnityLog?.Invoke(eventArgs.ToStringLine());
+-        }
+-
+-        /// <inheritdoc />
+-        public void Dispose() { }
+-    }
+-}
+-
+-namespace UnityEngine
+-{
+-    internal sealed class UnityLogWriter
+-    {
+-        [MethodImpl(MethodImplOptions.InternalCall)]
+-        public static extern void WriteStringToUnityLogImpl(string s);
+-
+-        [MethodImpl(MethodImplOptions.InternalCall)]
+-        public static extern void WriteStringToUnityLog(string s);
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/ThreadingHelper.cs b/Runtimes/Unity/BepInEx.Unity.Mono/ThreadingHelper.cs
+deleted file mode 100644
+index 17260c1..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono/ThreadingHelper.cs
++++ /dev/null
+@@ -1,363 +0,0 @@
+-using System;
+-using System.Collections.Generic;
+-using System.ComponentModel;
+-using System.Linq;
+-using System.Reflection;
+-using System.Threading;
+-using BepInEx.Logging;
+-using UnityEngine;
+-using Logger = BepInEx.Logging.Logger;
+-
+-namespace BepInEx.Unity.Mono;
+-
+-/// <summary>
+-///     Provides methods for running code on other threads and synchronizing with the main thread.
+-/// </summary>
+-public sealed class ThreadingHelper : MonoBehaviour, ISynchronizeInvoke
+-{
+-    private readonly object _invokeLock = new();
+-    private Action _invokeList;
+-    private Thread _mainThread;
+-
+-    /// <summary>
+-    ///     Current instance of the helper.
+-    /// </summary>
+-    public static ThreadingHelper Instance { get; private set; }
+-
+-    /// <summary>
+-    ///     Gives methods for invoking delegates on the main unity thread, both synchronously and asynchronously.
+-    ///     Can be used in many built-in framework types, for example
+-    ///     <see cref="System.IO.FileSystemWatcher.SynchronizingObject" />
+-    ///     and <see cref="System.Timers.Timer.SynchronizingObject" /> to make their events fire on the main unity thread.
+-    /// </summary>
+-    public static ISynchronizeInvoke SynchronizingObject => Instance;
+-
+-    private void Update()
+-    {
+-        // The CurrentThread can change between Awake and later methods, it's safest to get it here.
+-        if (_mainThread == null)
+-            _mainThread = Thread.CurrentThread;
+-
+-        // Safe to do outside of lock because nothing can remove callbacks, at worst we execute with 1 frame delay
+-        if (_invokeList == null) return;
+-
+-        Action toRun;
+-        lock (_invokeLock)
+-        {
+-            toRun = _invokeList;
+-            _invokeList = null;
+-        }
+-
+-        // Need to execute outside of the lock in case the callback itself calls Invoke we could deadlock
+-        // The invocation would also block any threads that call Invoke
+-        foreach (var action in toRun.GetInvocationList().Cast<Action>())
+-            try
+-            {
+-                action();
+-            }
+-            catch (Exception ex)
+-            {
+-                LogInvocationException(ex);
+-            }
+-    }
+-
+-    internal static void Initialize()
+-    {
+-        var go = new GameObject("BepInEx_ThreadingHelper") { hideFlags = HideFlags.HideAndDontSave };
+-        DontDestroyOnLoad(go);
+-        Instance = go.AddComponent<ThreadingHelper>();
+-    }
+-
+-    /// <summary>
+-    ///     Queue the delegate to be invoked on the main unity thread. Use to synchronize your threads.
+-    /// </summary>
+-    public void StartSyncInvoke(Action action)
+-    {
+-        if (action == null) throw new ArgumentNullException(nameof(action));
+-
+-        lock (_invokeLock)
+-        {
+-            _invokeList += action;
+-        }
+-    }
+-
+-    /// <summary>
+-    ///     Queue the delegate to be invoked on a background thread. Use this to run slow tasks without affecting the game.
+-    ///     NOTE: Most of Unity API can not be accessed while running on another thread!
+-    /// </summary>
+-    /// <param name="action">
+-    ///     Task to be executed on another thread. Can optionally return an Action that will be executed on the main thread.
+-    ///     You can use this action to return results of your work safely. Return null if this is not needed.
+-    /// </param>
+-    public void StartAsyncInvoke(Func<Action> action)
+-    {
+-        void DoWork(object _)
+-        {
+-            try
+-            {
+-                var result = action();
+-
+-                if (result != null)
+-                    StartSyncInvoke(result);
+-            }
+-            catch (Exception ex)
+-            {
+-                LogInvocationException(ex);
+-            }
+-        }
+-
+-        if (!ThreadPool.QueueUserWorkItem(DoWork))
+-            throw new NotSupportedException("Failed to queue the action on ThreadPool");
+-    }
+-
+-    private static void LogInvocationException(Exception ex)
+-    {
+-        Logger.Log(LogLevel.Error, ex);
+-        if (ex.InnerException != null) Logger.Log(LogLevel.Error, $"INNER: {ex.InnerException}");
+-    }
+-
+-    #region ISynchronizeInvoke
+-
+-    IAsyncResult ISynchronizeInvoke.BeginInvoke(Delegate method, object[] args)
+-    {
+-        var result = new InvokeResult();
+-
+-        object Invoke()
+-        {
+-            try
+-            {
+-                return method.DynamicInvoke(args);
+-            }
+-            catch (Exception ex)
+-            {
+-                result.ExceptionThrown = true;
+-                return ex;
+-            }
+-        }
+-
+-        if (!InvokeRequired)
+-            result.Finish(Invoke(), true);
+-        else
+-            StartSyncInvoke(() => result.Finish(Invoke(), false));
+-
+-        return result;
+-    }
+-
+-    object ISynchronizeInvoke.EndInvoke(IAsyncResult result)
+-    {
+-        var invokeResult = (InvokeResult) result;
+-        invokeResult.AsyncWaitHandle.WaitOne();
+-
+-        if (invokeResult.ExceptionThrown)
+-            throw (Exception) invokeResult.AsyncState;
+-        return invokeResult.AsyncState;
+-    }
+-
+-    object ISynchronizeInvoke.Invoke(Delegate method, object[] args)
+-    {
+-        var invokeResult = ((ISynchronizeInvoke) this).BeginInvoke(method, args);
+-        return ((ISynchronizeInvoke) this).EndInvoke(invokeResult);
+-    }
+-
+-    /// <summary>
+-    ///     False if current code is executing on the main unity thread, otherwise True.
+-    ///     Warning: Will return true before the first frame finishes (i.e. inside plugin Awake and Start methods).
+-    /// </summary>
+-    /// <inheritdoc />
+-    public bool InvokeRequired => _mainThread == null || _mainThread != Thread.CurrentThread;
+-
+-    private sealed class InvokeResult : IAsyncResult
+-    {
+-        internal bool ExceptionThrown;
+-
+-        public InvokeResult()
+-        {
+-            AsyncWaitHandle = new EventWaitHandle(false, EventResetMode.ManualReset);
+-        }
+-
+-        public bool IsCompleted { get; private set; }
+-        public WaitHandle AsyncWaitHandle { get; }
+-        public object AsyncState { get; private set; }
+-        public bool CompletedSynchronously { get; private set; }
+-
+-        public void Finish(object result, bool completedSynchronously)
+-        {
+-            AsyncState = result;
+-            CompletedSynchronously = completedSynchronously;
+-            IsCompleted = true;
+-            ((EventWaitHandle) AsyncWaitHandle).Set();
+-        }
+-    }
+-
+-    #endregion
+-}
+-
+-/// <summary>
+-///     Convenience extensions for utilizing multiple threads and using the <see cref="ThreadingHelper" />.
+-/// </summary>
+-public static class ThreadingExtensions
+-{
+-    /// <inheritdoc cref="RunParallel{TIn,TOut}(IList{TIn},Func{TIn,TOut},int)" />
+-    public static IEnumerable<TOut> RunParallel<TIn, TOut>(this IEnumerable<TIn> data,
+-                                                           Func<TIn, TOut> work,
+-                                                           int workerCount = -1)
+-    {
+-        foreach (var result in RunParallel(data.ToList(), work))
+-            yield return result;
+-    }
+-
+-    /// <summary>
+-    ///     Apply a function to a collection of data by spreading the work on multiple threads.
+-    ///     Outputs of the functions are returned to the current thread and yielded one by one.
+-    /// </summary>
+-    /// <typeparam name="TIn">Type of the input values.</typeparam>
+-    /// <typeparam name="TOut">Type of the output values.</typeparam>
+-    /// <param name="data">Input values for the work function.</param>
+-    /// <param name="work">Function to apply to the data on multiple threads at once.</param>
+-    /// <param name="workerCount">Number of worker threads. By default Environment.ProcessorCount is used.</param>
+-    /// <exception cref="TargetInvocationException">
+-    ///     An exception was thrown inside one of the threads, and the operation was
+-    ///     aborted.
+-    /// </exception>
+-    /// <exception cref="ArgumentException">Need at least 1 workerCount.</exception>
+-    public static IEnumerable<TOut> RunParallel<TIn, TOut>(this IList<TIn> data,
+-                                                           Func<TIn, TOut> work,
+-                                                           int workerCount = -1)
+-    {
+-        if (workerCount < 0)
+-            workerCount = Mathf.Max(2, Environment.ProcessorCount);
+-        else if (workerCount == 0)
+-            throw new ArgumentException("Need at least 1 worker", nameof(workerCount));
+-
+-        var perThreadCount = Mathf.CeilToInt(data.Count / (float) workerCount);
+-        var doneCount = 0;
+-
+-        var lockObj = new object();
+-        var are = new ManualResetEvent(false);
+-        IEnumerable<TOut> doneItems = null;
+-        Exception exceptionThrown = null;
+-
+-        // Start threads to process the data
+-        for (var i = 0; i < workerCount; i++)
+-        {
+-            var first = i * perThreadCount;
+-            var last = Mathf.Min(first + perThreadCount, data.Count);
+-            ThreadPool.QueueUserWorkItem(
+-                                         _ =>
+-                                         {
+-                                             var results = new List<TOut>(perThreadCount);
+-
+-                                             try
+-                                             {
+-                                                 for (var dataIndex = first; dataIndex < last; dataIndex++)
+-                                                 {
+-                                                     if (exceptionThrown != null) break;
+-                                                     results.Add(work(data[dataIndex]));
+-                                                 }
+-                                             }
+-                                             catch (Exception ex)
+-                                             {
+-                                                 exceptionThrown = ex;
+-                                             }
+-
+-                                             lock (lockObj)
+-                                             {
+-                                                 doneItems = doneItems == null
+-                                                                 ? results
+-                                                                 : results.Concat(doneItems);
+-                                                 doneCount++;
+-                                                 are.Set();
+-                                             }
+-                                         });
+-        }
+-
+-        // Main thread waits for results and returns them until all threads finish
+-        while (true)
+-        {
+-            are.WaitOne();
+-
+-            IEnumerable<TOut> toOutput;
+-            bool isDone;
+-            lock (lockObj)
+-            {
+-                toOutput = doneItems;
+-                doneItems = null;
+-                isDone = doneCount == workerCount;
+-            }
+-
+-            if (toOutput != null)
+-                foreach (var doneItem in toOutput)
+-                    yield return doneItem;
+-
+-            if (isDone)
+-                break;
+-        }
+-
+-        if (exceptionThrown != null)
+-            throw new TargetInvocationException("An exception was thrown inside one of the threads",
+-                                                exceptionThrown);
+-    }
+-
+-    /// <summary>
+-    /// Apply a function to a collection of data by spreading the work on multiple threads.
+-    /// Lower overhead than RunParallel but it blocks the main thread until all work is completed or an exception has been thrown.
+-    /// </summary>
+-    /// <typeparam name="T">Type of the input values.</typeparam>
+-    /// <param name="data">Input values for the work function.</param>
+-    /// <param name="work">Function to apply to the data on multiple threads at once.</param>
+-    /// <param name="workerCount">Number of worker threads. By default Environment.ProcessorCount is used.</param>
+-    /// <exception cref="TargetInvocationException">An exception was thrown inside one of the threads, and the operation was aborted.</exception>
+-    /// <exception cref="ArgumentException">Need at least 1 workerCount.</exception>
+-    public static void ForEachParallel<T>(this IList<T> data, Action<T> work, int workerCount = -1)
+-    {
+-        if (workerCount < 0)
+-            workerCount = Mathf.Max(2, Environment.ProcessorCount);
+-        else if (workerCount == 0)
+-            throw new ArgumentException("Need at least 1 worker", nameof(workerCount));
+-
+-        var currentIndex = data.Count;
+-
+-        var are = new ManualResetEvent(false);
+-        var runningCount = workerCount;
+-        Exception exceptionThrown = null;
+-
+-        void DoWork(object _)
+-        {
+-            try
+-            {
+-                while (true)
+-                {
+-                    if (exceptionThrown != null)
+-                        return;
+-
+-                    var decrementedIndex = Interlocked.Decrement(ref currentIndex);
+-                    if (decrementedIndex < 0)
+-                        return;
+-
+-                    work(data[decrementedIndex]);
+-                }
+-            }
+-            catch (Exception ex)
+-            {
+-                exceptionThrown = ex;
+-            }
+-            finally
+-            {
+-                var decCount = Interlocked.Decrement(ref runningCount);
+-                if (decCount <= 0)
+-                    are.Set();
+-            }
+-        }
+-
+-        // Start threads to process the data
+-        for (var i = 0; i < workerCount - 1; i++)
+-            ThreadPool.QueueUserWorkItem(DoWork);
+-
+-        DoWork(null);
+-
+-        are.WaitOne();
+-
+-        if (exceptionThrown != null)
+-            throw new TargetInvocationException("An exception was thrown inside one of the threads", exceptionThrown);
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/UnityInput.cs b/Runtimes/Unity/BepInEx.Unity.Mono/UnityInput.cs
+deleted file mode 100644
+index ab0a814..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono/UnityInput.cs
++++ /dev/null
+@@ -1,898 +0,0 @@
+-using System;
+-using System.Collections.Generic;
+-using System.Linq;
+-using System.Runtime.CompilerServices;
+-using BepInEx.Logging;
+-using UnityEngine;
+-using UnityEngine.InputSystem;
+-using UnityEngine.InputSystem.Controls;
+-
+-// ReSharper disable InconsistentNaming
+-
+-namespace BepInEx
+-{
+-    /// <summary>
+-    /// Abstraction layer over Unity's input systems for use in universal plugins that need to use hotkeys.
+-    /// It can use either Input or Unity.InputSystem, depending on what's available. Input is preferred.
+-    /// WARNING: Use only inside of Unity's main thread!
+-    /// </summary>
+-    public class UnityInput
+-    {
+-        private static IInputSystem current;
+-        /// <summary>
+-        /// Best currently supported input system.
+-        /// </summary>
+-        public static IInputSystem Current
+-        {
+-            get
+-            {
+-                if (current == null)
+-                {
+-                    try
+-                    {
+-                        try
+-                        {
+-                            current = new LegacyInputSystem();
+-                            BepInEx.Logging.Logger.Log(LogLevel.Debug, "[UnityInput] Using LegacyInputSystem");
+-                        }
+-                        catch
+-                        {
+-                            var newInputSystem = new NewInputSystem();
+-                            current = newInputSystem;
+-                            BepInEx.Logging.Logger.Log(LogLevel.Debug, "[UnityInput] Using NewInputSystem");
+-                        }
+-                    }
+-                    catch (Exception ex)
+-                    {
+-                        current = new NullInputSystem();
+-                        BepInEx.Logging.Logger.Log(LogLevel.Warning, "[UnityInput] Failed to detect available input systems - " + ex);
+-                    }
+-                }
+-                return current;
+-            }
+-        }
+-
+-        /// <summary>
+-        /// True if the Input class is not disabled.
+-        /// </summary>
+-        public bool LegacyInputSystemAvailable => Current is LegacyInputSystem;
+-    }
+-
+-    /// <summary>
+-    /// Generic input system interface. Just barely good enough for hotkeys.
+-    /// </summary>
+-    public interface IInputSystem
+-    {
+-        // No easy way to use these with the new input system
+-        //bool GetButton(string buttonName);
+-        //bool GetButtonDown(string buttonName);
+-        //bool GetButtonUp(string buttonName);
+-
+-        /// <inheritdoc cref="Input.GetKey(string)"/>
+-        bool GetKey(string name);
+-        /// <inheritdoc cref="Input.GetKey(KeyCode)"/>
+-        bool GetKey(KeyCode key);
+-
+-        /// <inheritdoc cref="Input.GetKeyDown(string)"/>
+-        bool GetKeyDown(string name);
+-        /// <inheritdoc cref="Input.GetKeyDown(KeyCode)"/>
+-        bool GetKeyDown(KeyCode key);
+-
+-        /// <inheritdoc cref="Input.GetKeyUp(string)"/>
+-        bool GetKeyUp(string name);
+-        /// <inheritdoc cref="Input.GetKeyUp(KeyCode)"/>
+-        bool GetKeyUp(KeyCode key);
+-
+-
+-        /// <inheritdoc cref="Input.GetMouseButton(int)"/>
+-        bool GetMouseButton(int button);
+-        /// <inheritdoc cref="Input.GetMouseButtonDown(int)"/>
+-        bool GetMouseButtonDown(int button);
+-        /// <inheritdoc cref="Input.GetMouseButtonUp(int)"/>
+-        bool GetMouseButtonUp(int button);
+-
+-        /// <inheritdoc cref="Input.ResetInputAxes()"/>
+-        void ResetInputAxes();
+-
+-        /// <inheritdoc cref="Input.mousePosition"/>
+-        Vector3 mousePosition { get; }
+-        /// <inheritdoc cref="Input.mouseScrollDelta"/>
+-        Vector2 mouseScrollDelta { get; }
+-
+-        /// <inheritdoc cref="Input.mousePresent"/>
+-        bool mousePresent { get; }
+-
+-        /// <inheritdoc cref="Input.anyKey"/>
+-        bool anyKey { get; }
+-        /// <inheritdoc cref="Input.anyKeyDown"/>
+-        bool anyKeyDown { get; }
+-
+-        /// <summary>
+-        /// All KeyCodes supported by the current input system.
+-        /// </summary>
+-        IEnumerable<KeyCode> SupportedKeyCodes { get; }
+-    }
+-
+-    internal class NullInputSystem : IInputSystem
+-    {
+-        public bool GetKey(string name) => false;
+-
+-        public bool GetKey(KeyCode key) => false;
+-
+-        public bool GetKeyDown(string name) => false;
+-
+-        public bool GetKeyDown(KeyCode key) => false;
+-
+-        public bool GetKeyUp(string name) => false;
+-
+-        public bool GetKeyUp(KeyCode key) => false;
+-
+-        public bool GetMouseButton(int button) => false;
+-
+-        public bool GetMouseButtonDown(int button) => false;
+-
+-        public bool GetMouseButtonUp(int button) => false;
+-
+-        public void ResetInputAxes() { }
+-
+-        public Vector3 mousePosition => Vector3.zero;
+-        public Vector2 mouseScrollDelta => Vector2.zero;
+-        public bool mousePresent => false;
+-
+-        public bool anyKey => false;
+-
+-        public bool anyKeyDown => false;
+-
+-        public IEnumerable<KeyCode> SupportedKeyCodes { get; } = Enumerable.Empty<KeyCode>();
+-    }
+-
+-    internal class NewInputSystem : IInputSystem
+-    {
+-        [MethodImpl(MethodImplOptions.NoInlining)]
+-        public NewInputSystem() => GetKeyDown(KeyCode.A);
+-
+-        public bool GetKey(string name) => GetControl(name)?.isPressed ?? false;
+-
+-        public bool GetKey(KeyCode key) => GetControl(key)?.isPressed ?? false;
+-
+-        public bool GetKeyDown(string name) => GetControl(name)?.wasPressedThisFrame ?? false;
+-
+-        public bool GetKeyDown(KeyCode key) => GetControl(key)?.wasPressedThisFrame ?? false;
+-
+-        public bool GetKeyUp(string name) => GetControl(name)?.wasReleasedThisFrame ?? false;
+-
+-        public bool GetKeyUp(KeyCode key) => GetControl(key)?.wasReleasedThisFrame ?? false;
+-
+-        public bool GetMouseButton(int button) => GetControl(KeyCode.Mouse0 + button)?.isPressed ?? false;
+-
+-        public bool GetMouseButtonDown(int button) => GetControl(KeyCode.Mouse0 + button)?.wasPressedThisFrame ?? false;
+-
+-        public bool GetMouseButtonUp(int button) => GetControl(KeyCode.Mouse0 + button)?.wasReleasedThisFrame ?? false;
+-
+-        public void ResetInputAxes() { /*Not supported*/ }
+-
+-        public Vector3 mousePosition => Mouse.current.position.ReadValue();
+-        public Vector2 mouseScrollDelta => Mouse.current.scroll.ReadValue();
+-        public bool mousePresent => Mouse.current.enabled;
+-
+-        public bool anyKey
+-        {
+-            get
+-            {
+-                if (Keyboard.current.anyKey.isPressed)
+-                    return true;
+-                var current = Mouse.current;
+-                return current.leftButton.isPressed ||
+-                       current.rightButton.isPressed ||
+-                       current.forwardButton.isPressed ||
+-                       current.backButton.isPressed ||
+-                       current.middleButton.isPressed;
+-            }
+-        }
+-
+-        public bool anyKeyDown
+-        {
+-            get
+-            {
+-                if (Keyboard.current.anyKey.wasPressedThisFrame)
+-                    return true;
+-                var current = Mouse.current;
+-                return current.leftButton.wasPressedThisFrame ||
+-                       current.rightButton.wasPressedThisFrame ||
+-                       current.forwardButton.wasPressedThisFrame ||
+-                       current.backButton.wasPressedThisFrame ||
+-                       current.middleButton.wasPressedThisFrame;
+-            }
+-        }
+-
+-        public IEnumerable<KeyCode> SupportedKeyCodes { get; } = Enum.GetValues(typeof(KeyCode)).Cast<KeyCode>().Where(x => GetControl(x, true) != null).ToList();
+-
+-        private static ButtonControl GetControl(string name) => GetControl((KeyCode)Enum.Parse(typeof(KeyCode), name, true));
+-
+-        private static ButtonControl GetControl(KeyCode key, bool silent = false)
+-        {
+-            switch (key)
+-            {
+-                case KeyCode.None:
+-                    break;
+-                case KeyCode.Backspace:
+-                    return Keyboard.current.backspaceKey;
+-                case KeyCode.Delete:
+-                    return Keyboard.current.deleteKey;
+-                case KeyCode.Tab:
+-                    return Keyboard.current.tabKey;
+-                case KeyCode.Clear:
+-                    break;
+-                case KeyCode.Return:
+-                    return Keyboard.current.enterKey;
+-                case KeyCode.Pause:
+-                    return Keyboard.current.pauseKey;
+-                case KeyCode.Escape:
+-                    return Keyboard.current.escapeKey;
+-                case KeyCode.Space:
+-                    return Keyboard.current.spaceKey;
+-                case KeyCode.Keypad0:
+-                    return Keyboard.current.numpad0Key;
+-                case KeyCode.Keypad1:
+-                    return Keyboard.current.numpad1Key;
+-                case KeyCode.Keypad2:
+-                    return Keyboard.current.numpad2Key;
+-                case KeyCode.Keypad3:
+-                    return Keyboard.current.numpad3Key;
+-                case KeyCode.Keypad4:
+-                    return Keyboard.current.numpad4Key;
+-                case KeyCode.Keypad5:
+-                    return Keyboard.current.numpad5Key;
+-                case KeyCode.Keypad6:
+-                    return Keyboard.current.numpad6Key;
+-                case KeyCode.Keypad7:
+-                    return Keyboard.current.numpad7Key;
+-                case KeyCode.Keypad8:
+-                    return Keyboard.current.numpad8Key;
+-                case KeyCode.Keypad9:
+-                    return Keyboard.current.numpad9Key;
+-                case KeyCode.KeypadPeriod:
+-                    return Keyboard.current.numpadPeriodKey;
+-                case KeyCode.KeypadDivide:
+-                    return Keyboard.current.numpadDivideKey;
+-                case KeyCode.KeypadMultiply:
+-                    return Keyboard.current.numpadMultiplyKey;
+-                case KeyCode.KeypadMinus:
+-                    return Keyboard.current.numpadMinusKey;
+-                case KeyCode.KeypadPlus:
+-                    return Keyboard.current.numpadPlusKey;
+-                case KeyCode.KeypadEnter:
+-                    return Keyboard.current.numpadEnterKey;
+-                case KeyCode.KeypadEquals:
+-                    return Keyboard.current.numpadEqualsKey;
+-                case KeyCode.UpArrow:
+-                    return Keyboard.current.upArrowKey;
+-                case KeyCode.DownArrow:
+-                    return Keyboard.current.downArrowKey;
+-                case KeyCode.RightArrow:
+-                    return Keyboard.current.rightArrowKey;
+-                case KeyCode.LeftArrow:
+-                    return Keyboard.current.leftArrowKey;
+-                case KeyCode.Insert:
+-                    return Keyboard.current.insertKey;
+-                case KeyCode.Home:
+-                    return Keyboard.current.homeKey;
+-                case KeyCode.End:
+-                    return Keyboard.current.endKey;
+-                case KeyCode.PageUp:
+-                    return Keyboard.current.pageUpKey;
+-                case KeyCode.PageDown:
+-                    return Keyboard.current.pageDownKey;
+-                case KeyCode.F1:
+-                    return Keyboard.current.f1Key;
+-                case KeyCode.F2:
+-                    return Keyboard.current.f2Key;
+-                case KeyCode.F3:
+-                    return Keyboard.current.f3Key;
+-                case KeyCode.F4:
+-                    return Keyboard.current.f4Key;
+-                case KeyCode.F5:
+-                    return Keyboard.current.f5Key;
+-                case KeyCode.F6:
+-                    return Keyboard.current.f6Key;
+-                case KeyCode.F7:
+-                    return Keyboard.current.f7Key;
+-                case KeyCode.F8:
+-                    return Keyboard.current.f8Key;
+-                case KeyCode.F9:
+-                    return Keyboard.current.f9Key;
+-                case KeyCode.F10:
+-                    return Keyboard.current.f10Key;
+-                case KeyCode.F11:
+-                    return Keyboard.current.f11Key;
+-                case KeyCode.F12:
+-                    return Keyboard.current.f12Key;
+-                case KeyCode.F13:
+-                    break;
+-                case KeyCode.F14:
+-                    break;
+-                case KeyCode.F15:
+-                    break;
+-                case KeyCode.Alpha0:
+-                    return Keyboard.current.digit0Key;
+-                case KeyCode.Alpha1:
+-                    return Keyboard.current.digit1Key;
+-                case KeyCode.Alpha2:
+-                    return Keyboard.current.digit2Key;
+-                case KeyCode.Alpha3:
+-                    return Keyboard.current.digit3Key;
+-                case KeyCode.Alpha4:
+-                    return Keyboard.current.digit4Key;
+-                case KeyCode.Alpha5:
+-                    return Keyboard.current.digit5Key;
+-                case KeyCode.Alpha6:
+-                    return Keyboard.current.digit6Key;
+-                case KeyCode.Alpha7:
+-                    return Keyboard.current.digit7Key;
+-                case KeyCode.Alpha8:
+-                    return Keyboard.current.digit8Key;
+-                case KeyCode.Alpha9:
+-                    return Keyboard.current.digit9Key;
+-                case KeyCode.Exclaim:
+-                    break;
+-                case KeyCode.DoubleQuote:
+-                    break;
+-                case KeyCode.Hash:
+-                    break;
+-                case KeyCode.Dollar:
+-                    break;
+-                case KeyCode.Ampersand:
+-                    break;
+-                case KeyCode.Quote:
+-                    return Keyboard.current.quoteKey;
+-                case KeyCode.LeftParen:
+-                    break;
+-                case KeyCode.RightParen:
+-                    break;
+-                case KeyCode.Asterisk:
+-                    break;
+-                case KeyCode.Plus:
+-                    return Keyboard.current.numpadPlusKey;
+-                case KeyCode.Comma:
+-                    return Keyboard.current.commaKey;
+-                case KeyCode.Minus:
+-                    return Keyboard.current.minusKey;
+-                case KeyCode.Period:
+-                    return Keyboard.current.periodKey;
+-                case KeyCode.Slash:
+-                    return Keyboard.current.slashKey;
+-                case KeyCode.Colon:
+-                    break;
+-                case KeyCode.Semicolon:
+-                    return Keyboard.current.semicolonKey;
+-                case KeyCode.Less:
+-                    break;
+-                case KeyCode.Equals:
+-                    return Keyboard.current.equalsKey;
+-                case KeyCode.Greater:
+-                    break;
+-                case KeyCode.Question:
+-                    break;
+-                case KeyCode.At:
+-                    break;
+-                case KeyCode.LeftBracket:
+-                    return Keyboard.current.leftBracketKey;
+-                case KeyCode.Backslash:
+-                    return Keyboard.current.backslashKey;
+-                case KeyCode.RightBracket:
+-                    return Keyboard.current.rightBracketKey;
+-                case KeyCode.Caret:
+-                    break;
+-                case KeyCode.Underscore:
+-                    break;
+-                case KeyCode.BackQuote:
+-                    return Keyboard.current.backquoteKey;
+-                case KeyCode.A:
+-                    return Keyboard.current.aKey;
+-                case KeyCode.B:
+-                    return Keyboard.current.bKey;
+-                case KeyCode.C:
+-                    return Keyboard.current.cKey;
+-                case KeyCode.D:
+-                    return Keyboard.current.dKey;
+-                case KeyCode.E:
+-                    return Keyboard.current.eKey;
+-                case KeyCode.F:
+-                    return Keyboard.current.fKey;
+-                case KeyCode.G:
+-                    return Keyboard.current.gKey;
+-                case KeyCode.H:
+-                    return Keyboard.current.hKey;
+-                case KeyCode.I:
+-                    return Keyboard.current.iKey;
+-                case KeyCode.J:
+-                    return Keyboard.current.jKey;
+-                case KeyCode.K:
+-                    return Keyboard.current.kKey;
+-                case KeyCode.L:
+-                    return Keyboard.current.lKey;
+-                case KeyCode.M:
+-                    return Keyboard.current.mKey;
+-                case KeyCode.N:
+-                    return Keyboard.current.nKey;
+-                case KeyCode.O:
+-                    return Keyboard.current.oKey;
+-                case KeyCode.P:
+-                    return Keyboard.current.pKey;
+-                case KeyCode.Q:
+-                    return Keyboard.current.qKey;
+-                case KeyCode.R:
+-                    return Keyboard.current.rKey;
+-                case KeyCode.S:
+-                    return Keyboard.current.sKey;
+-                case KeyCode.T:
+-                    return Keyboard.current.tKey;
+-                case KeyCode.U:
+-                    return Keyboard.current.uKey;
+-                case KeyCode.V:
+-                    return Keyboard.current.vKey;
+-                case KeyCode.W:
+-                    return Keyboard.current.wKey;
+-                case KeyCode.X:
+-                    return Keyboard.current.xKey;
+-                case KeyCode.Y:
+-                    return Keyboard.current.yKey;
+-                case KeyCode.Z:
+-                    return Keyboard.current.zKey;
+-                case KeyCode.Numlock:
+-                    return Keyboard.current.numLockKey;
+-                case KeyCode.CapsLock:
+-                    return Keyboard.current.capsLockKey;
+-                case KeyCode.ScrollLock:
+-                    return Keyboard.current.scrollLockKey;
+-                case KeyCode.RightShift:
+-                    return Keyboard.current.rightShiftKey;
+-                case KeyCode.LeftShift:
+-                    return Keyboard.current.leftShiftKey;
+-                case KeyCode.RightControl:
+-                    return Keyboard.current.rightCtrlKey;
+-                case KeyCode.LeftControl:
+-                    return Keyboard.current.leftCtrlKey;
+-                case KeyCode.RightAlt:
+-                    return Keyboard.current.rightAltKey;
+-                case KeyCode.LeftAlt:
+-                    return Keyboard.current.leftAltKey;
+-                case KeyCode.LeftCommand:
+-                    return Keyboard.current.leftCommandKey;
+-                case KeyCode.LeftWindows:
+-                    return Keyboard.current.leftWindowsKey;
+-                case KeyCode.RightCommand:
+-                    return Keyboard.current.rightCommandKey;
+-                case KeyCode.RightWindows:
+-                    return Keyboard.current.rightWindowsKey;
+-                case KeyCode.AltGr:
+-                    break;
+-                case KeyCode.Help:
+-                    break;
+-                case KeyCode.Print:
+-                    return Keyboard.current.printScreenKey;
+-                case KeyCode.SysReq:
+-                    break;
+-                case KeyCode.Break:
+-                    break;
+-                case KeyCode.Menu:
+-                    return Keyboard.current.contextMenuKey;
+-                case KeyCode.Mouse0:
+-                    return Mouse.current.leftButton;
+-                case KeyCode.Mouse1:
+-                    return Mouse.current.rightButton;
+-                case KeyCode.Mouse2:
+-                    return Mouse.current.middleButton;
+-                case KeyCode.Mouse3:
+-                    return Mouse.current.backButton;
+-                case KeyCode.Mouse4:
+-                    return Mouse.current.forwardButton;
+-                case KeyCode.Mouse5:
+-                    break;
+-                case KeyCode.Mouse6:
+-                    break;
+-                case KeyCode.JoystickButton0:
+-                    break;
+-                case KeyCode.JoystickButton1:
+-                    break;
+-                case KeyCode.JoystickButton2:
+-                    break;
+-                case KeyCode.JoystickButton3:
+-                    break;
+-                case KeyCode.JoystickButton4:
+-                    break;
+-                case KeyCode.JoystickButton5:
+-                    break;
+-                case KeyCode.JoystickButton6:
+-                    break;
+-                case KeyCode.JoystickButton7:
+-                    break;
+-                case KeyCode.JoystickButton8:
+-                    break;
+-                case KeyCode.JoystickButton9:
+-                    break;
+-                case KeyCode.JoystickButton10:
+-                    break;
+-                case KeyCode.JoystickButton11:
+-                    break;
+-                case KeyCode.JoystickButton12:
+-                    break;
+-                case KeyCode.JoystickButton13:
+-                    break;
+-                case KeyCode.JoystickButton14:
+-                    break;
+-                case KeyCode.JoystickButton15:
+-                    break;
+-                case KeyCode.JoystickButton16:
+-                    break;
+-                case KeyCode.JoystickButton17:
+-                    break;
+-                case KeyCode.JoystickButton18:
+-                    break;
+-                case KeyCode.JoystickButton19:
+-                    break;
+-                case KeyCode.Joystick1Button0:
+-                    break;
+-                case KeyCode.Joystick1Button1:
+-                    break;
+-                case KeyCode.Joystick1Button2:
+-                    break;
+-                case KeyCode.Joystick1Button3:
+-                    break;
+-                case KeyCode.Joystick1Button4:
+-                    break;
+-                case KeyCode.Joystick1Button5:
+-                    break;
+-                case KeyCode.Joystick1Button6:
+-                    break;
+-                case KeyCode.Joystick1Button7:
+-                    break;
+-                case KeyCode.Joystick1Button8:
+-                    break;
+-                case KeyCode.Joystick1Button9:
+-                    break;
+-                case KeyCode.Joystick1Button10:
+-                    break;
+-                case KeyCode.Joystick1Button11:
+-                    break;
+-                case KeyCode.Joystick1Button12:
+-                    break;
+-                case KeyCode.Joystick1Button13:
+-                    break;
+-                case KeyCode.Joystick1Button14:
+-                    break;
+-                case KeyCode.Joystick1Button15:
+-                    break;
+-                case KeyCode.Joystick1Button16:
+-                    break;
+-                case KeyCode.Joystick1Button17:
+-                    break;
+-                case KeyCode.Joystick1Button18:
+-                    break;
+-                case KeyCode.Joystick1Button19:
+-                    break;
+-                case KeyCode.Joystick2Button0:
+-                    break;
+-                case KeyCode.Joystick2Button1:
+-                    break;
+-                case KeyCode.Joystick2Button2:
+-                    break;
+-                case KeyCode.Joystick2Button3:
+-                    break;
+-                case KeyCode.Joystick2Button4:
+-                    break;
+-                case KeyCode.Joystick2Button5:
+-                    break;
+-                case KeyCode.Joystick2Button6:
+-                    break;
+-                case KeyCode.Joystick2Button7:
+-                    break;
+-                case KeyCode.Joystick2Button8:
+-                    break;
+-                case KeyCode.Joystick2Button9:
+-                    break;
+-                case KeyCode.Joystick2Button10:
+-                    break;
+-                case KeyCode.Joystick2Button11:
+-                    break;
+-                case KeyCode.Joystick2Button12:
+-                    break;
+-                case KeyCode.Joystick2Button13:
+-                    break;
+-                case KeyCode.Joystick2Button14:
+-                    break;
+-                case KeyCode.Joystick2Button15:
+-                    break;
+-                case KeyCode.Joystick2Button16:
+-                    break;
+-                case KeyCode.Joystick2Button17:
+-                    break;
+-                case KeyCode.Joystick2Button18:
+-                    break;
+-                case KeyCode.Joystick2Button19:
+-                    break;
+-                case KeyCode.Joystick3Button0:
+-                    break;
+-                case KeyCode.Joystick3Button1:
+-                    break;
+-                case KeyCode.Joystick3Button2:
+-                    break;
+-                case KeyCode.Joystick3Button3:
+-                    break;
+-                case KeyCode.Joystick3Button4:
+-                    break;
+-                case KeyCode.Joystick3Button5:
+-                    break;
+-                case KeyCode.Joystick3Button6:
+-                    break;
+-                case KeyCode.Joystick3Button7:
+-                    break;
+-                case KeyCode.Joystick3Button8:
+-                    break;
+-                case KeyCode.Joystick3Button9:
+-                    break;
+-                case KeyCode.Joystick3Button10:
+-                    break;
+-                case KeyCode.Joystick3Button11:
+-                    break;
+-                case KeyCode.Joystick3Button12:
+-                    break;
+-                case KeyCode.Joystick3Button13:
+-                    break;
+-                case KeyCode.Joystick3Button14:
+-                    break;
+-                case KeyCode.Joystick3Button15:
+-                    break;
+-                case KeyCode.Joystick3Button16:
+-                    break;
+-                case KeyCode.Joystick3Button17:
+-                    break;
+-                case KeyCode.Joystick3Button18:
+-                    break;
+-                case KeyCode.Joystick3Button19:
+-                    break;
+-                case KeyCode.Joystick4Button0:
+-                    break;
+-                case KeyCode.Joystick4Button1:
+-                    break;
+-                case KeyCode.Joystick4Button2:
+-                    break;
+-                case KeyCode.Joystick4Button3:
+-                    break;
+-                case KeyCode.Joystick4Button4:
+-                    break;
+-                case KeyCode.Joystick4Button5:
+-                    break;
+-                case KeyCode.Joystick4Button6:
+-                    break;
+-                case KeyCode.Joystick4Button7:
+-                    break;
+-                case KeyCode.Joystick4Button8:
+-                    break;
+-                case KeyCode.Joystick4Button9:
+-                    break;
+-                case KeyCode.Joystick4Button10:
+-                    break;
+-                case KeyCode.Joystick4Button11:
+-                    break;
+-                case KeyCode.Joystick4Button12:
+-                    break;
+-                case KeyCode.Joystick4Button13:
+-                    break;
+-                case KeyCode.Joystick4Button14:
+-                    break;
+-                case KeyCode.Joystick4Button15:
+-                    break;
+-                case KeyCode.Joystick4Button16:
+-                    break;
+-                case KeyCode.Joystick4Button17:
+-                    break;
+-                case KeyCode.Joystick4Button18:
+-                    break;
+-                case KeyCode.Joystick4Button19:
+-                    break;
+-                case KeyCode.Joystick5Button0:
+-                    break;
+-                case KeyCode.Joystick5Button1:
+-                    break;
+-                case KeyCode.Joystick5Button2:
+-                    break;
+-                case KeyCode.Joystick5Button3:
+-                    break;
+-                case KeyCode.Joystick5Button4:
+-                    break;
+-                case KeyCode.Joystick5Button5:
+-                    break;
+-                case KeyCode.Joystick5Button6:
+-                    break;
+-                case KeyCode.Joystick5Button7:
+-                    break;
+-                case KeyCode.Joystick5Button8:
+-                    break;
+-                case KeyCode.Joystick5Button9:
+-                    break;
+-                case KeyCode.Joystick5Button10:
+-                    break;
+-                case KeyCode.Joystick5Button11:
+-                    break;
+-                case KeyCode.Joystick5Button12:
+-                    break;
+-                case KeyCode.Joystick5Button13:
+-                    break;
+-                case KeyCode.Joystick5Button14:
+-                    break;
+-                case KeyCode.Joystick5Button15:
+-                    break;
+-                case KeyCode.Joystick5Button16:
+-                    break;
+-                case KeyCode.Joystick5Button17:
+-                    break;
+-                case KeyCode.Joystick5Button18:
+-                    break;
+-                case KeyCode.Joystick5Button19:
+-                    break;
+-                case KeyCode.Joystick6Button0:
+-                    break;
+-                case KeyCode.Joystick6Button1:
+-                    break;
+-                case KeyCode.Joystick6Button2:
+-                    break;
+-                case KeyCode.Joystick6Button3:
+-                    break;
+-                case KeyCode.Joystick6Button4:
+-                    break;
+-                case KeyCode.Joystick6Button5:
+-                    break;
+-                case KeyCode.Joystick6Button6:
+-                    break;
+-                case KeyCode.Joystick6Button7:
+-                    break;
+-                case KeyCode.Joystick6Button8:
+-                    break;
+-                case KeyCode.Joystick6Button9:
+-                    break;
+-                case KeyCode.Joystick6Button10:
+-                    break;
+-                case KeyCode.Joystick6Button11:
+-                    break;
+-                case KeyCode.Joystick6Button12:
+-                    break;
+-                case KeyCode.Joystick6Button13:
+-                    break;
+-                case KeyCode.Joystick6Button14:
+-                    break;
+-                case KeyCode.Joystick6Button15:
+-                    break;
+-                case KeyCode.Joystick6Button16:
+-                    break;
+-                case KeyCode.Joystick6Button17:
+-                    break;
+-                case KeyCode.Joystick6Button18:
+-                    break;
+-                case KeyCode.Joystick6Button19:
+-                    break;
+-                case KeyCode.Joystick7Button0:
+-                    break;
+-                case KeyCode.Joystick7Button1:
+-                    break;
+-                case KeyCode.Joystick7Button2:
+-                    break;
+-                case KeyCode.Joystick7Button3:
+-                    break;
+-                case KeyCode.Joystick7Button4:
+-                    break;
+-                case KeyCode.Joystick7Button5:
+-                    break;
+-                case KeyCode.Joystick7Button6:
+-                    break;
+-                case KeyCode.Joystick7Button7:
+-                    break;
+-                case KeyCode.Joystick7Button8:
+-                    break;
+-                case KeyCode.Joystick7Button9:
+-                    break;
+-                case KeyCode.Joystick7Button10:
+-                    break;
+-                case KeyCode.Joystick7Button11:
+-                    break;
+-                case KeyCode.Joystick7Button12:
+-                    break;
+-                case KeyCode.Joystick7Button13:
+-                    break;
+-                case KeyCode.Joystick7Button14:
+-                    break;
+-                case KeyCode.Joystick7Button15:
+-                    break;
+-                case KeyCode.Joystick7Button16:
+-                    break;
+-                case KeyCode.Joystick7Button17:
+-                    break;
+-                case KeyCode.Joystick7Button18:
+-                    break;
+-                case KeyCode.Joystick7Button19:
+-                    break;
+-                case KeyCode.Joystick8Button0:
+-                    break;
+-                case KeyCode.Joystick8Button1:
+-                    break;
+-                case KeyCode.Joystick8Button2:
+-                    break;
+-                case KeyCode.Joystick8Button3:
+-                    break;
+-                case KeyCode.Joystick8Button4:
+-                    break;
+-                case KeyCode.Joystick8Button5:
+-                    break;
+-                case KeyCode.Joystick8Button6:
+-                    break;
+-                case KeyCode.Joystick8Button7:
+-                    break;
+-                case KeyCode.Joystick8Button8:
+-                    break;
+-                case KeyCode.Joystick8Button9:
+-                    break;
+-                case KeyCode.Joystick8Button10:
+-                    break;
+-                case KeyCode.Joystick8Button11:
+-                    break;
+-                case KeyCode.Joystick8Button12:
+-                    break;
+-                case KeyCode.Joystick8Button13:
+-                    break;
+-                case KeyCode.Joystick8Button14:
+-                    break;
+-                case KeyCode.Joystick8Button15:
+-                    break;
+-                case KeyCode.Joystick8Button16:
+-                    break;
+-                case KeyCode.Joystick8Button17:
+-                    break;
+-                case KeyCode.Joystick8Button18:
+-                    break;
+-                case KeyCode.Joystick8Button19:
+-                    break;
+-                    //default:
+-                    //    throw new ArgumentOutOfRangeException(nameof(key), key, null);
+-            }
+-
+-            if (!silent)
+-                BepInEx.Logging.Logger.Log(LogLevel.Debug, $"[{nameof(NewInputSystem)}] Unsupported key: {key}");
+-
+-            return null;
+-        }
+-    }
+-
+-    internal class LegacyInputSystem : IInputSystem
+-    {
+-        [MethodImpl(MethodImplOptions.NoInlining)]
+-        public LegacyInputSystem() => Input.GetKeyDown(KeyCode.A);
+-
+-        public bool GetKey(string name) => Input.GetKey(name);
+-
+-        public bool GetKey(KeyCode key) => Input.GetKey(key);
+-
+-        public bool GetKeyDown(string name) => Input.GetKeyDown(name);
+-
+-        public bool GetKeyDown(KeyCode key) => Input.GetKeyDown(key);
+-
+-        public bool GetKeyUp(string name) => Input.GetKeyUp(name);
+-
+-        public bool GetKeyUp(KeyCode key) => Input.GetKeyUp(key);
+-
+-        public bool GetMouseButton(int button) => Input.GetMouseButton(button);
+-
+-        public bool GetMouseButtonDown(int button) => Input.GetMouseButtonDown(button);
+-
+-        public bool GetMouseButtonUp(int button) => Input.GetMouseButtonUp(button);
+-
+-        public void ResetInputAxes() => Input.ResetInputAxes();
+-
+-        public Vector3 mousePosition => Input.mousePosition;
+-        public Vector2 mouseScrollDelta => Input.mouseScrollDelta;
+-        public bool mousePresent => Input.mousePresent;
+-        public bool anyKey => Input.anyKey;
+-        public bool anyKeyDown => Input.anyKeyDown;
+-
+-        public IEnumerable<KeyCode> SupportedKeyCodes { get; } = (KeyCode[])Enum.GetValues(typeof(KeyCode));
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/UnityTomlTypeConverters.cs b/Runtimes/Unity/BepInEx.Unity.Mono/UnityTomlTypeConverters.cs
+deleted file mode 100644
+index 56f51d3..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.Mono/UnityTomlTypeConverters.cs
++++ /dev/null
+@@ -1,83 +0,0 @@
+-﻿using System;
+-using System.Globalization;
+-using System.Runtime.CompilerServices;
+-using BepInEx.Configuration;
+-using UnityEngine;
+-
+-namespace BepInEx.Unity.Mono;
+-
+-/// <summary>
+-///     Config types that are unity specific
+-/// </summary>
+-internal static class UnityTomlTypeConverters
+-{
+-    [MethodImpl(MethodImplOptions.NoInlining)]
+-    public static void AddUnityEngineConverters()
+-    {
+-        var colorConverter = new TypeConverter
+-        {
+-            ConvertToString = (obj, type) => ColorUtility.ToHtmlStringRGBA((Color) obj),
+-            ConvertToObject = (str, type) =>
+-            {
+-                if (!ColorUtility.TryParseHtmlString("#" + str.Trim('#', ' '), out var c))
+-                    throw new FormatException("Invalid color string, expected hex #RRGGBBAA");
+-                return c;
+-            }
+-        };
+-
+-        TomlTypeConverter.AddConverter(typeof(Color), colorConverter);
+-
+-        var jsonConverter = new TypeConverter
+-        {
+-            ConvertToString = (obj, type) => JsonUtility.ToJson(obj),
+-            ConvertToObject = (str, type) => JsonUtility.FromJson(type: type, json: str)
+-        };
+-
+-        TomlTypeConverter.AddConverter(typeof(Vector2), jsonConverter);
+-        TomlTypeConverter.AddConverter(typeof(Vector3), jsonConverter);
+-        TomlTypeConverter.AddConverter(typeof(Vector4), jsonConverter);
+-        TomlTypeConverter.AddConverter(typeof(Quaternion), jsonConverter);
+-        TomlTypeConverter.AddConverter(typeof(Rect), new TypeConverter
+-        {
+-            ConvertToObject = StringToRect,
+-            ConvertToString = RectToString
+-        });
+-    }
+-
+-    private static object StringToRect(string s, Type type)
+-    {
+-        // JsonUtility doesn't work with Rect on all Unity versions, so parse it manually
+-        Rect result = default(Rect);
+-
+-        if (s == null)
+-            return result;
+-
+-        string cleaned = s.Trim('{', '}').Replace(" ", "");
+-        foreach (string part in cleaned.Split(','))
+-        {
+-            string[] parts = part.Split(':');
+-            if (parts.Length != 2 || !float.TryParse(parts[1], out float value))
+-                continue;
+-
+-            string id = parts[0].Trim('"');
+-            if (id == "x")
+-                result.x = value;
+-            else if (id == "y")
+-                result.y = value;
+-            else if (id == "width" || id == "z")
+-                result.width = value;
+-            else if (id == "height" || id == "w")
+-                result.height = value;
+-        }
+-
+-        return result;
+-    }
+-
+-    private static string RectToString(object o, Type type)
+-    {
+-        Rect rect = (Rect)o;
+-        return string.Format(CultureInfo.InvariantCulture,
+-                             "{{ \"x\":{0}, \"y\":{1}, \"width\":{2}, \"height\":{3} }}",
+-                             rect.x, rect.y, rect.width, rect.height);
+-    }
+-}
