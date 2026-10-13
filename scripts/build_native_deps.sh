@@ -53,6 +53,8 @@ case "$CMAKE_VERSION" in
     *) echo "refusing: $CMAKE_BIN reports '$CMAKE_VERSION'; need CMake 3.22.x (set CMAKE_BIN to override)" >&2; exit 1 ;;
 esac
 echo "cmake: $CMAKE_BIN ($CMAKE_VERSION)"
+LLVM_STRIP="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+[ -x "$LLVM_STRIP" ] || { echo "llvm-strip not found in $NDK" >&2; exit 1; }
 
 mkdir -p "$OUT" "$WORK"
 
@@ -192,6 +194,13 @@ install_so() {
         exit 1
     fi
     cp "$found" "$OUT/$so"
+    # Strip debug info only (symtab stays). DWARF carries the absolute build
+    # directory (DW_AT_comp_dir), so unstripped objects differ per checkout
+    # even with -ffile-prefix-map, which covers __FILE__ but not every
+    # debug section a project's own flags may emit (measured on libpine;
+    # libdobby ships none and is unaffected). AGP strips at packaging
+    # anyway, so nothing at runtime can observe the difference.
+    "$LLVM_STRIP" -g "$OUT/$so"
     echo "  $so <- ${found#$ROOT/}"
 }
 
