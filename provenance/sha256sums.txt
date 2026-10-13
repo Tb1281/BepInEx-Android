@@ -3,9 +3,16 @@
 # Enforced by launcher/scripts/verify_prebuilts.sh on files staged into
 # launcher/app/src/main/jniLibs and launcher/app/src/main/assets (never
 # committed; see .gitignore). Each hash pins the exact artifact built from the
-# pins in provenance/*.env. It does not claim a fresh build emits identical
-# bytes: the managed assemblies embed the commit they were built from.
-# See provenance/SOURCES.md. If you rebuild an artifact from a bumped pin,
+# pins in provenance/*.env. Rebuilds from the same pins emit identical bytes:
+# native builds strip path-carrying debug info (see scripts/build_native_deps.sh),
+# the runtime pack is a deterministic repack of the pinned pack
+# (see scripts/fetch_dotnet_runtime.sh), and the framework zip pins its epoch
+# to the upstream pin's commit date while the compiler's SourceRevisionId is
+# the upstream pin (see scripts/package_bepinex_android.sh,
+# scripts/restore_and_build.sh). A hash changes only when a pinned input is
+# deliberately bumped; rebaseline from a trusted CI build with
+# launcher/scripts/verify_prebuilts.sh --update-manifest, never by hand.
+# See provenance/SOURCES.md for what the manifest does and does not prove.
 b34f923e845ce7291bf74f8b38edae768ee63cf165a118ba6e6264ec556ee304  launcher/app/src/main/jniLibs/arm64-v8a/libSystem.Globalization.Native.so
 f7ef11f576e5ba635c6ef5455fc05b4dd5eef5ba7c683b9faf36cf5c12e46072  launcher/app/src/main/jniLibs/arm64-v8a/libSystem.IO.Compression.Native.so
 e3e6d3a1ffc99b86dbdf745d4c6670e3a5122f982e07fabd18248b4deeff65bf  launcher/app/src/main/jniLibs/arm64-v8a/libSystem.Native.so
@@ -16,6 +23,6 @@ f9cd03d3f33db429bbf50d4e34415028e76284ef1e25b4f602d11170382cea0a  launcher/app/s
 204d78f00559e3e1b6f53632d2ac37708c26ba90c89585b1acf4a63555353f52  launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so
 6b66fd0e7cf786018235a4598e2d6f615906cb424827896911f088a9e97ffe17  launcher/app/src/main/jniLibs/arm64-v8a/libmscordaccore.so
 fbdb676420badeb5fd2a80581011224ff5e49288bc0a7286b985e49368fcdaee  launcher/app/src/main/jniLibs/arm64-v8a/libmscordbi.so
-5359f57557c53537299acfa2e9b741c69298494bd6b58d8da63ab9fb33bf14b8  launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
+2caa0d88b81b6854847266deb44a0e3cffe4d4c018d88140697b112ce2cd4e36  launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
 00710e3694345e729e0ed9d7da056ee78c09f515f61309ad8fdc2c585ec29b7b  launcher/app/src/main/assets/BepInEx.Android.zip
-88366fcd49a7f0849240a4ce564cc2323055f06db5d71b6fe5b21fee0fd12b6b  launcher/app/src/main/assets/dotnet.zip
+7cc6b0937b26254335f83299d15b045d127bf3099b5e731d3a01c16228c4dbe0  launcher/app/src/main/assets/dotnet.zip
