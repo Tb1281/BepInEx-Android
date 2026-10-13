@@ -333,9 +333,33 @@ class ModpackManager {
     fun persistRuntimeState(packageName: String, modpackName: String?) {
         val destRoot = stateRoot(packageName, modpackName)
         destRoot.mkdirs()
-        copyDirContents(BepInExPaths.getConfigDir(packageName), File(destRoot, "config"))
+        // Last-writer-wins: only copy a runtime config back when it is newer than
+        // the modpack's copy (or the modpack has no copy). An unconditional copy
+        // would silently clobber edits the user made in the launcher UI between
+        // runs with stale runtime state.
+        copyNewerDirContents(BepInExPaths.getConfigDir(packageName), File(destRoot, "config"))
         copyRuntimeLogs(packageName, File(destRoot, "logs"))
         BepInExLog.i("Persisted runtime cfg/logs -> ${destRoot.absolutePath}")
+    }
+
+    /**
+     * Copies source -> dest, but only for files that do not exist at the
+     * destination or are newer than the destination copy. Source timestamps are
+     * preserved so the next comparison stays meaningful.
+     */
+    private fun copyNewerDirContents(source: File, dest: File) {
+        dest.mkdirs()
+        if (!source.isDirectory) return
+        source.listFiles()?.forEach { child ->
+            val target = File(dest, child.name)
+            if (child.isDirectory) {
+                copyNewerDirContents(child, target)
+            } else if (!target.exists() || child.lastModified() > target.lastModified()) {
+                child.copyTo(target, overwrite = true)
+                target.setLastModified(child.lastModified())
+                BepInExLog.i("Persisted newer config: ${child.name}")
+            }
+        }
     }
 
     fun restoreRuntimeState(packageName: String, modpackName: String?) {
