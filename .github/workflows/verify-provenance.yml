@@ -295,6 +295,13 @@ jobs:
       - name: The shipping APK is a release build
         run: ./scripts/test_release_artifacts.sh
 
+      # The framework zip's epoch must be the upstream pin's commit date, not
+      # the git-am tip's ("now" on every clone). Reading the tip made every
+      # CI run produce a different BepInEx.Android.zip, which no checksum
+      # manifest could ever match.
+      - name: The packaging epoch comes from the pin
+        run: ./scripts/test_packaging_epoch.sh
+
       # Incremental Gradle builds packaged duplicate zip entries twice. The
       # fixture crafts the doubled shape and proves the gate refuses it.
       - name: The packaged APK has no duplicate zip entries
