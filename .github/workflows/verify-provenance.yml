@@ -263,8 +263,29 @@ jobs:
       # three callers. The fixture proves the order (restore before build) and
       # both refusals with a stubbed dotnet: our-package substitution fails,
       # upstream-only warnings pass, and a failed restore fails the script.
+      # It also proves RestoreLockedMode is not passed (NU1403 on rebuilt
+      # packages) and that version drift fails the script.
       - name: Restore refuses substitution and build follows it
         run: ./scripts/test_restore_and_build.sh
+
+      # NuGet's locked mode cannot be used for the BepInEx solution: it
+      # validates contentHash, and the rebuilt local packages can never match
+      # a vendored hash. verify_locked_versions.sh checks versions only. The
+      # fixture proves drift, missing restore output, and an empty lock dir
+      # all fail, and that the report names the drifting package.
+      - name: The version gate refuses drift
+        run: ./scripts/test_verify_locked_versions.sh
+
+      # `git am` mints commits with committer dates of "now", so the tip SHA
+      # can never be compared across runs - but the tree object it points at
+      # is a pure content hash of the patched sources, and the same pin plus
+      # the same ordered queue always replays to the same tree.
+      # verify_patches.sh (called at the end of apply_patches.sh) refuses a
+      # replay whose tree does not match references/patched-tree.sha256. The
+      # fixture proves the refusals: a tampered tree, an untracked file the
+      # hash cannot see, a tree not built on the pin, and a missing record.
+      - name: The patch gate refuses a tampered tree
+        run: ./scripts/test_verify_patches.sh
 
       # Incremental Gradle builds packaged duplicate zip entries twice. The
       # fixture crafts the doubled shape and proves the gate refuses it.

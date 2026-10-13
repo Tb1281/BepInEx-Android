@@ -16,6 +16,8 @@ on:
       - 'provenance/monomod.env'
       - 'references/**'
       - 'provenance/il2cppinterop.env'
+      - 'scripts/verify_patches.sh'
+      - 'scripts/emit_provenance.sh'
 jobs:
   build:
     # Pinned, not ubuntu-latest: the label migrates to Ubuntu 26 on 2026-10-19,
@@ -155,6 +157,13 @@ jobs:
         run: |
           sha256sum launcher/app/src/main/assets/BepInEx.Android.zip | tee bepinex-managed.sha256
 
+      # As-built record of what went into the zip: the upstream pin, the
+      # patched-tree hash the replay actually produced, the exact patch files
+      # and the SDK that compiled it. The pins say what was intended; this
+      # says what was built. Attested below alongside the zip.
+      - name: Emit build provenance
+        run: ./scripts/emit_provenance.sh bepinex-managed.provenance.json
+
       # Attest the managed framework before it leaves the job. The hash above says
       # what the zip is; this says this repository, this workflow and this commit
       # produced it, which a hash cannot. build-launcher-apk fails closed without it.
@@ -164,6 +173,7 @@ jobs:
           bundle-output: bepinex-managed.attestation.json
           paths: |
             launcher/app/src/main/assets/BepInEx.Android.zip
+            bepinex-managed.provenance.json
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -171,5 +181,6 @@ jobs:
           path: |
             launcher/app/src/main/assets/BepInEx.Android.zip
             bepinex-managed.sha256
+            bepinex-managed.provenance.json
             bepinex-managed.attestation.json
           retention-days: 1

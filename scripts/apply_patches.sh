@@ -117,15 +117,35 @@ done
 
 echo "patch queue applied ($(basename "${patches[0]}") .. $(basename "${patches[-1]}"))"
 
-# Stage the NuGet lock files for the restored solution. They live in
-# references/nuget-locks (mirroring the tree layout) because the scratch
-# clone is gitignored and cannot carry them itself. Absence is fatal: an
-# unlocked restore silently floats transitive versions per restore, which
-# is how identical pins compiled to different assemblies on different
-# machines. Regeneration is deliberate (see docs/operations.md) and lands
-# here as updated files, never as a quiet local rebuild.
+# NOTE: The NuGet lock files in references/nuget-locks are deliberately NOT
+# staged into the scratch tree. NuGet validates a packages.lock.json found on
+# disk even without RestoreLockedMode or RestorePackagesWithLockFile, and the
+# locally-built MonoMod/Il2CppInterop packages are rebuilt on every run, so
+# their contentHash can never match a vendored file - staging them fails every
+# restore with NU1403. Version drift is still loud: restore_and_build.sh runs
+# scripts/verify_locked_versions.sh after restore, which compares the restored
+# versions against the vendored lock files without requiring the hashes to
+# match. The lock directory must still exist; its absence means the version
+# manifest is gone, which is fatal.
 LOCK_SRC="$ROOT/references/nuget-locks/bepinex"
 [ -d "$LOCK_SRC" ] || { echo "missing NuGet lock directory: $LOCK_SRC" >&2; exit 1; }
-cp -r "$LOCK_SRC/." "$BEPINEX_SRC/"
-echo "staged NuGet lock files from $LOCK_SRC"
+
+# Fail-closed patch gate. `git am` mints commits with committer dates of "now",
+# so the tip SHA is never comparable across runs; the tree object it points at
+# is the stable content hash of the patched sources. A queue edit that drops
+# or reorders a patch, or a --3way resolution that lands differently, changes
+# the tree, and the build must not proceed on an unrecorded one. Deliberate
+# queue changes re-record the hash with scripts/record_patched_tree.sh.
+#
+# The one caller that skips the gate is the sync-upstream job: it advances the
+# pin first, so the tree is *supposed* to differ, and it re-records the hash
+# with record_patched_tree.sh immediately after this script. The skip is
+# opt-in per invocation (BEPINEX_SKIP_TREE_GATE=1), never a default, and the
+# re-recorded hash still has to survive the gate on the sync PR's own CI run.
+if [ "${BEPINEX_SKIP_TREE_GATE:-0}" = "1" ]; then
+    echo "tree gate skipped (BEPINEX_SKIP_TREE_GATE=1); re-record with scripts/record_patched_tree.sh" >&2
+else
+    "$ROOT/scripts/verify_patches.sh" "$BEPINEX_SRC" "$PIN" "$ROOT/references/patched-tree.sha256"
+fi
+
 echo "BEPINEX_SRC=$BEPINEX_SRC"

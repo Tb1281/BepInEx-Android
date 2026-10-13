@@ -79,7 +79,20 @@ jobs:
       # Replay the patch queue. On conflict this fails, triggering ci_failure_notice
       - name: Replay the Android patch queue
         if: steps.sync.outputs.moved == 'true' || inputs.force
+        env:
+          # The pin just advanced, so the tree is *supposed* to differ from the
+          # recorded hash. Skip the gate here and re-record immediately below;
+          # the re-recorded hash still has to survive the gate on this PR's own
+          # CI run (verify-provenance runs apply_patches.sh with the gate on).
+          BEPINEX_SKIP_TREE_GATE: '1'
         run: ./scripts/apply_patches.sh
+
+      # Re-record the patched-tree hash for the new pin. create-pull-request
+      # below commits every working-tree change, so the updated
+      # references/patched-tree.sha256 rides the sync PR alongside the pin.
+      - name: Re-record the patched-tree hash
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: ./scripts/record_patched_tree.sh
 
       - name: Package BepInEx managed framework
         if: steps.sync.outputs.moved == 'true' || inputs.force
@@ -131,6 +144,12 @@ jobs:
         if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
         run: python3 scripts/generate_sbom.py --output sbom.spdx.json
 
+      # As-built record for this release: the upstream pin, the patched-tree
+      # hash the replay actually produced, the patch files and the SDK.
+      - name: Emit build provenance
+        if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
+        run: ./scripts/emit_provenance.sh provenance.json
+
       # Publish automated Release directly to GitHub Releases (bypassing Actions 500MB storage quota)
       - name: Attest the sync-built APK and SBOM
         if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
@@ -140,6 +159,7 @@ jobs:
           paths: |
             launcher/app/build/outputs/apk/debug/app-debug-aligned.apk
             sbom.spdx.json
+            provenance.json
 
       - name: Publish Release with Checksums
         if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
@@ -169,6 +189,11 @@ jobs:
           ### 📦 SBOM
           \`sbom.spdx.json\` is the SPDX 2.3 source SBOM for this release.
 
+          ### 🧾 Build provenance
+          \`provenance.json` records what this release was built from: the
+          upstream pin, the patched-tree hash the replay produced, the patch
+          files and the SDK version. It is covered by the attestation below.
+
           ### 🔏 Provenance
           \`sync-apk.attestation.json\` binds this repository, this workflow
           run and this commit to the APK and SBOM bytes above. Verify with:
@@ -180,7 +205,7 @@ jobs:
           repository is made public.)
           EOF
 
-          gh release create "$TAG_NAME" "$APK" "$APK.sha256" sbom.spdx.json sync-apk.attestation.json \
+          gh release create "$TAG_NAME" "$APK" "$APK.sha256" sbom.spdx.json provenance.json sync-apk.attestation.json \
             --title "BepInEx Android Sync (${NEW_COMMIT:0:7})" \
             --notes-file release-notes.md
 

@@ -55,6 +55,37 @@ export STUB_ARGV_LOG="$WORK/argv.log"
 export BEPINEX_SRC="$WORK/empty-tree"
 mkdir -p "$BEPINEX_SRC"
 
+# Minimal fake lock dir + matching restore output, so the version gate passes
+# in the "ok" cases. verify_locked_versions.sh itself has its own fixture;
+# here we only need the gate to be satisfiable and to observe that it runs.
+export LOCK_DIR="$WORK/fake-locks"
+mkdir -p "$LOCK_DIR/Proj" "$BEPINEX_SRC/Proj/obj"
+cat > "$LOCK_DIR/Proj/packages.lock.json" <<'EOF'
+{
+  "version": 1,
+  "dependencies": {
+    ".NETCoreApp,Version=v10.0": {
+      "Fake.Package": {
+        "type": "Direct",
+        "requested": "[1.2.3, )",
+        "resolved": "1.2.3",
+        "contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      }
+    }
+  }
+}
+EOF
+cat > "$BEPINEX_SRC/Proj/obj/project.assets.json" <<'EOF'
+{
+  "version": 3,
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "Fake.Package/1.2.3": { "type": "package" }
+    }
+  }
+}
+EOF
+
 fails=0
 run_case() { # run_case <name> <stub-mode> <want-exit>
     local name="$1" mode="$2" want="$3"
@@ -100,12 +131,29 @@ else
     echo "FAIL  SourceRevisionId flag missing"
     fails=$((fails + 1))
 fi
+# NuGet's locked mode is deliberately NOT used: it validates contentHash, and
+# the rebuilt local packages can never match a vendored hash (NU1403). Version
+# drift is checked by verify_locked_versions.sh instead.
 if grep -q "RestoreLockedMode=true" "$STUB_ARGV_LOG"; then
-    echo "ok    restore is locked"
-else
-    echo "FAIL  locked restore flag missing"
+    echo "FAIL  RestoreLockedMode must not be passed (NU1403 on rebuilt packages)"
     fails=$((fails + 1))
+else
+    echo "ok    no RestoreLockedMode flag (hashes of rebuilt packages cannot lock)"
 fi
+# The version gate must run and must fail on drift: point it at a lock dir
+# whose version disagrees with the fake restore output.
+mkdir -p "$WORK/drift-locks/Proj"
+sed 's/1\.2\.3/9.9.9/g' "$LOCK_DIR/Proj/packages.lock.json" > "$WORK/drift-locks/Proj/packages.lock.json"
+export STUB_MODE=ok
+export LOCK_DIR="$WORK/drift-locks"
+: > "$STUB_ARGV_LOG"
+if ./scripts/restore_and_build.sh >/dev/null 2>&1; then
+    echo "FAIL  version drift did not fail the script"
+    fails=$((fails + 1))
+else
+    echo "ok    version drift fails the script"
+fi
+export LOCK_DIR="$WORK/fake-locks"
 
 if [ "$fails" -ne 0 ]; then
     echo ""

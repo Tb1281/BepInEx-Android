@@ -13,6 +13,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=scripts/bepinex_paths.sh
 . "$ROOT/scripts/bepinex_paths.sh"
 
+# Vendored lock files, mirroring the tree layout. Overridable for the fixture,
+# which cannot restore a real tree.
+LOCK_DIR="${LOCK_DIR:-$ROOT/references/nuget-locks/bepinex}"
+
 # pipefail is required here, not cosmetic. GitHub runs a `run:` block with
 # `bash -e {0}` and no pipefail, so `dotnet restore | tee` would report tee's
 # exit status (always 0) and a restore that failed outright would leave an
@@ -22,8 +26,21 @@ set -o pipefail
 # apply_patches.sh, never from whatever the feeds serve today. An unlocked
 # restore is how identical pins compiled to different assemblies on
 # different machines; in locked mode that failure is loud (NU1004) instead.
-dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/" -p:RestoreLockedMode=true -v normal 2>&1 |
+#
+# NOTE: RestoreLockedMode is deliberately NOT used here. NuGet validates the
+# lock file's contentHash against the rebuilt packages, and the local
+# MonoMod/Il2CppInterop packages are rebuilt from source on every run -
+# dotnet pack is not deterministic (zip timestamps), so their hashes can never
+# match the vendored lock files. That failed every restore with NU1403.
+# Version drift is still loud: verify_locked_versions.sh below compares the
+# restored versions against the same lock files, ignoring the hashes that
+# cannot be stable for rebuilt packages.
+dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/" -v normal 2>&1 |
     tee /tmp/restore.log
+# Version drift is loud here instead of silent: the restored versions must
+# match the vendored lock files. (Hash drift cannot be checked - see above -
+# but version drift is the failure the lock files were introduced for.)
+"$ROOT/scripts/verify_locked_versions.sh" "$BEPINEX_SRC" "$LOCK_DIR"
 # Scoped to the packages this repository builds and owns. A blanket
 # NU1602/NU1603 check fails on upstream BepInEx's own pin,
 # Samboy063.Cpp2IL.Core 2022.1.0-development.1452, which has never
