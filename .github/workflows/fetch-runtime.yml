@@ -1,0 +1,187 @@
+name: fetch-runtime
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'provenance/dotnet-runtime.env'
+      - 'scripts/fetch_dotnet_runtime.sh'
+      - 'scripts/zip_deterministic.py'
+      - 'scripts/check_runtime_pin.sh'
+      # The 16KB gate runs from here, so a change to it must re-run this job -
+      # otherwise the checker can be edited into a shape that no longer decides,
+      # and this workflow keeps proving the old claim.
+      - 'scripts/check_elf_alignment.sh'
+      - '.github/workflows/fetch-runtime.yml'
+  schedule:
+    # The runtime is a pinned published package, so a weekly run is not tracking
+    # a moving upstream. It exists to notice a new runtime - via
+    # scripts/check_runtime_pin.sh, which is the step that actually does that -
+    # and to re-attest the pin. Bumping the version is a deliberate change; see
+    # the pin file for the four coupled steps and why step 3 cannot be automated.
+    - cron: '0 5 * * 1'
+jobs:
+  fetch-runtime:
+    # Pinned, not ubuntu-latest: the label migrates to Ubuntu 26 on 2026-10-19.
+    # This job produces the signed inputs the provenance job attests to, so its
+    # image must not change under the checksums.
+    runs-on: ubuntu-24.04
+    # `contents: read` is not redundant and must stay. Declaring `permissions:` at
+    # job level replaces the token's scopes entirely - anything not listed becomes
+    # `none` - so a block listing only `issues: write` silently removed the ability
+    # to read the repository, and checkout failed with "remote: Repository not
+    # found". Declaring this block is what broke it; every permission the job needs
+    # has to be restated after it.
+    permissions:
+      contents: read
+      # For scripts/ci_failure_notice.sh only.
+      issues: write
+      # For actions/attest-build-provenance only. Without it this job's runtime
+      # emits no statement and build-launcher-apk fails closed on libcoreclr.so,
+      # libclrjit.so, the PALs and dotnet.zip.
+      attestations: write
+      # Reading attestations is what lets the consumer verify them; this job does
+      # not verify, but the permission is cheap and keeps the block honest if that
+      # changes.
+      id-token: write
+    timeout-minutes: 30
+    steps:
+      # Egress audit on every job. A compromised action or build script
+      # exfiltrating data is otherwise invisible: the log shows green steps and
+      # nothing records where the runner talked to. `audit` only records — it
+      # never blocks — so this cannot break a build. Graduating to `block`
+      # needs a per-job allow-list measured from these logs first; an
+      # unmeasured block list is how a build fails on a mirror it never named.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # fetch_dotnet_runtime.sh regenerates provenance/pal-java-contract.txt, which
+      # needs javap to read descriptors out of the pack's own jar. Declared rather
+      # than inherited from the runner image: a silent absence here would turn the
+      # contract check into a hard error for the wrong reason.
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # This job compiles nothing. The runtime side of the APK is one official
+      # Microsoft package, Microsoft.NETCore.App.Runtime.android-arm64, which carries
+      # libcoreclr.so, libclrjit.so, the platform PAL shims and the BCL. Taking all
+      # four from a single package is what makes "the pack and the engine come from
+      # the same build" true by construction instead of by discipline.
+      #
+      # This replaced a 1-2 hour dotnet/runtime cross-build. The reason is
+      # recorded rather than implied: a hand-assembled pack could ship a BCL of
+      # the wrong RID, which binds the desktop OpenSSL PAL and fails on device
+      # inside Cpp2IL rather than anywhere a build can see. See
+      # docs/progress.md, steps 3-5.
+      #
+      # The version and the expected SHA-256 live in provenance/dotnet-runtime.env.
+      # Bumping the runtime is a change to that file plus a regenerated manifest.
+      - name: Fetch the pinned .NET runtime pack
+        run: ./scripts/fetch_dotnet_runtime.sh "$GITHUB_WORKSPACE/out/runtime"
+
+      # The run existed "to notice a new runtime", and until this step nothing
+      # asked Microsoft what the current release was - it downloaded the pinned
+      # version, compared SHA-256 and stopped. A new .NET runtime could ship and
+      # this repository would not find out until something failed.
+      #
+      # It reports and does not bump. Bumping is a four-step coupled change whose
+      # third step regenerates the PAL Java contract from the new pack's jar; a
+      # contract that does not match the pack passes every build check here and
+      # SIGABRTs on the device. See provenance/dotnet-runtime.env for the
+      # procedure, and scripts/check_runtime_pin.sh for why none of it is automatic.
+      - name: Is the pinned runtime still current
+        run: ./scripts/check_runtime_pin.sh
+
+      - name: Record which runtime this is
+        run: |
+          set -a
+          . provenance/dotnet-runtime.env
+          set +a
+          {
+            echo "package  : ${DOTNET_RUNTIME_PACK}"
+            echo "version  : ${DOTNET_RUNTIME_VERSION}"
+            echo "sha256   : ${DOTNET_RUNTIME_PACK_SHA256}"
+            echo "tfm      : ${DOTNET_RUNTIME_TFM}"
+            echo "feed     : ${DOTNET_RUNTIME_FEED:-https://api.nuget.org/v3-flatcontainer}"
+          } | tee "$GITHUB_WORKSPACE/dotnet-runtime.pin"
+
+      - name: The committed PAL Java contract matches the pinned pack
+        run: |
+          # fetch_dotnet_runtime.sh regenerated this file from the pack it just
+          # verified. If the committed copy differs, the pin was bumped without the
+          # contract being refreshed, and launcher/scripts/verify_crypto_java.sh would
+          # be asserting a stale descriptor -- which is how a .NET 10 build that
+          # aborted on the device passed its own gate.
+          set -a
+          . provenance/dotnet-runtime.env
+          set +a
+          if ! git diff --quiet -- provenance/pal-java-contract.txt; then
+            echo "provenance/pal-java-contract.txt is stale for ${DOTNET_RUNTIME_VERSION}."
+            echo "It is generated, so the fix is to commit the regenerated file:"
+            git --no-pager diff -- provenance/pal-java-contract.txt
+            exit 1
+          fi
+          echo "PAL Java contract is in sync with ${DOTNET_RUNTIME_VERSION}"
+
+      - name: Check 16KB page alignment
+        run: ./scripts/check_elf_alignment.sh out/runtime/native
+
+      - name: Assert the platform crypto PAL
+        run: ./launcher/scripts/verify_crypto_pal.sh out/runtime/native
+
+      - name: Record checksums
+        run: |
+          # Named for what it checksums, not for the job. libcoreclr.so,
+          # libclrjit.so, the platform PALs and dotnet.zip, so coreclr.sha256 stays
+          # accurate even though the job is fetch-runtime: the job name says what it
+          # does, this name says what it attests.
+          ( cd out/runtime/native && sha256sum *.so ) > "$GITHUB_WORKSPACE/coreclr.sha256"
+          sha256sum out/runtime/dotnet.zip >> "$GITHUB_WORKSPACE/coreclr.sha256"
+          cat "$GITHUB_WORKSPACE/coreclr.sha256"
+
+      # Attest the runtime the same way the two build jobs attest their output.
+      # coreclr.sha256 records which bytes left this run; this records that this
+      # repository and this run left them. The consumer gate checks both.
+      - name: Attest the runtime
+        uses: ./.github/actions/attest-inputs
+        with:
+          bundle-output: runtime-android.attestation.json
+          paths: |
+            out/runtime/dotnet.zip
+            out/runtime/native/*.so
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: runtime-android
+          path: |
+            out/runtime/
+            coreclr.sha256
+            dotnet-runtime.pin
+            runtime-android.attestation.json
+          retention-days: 1
+
+      # Scheduled, so a failure here is as invisible as a failing sync-upstream was.
+      # One issue per workflow, replaced on each failure, closed on recovery.
+      # `always()` because a cancelled run is also worth recording, and the script
+      # exits 0 so it can never mask the failure it is reporting.
+      #
+      # One limit worth stating: if checkout itself fails, this script is not on
+      # disk and the step dies with exit 127 having recorded nothing. Nothing is
+      # hidden by that - a checkout failure is already the loudest signal there
+      # is - but the failure notice is not the mechanism that will tell you.
+      - name: Record the failure, or clear the record
+        if: always()
+        # gh reads GH_TOKEN and inherits neither it nor GITHUB_TOKEN, so the token
+        # is requested here for this step only.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            ./scripts/ci_failure_notice.sh fetch-runtime passed
+          else
+            ./scripts/ci_failure_notice.sh fetch-runtime failed
+          fi

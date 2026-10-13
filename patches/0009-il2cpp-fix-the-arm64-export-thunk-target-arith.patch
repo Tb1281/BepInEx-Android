@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Mon, 5 Oct 2026 00:42:20 +0900
+Subject: [PATCH] il2cpp: fix the arm64 export-thunk target arithmetic
+
+The AArch64 unconditional branch B is PC-relative, where PC is the address of
+the branch instruction itself, so the target is address + (imm26 << 2). This
+code added 4, as if the offset were relative to the next instruction.
+
+The neighbouring paths are right and are left alone: the literal-pool veneer
+loads its target absolutely, and x86 E9 rel32 really is relative to the next
+instruction, so its +5 stays.
+
+Verified against the game's own libil2cpp.so. Its il2cpp_runtime_invoke is a
+4-byte export stub at vaddr 0x1b345c8 containing `b 0x1b5ffdc`; llvm-objdump
+agrees the function starts at 0x1b5ffdc. This computed 0x1b5ffe0, four bytes
+in, past `str x30, [sp, #-0x30]!`.
+
+Hooking four bytes into a function skips the prologue, so the frame the detour
+runs in is whatever the caller left behind. On device that produced an
+unbounded loop whose only visible symptom was
+
+    E DOTNET : Stack overflow.
+    F libc   : Fatal signal 6 (SIGABRT) tid .NET SO Tracer
+
+with every frame inside libcoreclr.so and no managed frames at all, because
+the shipped runtime carries only a .gnu_debuglink and the guard page was hit
+before a handler could walk anything. Four other explanations were tested and
+ruled out first: thread stack size (reproduced identically on a 64MB stack),
+PreloadIL2CPPInteropAssemblies (disabled, unchanged), detour re-entry (a depth
+counter never reached depth 3) and Harmony support (removed, unchanged).
+---
+ .../Hook/ExportThunkResolver.cs                | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+index f01525e..34b96b5 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+@@ -127,7 +127,23 @@ internal static unsafe class ExportThunkResolver
+             if ((imm26 & 0x02000000) != 0)
+                 imm26 -= 0x04000000;
+ 
+-            target = address + 4 + (imm26 << 2);
++            // PC-relative, where PC is the address of the branch itself.
++            //
++            // There is deliberately no +4 here, unlike a load-literal or an x86
++            // rel32 branch (the veneer and x86 paths below do add an offset).
++            // Adding one lands 4 bytes past the entry point and hooks the middle of
++            // the function: for libil2cpp.so's il2cpp_runtime_invoke stub
++            // (opcode 0x1400ae85 at vaddr 0x1b345c8) the true target is 0x1b5ffdc
++            // while this computed 0x1b5ffe0 - past `str x30, [sp, #-0x30]!`, so the
++            // prologue was skipped and the frame the detour runs in was whatever the
++            // caller had left behind. On device that showed up as an unbounded
++            // native loop, reported only as
++            //   E DOTNET : Stack overflow.
++            //   F libc   : Fatal signal 6 (SIGABRT) tid .NET SO Tracer
++            // with every frame inside the stripped libcoreclr.so and no managed
++            // frames at all, because the guard page was hit before a handler could
++            // walk anything.
++            target = address + (imm26 << 2);
+             return true;
+         }
+ 

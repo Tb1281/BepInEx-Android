@@ -1,0 +1,1129 @@
+diff --git a/Il2CppInterop.Common/Il2CppInterop.Common.csproj b/Il2CppInterop.Common/Il2CppInterop.Common.csproj
+index d9320b4..34cc536 100644
+--- a/Il2CppInterop.Common/Il2CppInterop.Common.csproj
++++ b/Il2CppInterop.Common/Il2CppInterop.Common.csproj
+@@ -3,12 +3,14 @@
+   <PropertyGroup>
+     <TargetFramework>netstandard2.0</TargetFramework>
+     <Authors>BepInEx, knah et al.</Authors>
++    <PackageId>Il2CppInterop.Common</PackageId>
++    <Version>1.5.2</Version>
+     <Description>Common API for Il2CppInterop packages</Description>
+     <RootNamespace>Il2CppInterop.Common</RootNamespace>
+   </PropertyGroup>
+ 
+   <ItemGroup>
+-    <PackageReference Include="Iced" Version="1.17.0"/>
++    <PackageReference Include="Disarm" Version="2022.1.0-master.57"/>
+     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="6.0.1"/>
+     <PackageReference Include="System.Net.Http" Version="4.3.4"/>
+   </ItemGroup>
+diff --git a/Il2CppInterop.Common/XrefScans/XrefScanMethodDb.cs b/Il2CppInterop.Common/XrefScans/XrefScanMethodDb.cs
+index 3958f4a..c8cd86d 100644
+--- a/Il2CppInterop.Common/XrefScans/XrefScanMethodDb.cs
++++ b/Il2CppInterop.Common/XrefScans/XrefScanMethodDb.cs
+@@ -21,7 +21,7 @@ public static class XrefScanMethodDb
+         XrefScanCache = new MethodXrefScanCache(GeneratedDatabasesUtil.GetDatabasePath(MethodXrefScanCache.FileName));
+ 
+         foreach (ProcessModule module in Process.GetCurrentProcess().Modules)
+-            if (module.ModuleName == "GameAssembly.dll")
++            if (module.ModuleName == "libil2cpp.so")
+             {
+                 GameAssemblyBase = (long)module.BaseAddress;
+                 break;
+diff --git a/Il2CppInterop.Common/XrefScans/XrefScanUtil.cs b/Il2CppInterop.Common/XrefScans/XrefScanUtil.cs
+index 10f9b23..34401e0 100644
+--- a/Il2CppInterop.Common/XrefScans/XrefScanUtil.cs
++++ b/Il2CppInterop.Common/XrefScans/XrefScanUtil.cs
+@@ -31,7 +31,7 @@ internal static class XrefScanUtil
+         if (nativeMethodInfoObject == null) return false;
+         var nativeMethodInfo = (IntPtr)nativeMethodInfoObject;
+         var codeStart = *(IntPtr*)nativeMethodInfo;
+-        var firstCall = XrefScannerLowLevel.JumpTargets(codeStart).FirstOrDefault();
++        var firstCall = XrefScannerLowLevel.JumpTargets(codeStart, false, 250).FirstOrDefault();
+         if (firstCall != ourMetadataInitForMethodPointer || firstCall == IntPtr.Zero) return false;
+ 
+         var tokenPointer =
+diff --git a/Il2CppInterop.Common/XrefScans/XrefScanUtilFinder.cs b/Il2CppInterop.Common/XrefScans/XrefScanUtilFinder.cs
+index 319a5a2..c61c151 100644
+--- a/Il2CppInterop.Common/XrefScans/XrefScanUtilFinder.cs
++++ b/Il2CppInterop.Common/XrefScans/XrefScanUtilFinder.cs
+@@ -1,4 +1,5 @@
+-using Iced.Intel;
++using Disarm;
++using Microsoft.Extensions.Logging;
+ 
+ namespace Il2CppInterop.Common.XrefScans;
+ 
+@@ -6,92 +7,96 @@ internal static class XrefScanUtilFinder
+ {
+     public static IntPtr FindLastRcxReadAddressBeforeCallTo(IntPtr codeStart, IntPtr callTarget)
+     {
+-        var decoder = XrefScanner.DecoderForAddress(codeStart);
+-        var lastRcxRead = IntPtr.Zero;
++        IntPtr result = IntPtr.Zero;
+ 
+-        while (true)
++        foreach (var instruction in XrefScanner.DecoderForAddress(codeStart))
+         {
+-            decoder.Decode(out var instruction);
+-            if (decoder.LastError == DecoderError.NoMoreBytes) return IntPtr.Zero;
+-
+-            if (instruction.FlowControl == FlowControl.Return)
++            if (instruction.MnemonicCategory == Arm64MnemonicCategory.Return)
+                 return IntPtr.Zero;
+ 
+-            if (instruction.FlowControl == FlowControl.UnconditionalBranch)
++            if (HasGroup(instruction.Mnemonic, "AArch64_GRP_JUMP"))
+                 continue;
+ 
+-            if (instruction.Mnemonic == Mnemonic.Int || instruction.Mnemonic == Mnemonic.Int1)
+-                return IntPtr.Zero;
+-
+-            if (instruction.Mnemonic == Mnemonic.Call)
++            if (HasGroup(instruction.Mnemonic, "AArch64_GRP_CALL") &&
++                (IntPtr)(long)ExtractTargetAddress(in instruction) == callTarget)
+             {
+-                var target = ExtractTargetAddress(instruction);
+-                if ((IntPtr)target == callTarget)
+-                    return lastRcxRead;
++                return result;
+             }
+ 
+-            if (instruction.Mnemonic == Mnemonic.Mov)
+-                if (instruction.Op0Kind == OpKind.Register && instruction.Op0Register == Register.ECX &&
+-                    instruction.Op1Kind == OpKind.Memory && instruction.IsIPRelativeMemoryOperand)
+-                {
+-                    var movTarget = (IntPtr)instruction.IPRelativeMemoryAddress;
+-                    if (instruction.MemorySize != MemorySize.UInt32 && instruction.MemorySize != MemorySize.Int32)
+-                        continue;
+-
+-                    lastRcxRead = movTarget;
+-                }
++            if (instruction.MnemonicCategory == Arm64MnemonicCategory.Move &&
++                instruction.Op0Kind == Arm64OperandKind.Register &&
++                instruction.Op1Kind == Arm64OperandKind.ImmediatePcRelative)
++            {
++                result = (IntPtr)((long)instruction.Address + instruction.Op1Imm);
++            }
+         }
++
++        return IntPtr.Zero;
+     }
+ 
+     public static IntPtr FindByteWriteTargetRightAfterCallTo(IntPtr codeStart, IntPtr callTarget)
+     {
+-        var decoder = XrefScanner.DecoderForAddress(codeStart);
+         var seenCall = false;
+ 
+-        while (true)
++        foreach (var instruction in XrefScanner.DecoderForAddress(codeStart))
+         {
+-            decoder.Decode(out var instruction);
+-            if (decoder.LastError == DecoderError.NoMoreBytes) return IntPtr.Zero;
+-
+-            if (instruction.FlowControl == FlowControl.Return)
++            if (instruction.MnemonicCategory == Arm64MnemonicCategory.Return)
+                 return IntPtr.Zero;
+ 
+-            if (instruction.FlowControl == FlowControl.UnconditionalBranch)
++            if (HasGroup(instruction.Mnemonic, "AArch64_GRP_JUMP"))
+                 continue;
+ 
+-            if (instruction.Mnemonic == Mnemonic.Int || instruction.Mnemonic == Mnemonic.Int1)
+-                return IntPtr.Zero;
+-
+-            if (instruction.Mnemonic == Mnemonic.Call)
++            if (HasGroup(instruction.Mnemonic, "AArch64_GRP_CALL") &&
++                (IntPtr)(long)ExtractTargetAddress(in instruction) == callTarget)
+             {
+-                var target = ExtractTargetAddress(instruction);
+-                if ((IntPtr)target == callTarget)
+-                    seenCall = true;
++                seenCall = true;
++            }
++            else if (seenCall &&
++                     instruction.MnemonicCategory == Arm64MnemonicCategory.Move &&
++                     instruction.Op0Kind == Arm64OperandKind.Register &&
++                     instruction.Op1Kind == Arm64OperandKind.ImmediatePcRelative)
++            {
++                return (IntPtr)((long)instruction.Address + instruction.Op1Imm);
+             }
+-
+-            if (instruction.Mnemonic == Mnemonic.Mov && seenCall)
+-                if (instruction.Op0Kind == OpKind.Memory && (instruction.MemorySize == MemorySize.Int8 ||
+-                                                             instruction.MemorySize == MemorySize.UInt8))
+-                    return (IntPtr)instruction.IPRelativeMemoryAddress;
+         }
++
++        return IntPtr.Zero;
+     }
+ 
+-    private static ulong ExtractTargetAddress(in Instruction instruction)
++    public static ulong ExtractTargetAddress(in Arm64Instruction instruction)
+     {
+-        switch (instruction.Op0Kind)
++        if (instruction.Op0Kind == Arm64OperandKind.None)
+         {
+-            case OpKind.NearBranch16:
+-                return instruction.NearBranch16;
+-            case OpKind.NearBranch32:
+-                return instruction.NearBranch32;
+-            case OpKind.NearBranch64:
+-                return instruction.NearBranch64;
+-            case OpKind.FarBranch16:
+-                return instruction.FarBranch16;
+-            case OpKind.FarBranch32:
+-                return instruction.FarBranch32;
+-            default:
+-                return 0;
++            Logger.Instance.LogInformation("Not enough operands to extract target address");
++            return 0;
+         }
++
++        var lastOperand = -1;
++        if (instruction.Op0Kind != Arm64OperandKind.None) lastOperand = 0;
++        if (instruction.Op1Kind != Arm64OperandKind.None) lastOperand = 1;
++        if (instruction.Op2Kind != Arm64OperandKind.None) lastOperand = 2;
++        if (instruction.Op3Kind != Arm64OperandKind.None) lastOperand = 3;
++
++        return lastOperand switch
++        {
++            0 => instruction.Address + (ulong)instruction.Op0Imm,
++            1 => instruction.Address + (ulong)instruction.Op1Imm,
++            2 => instruction.Address + (ulong)instruction.Op2Imm,
++            3 => instruction.Address + (ulong)instruction.Op3Imm,
++            _ => 0,
++        };
++    }
++
++    public static bool HasGroup(Arm64Mnemonic mnemonic, string group)
++    {
++        return mnemonic switch
++        {
++            Arm64Mnemonic.B or Arm64Mnemonic.BC => group is "AArch64_GRP_JUMP" or "AArch64_GRP_BRANCH_RELATIVE",
++            Arm64Mnemonic.BL => group is "AArch64_GRP_CALL" or "AArch64_GRP_BRANCH_RELATIVE",
++            Arm64Mnemonic.BLR => group == "AArch64_GRP_CALL",
++            Arm64Mnemonic.BR => group == "AArch64_GRP_JUMP",
++            Arm64Mnemonic.CBNZ or Arm64Mnemonic.CBZ or Arm64Mnemonic.TBNZ or Arm64Mnemonic.TBZ => group is "AArch64_GRP_JUMP" or "AArch64_GRP_BRANCH_RELATIVE",
++            _ => false,
++        };
+     }
+ }
+diff --git a/Il2CppInterop.Common/XrefScans/XrefScanner.cs b/Il2CppInterop.Common/XrefScans/XrefScanner.cs
+index e16c22d..8309c30 100644
+--- a/Il2CppInterop.Common/XrefScans/XrefScanner.cs
++++ b/Il2CppInterop.Common/XrefScans/XrefScanner.cs
+@@ -1,5 +1,5 @@
+ using System.Reflection;
+-using Iced.Intel;
++using Disarm;
+ using Il2CppInterop.Common.Attributes;
+ using Microsoft.Extensions.Logging;
+ 
+@@ -48,89 +48,52 @@ public static class XrefScanner
+         return XrefScanMethodDb.ListUsers(cachedAttribute);
+     }
+ 
+-    internal static unsafe Decoder DecoderForAddress(IntPtr codeStart, int lengthLimit = 1000)
++    internal static unsafe IEnumerable<Arm64Instruction> DecoderForAddress(IntPtr codeStart, int lengthLimit = 1000)
+     {
+         if (codeStart == IntPtr.Zero) throw new NullReferenceException(nameof(codeStart));
+ 
+-        var stream = new UnmanagedMemoryStream((byte*)codeStart, lengthLimit, lengthLimit, FileAccess.Read);
+-        var codeReader = new StreamCodeReader(stream);
+-        var decoder = Decoder.Create(IntPtr.Size * 8, codeReader);
+-        decoder.IP = (ulong)codeStart;
+-
+-        return decoder;
++        return Disassembler.Disassemble((byte*)codeStart, lengthLimit, (ulong)codeStart, Disassembler.Options.IgnoreErrors);
+     }
+ 
+-    internal static IEnumerable<XrefInstance> XrefScanImpl(Decoder decoder, bool skipClassCheck = false)
++    internal static IEnumerable<XrefInstance> XrefScanImpl(IEnumerable<Arm64Instruction> instructions, bool skipClassCheck = false)
+     {
+-        while (true)
++        foreach (var instruction in instructions)
+         {
+-            decoder.Decode(out var instruction);
+-            if (decoder.LastError == DecoderError.NoMoreBytes) yield break;
+-
+-            if (instruction.FlowControl == FlowControl.Return)
+-                yield break;
+-
+-            if (instruction.Mnemonic == Mnemonic.Int || instruction.Mnemonic == Mnemonic.Int1)
++            if (instruction.MnemonicCategory == Arm64MnemonicCategory.Return)
+                 yield break;
+ 
+-            if (instruction.Mnemonic == Mnemonic.Call || instruction.Mnemonic == Mnemonic.Jmp)
++            if (XrefScanUtilFinder.HasGroup(instruction.Mnemonic, "AArch64_GRP_JUMP") ||
++                XrefScanUtilFinder.HasGroup(instruction.Mnemonic, "AArch64_GRP_CALL"))
+             {
+-                var targetAddress = ExtractTargetAddress(instruction);
++                // Register-indirect branches (BR/BLR) have no address to extract.
++                if (instruction.Op0Kind != Arm64OperandKind.ImmediatePcRelative)
++                    continue;
++                var targetAddress = XrefScanUtilFinder.ExtractTargetAddress(in instruction);
+                 if (targetAddress != 0)
+-                    yield return new XrefInstance(XrefType.Method, (nint)targetAddress, (nint)instruction.IP);
++                    yield return new XrefInstance(XrefType.Method, (nint)targetAddress, (nint)instruction.Address);
+                 continue;
+             }
+ 
+-            if (instruction.FlowControl == FlowControl.UnconditionalBranch)
++            if (instruction.MnemonicCategory != Arm64MnemonicCategory.Move)
+                 continue;
+ 
+-            if (IsMoveMnemonic(instruction.Mnemonic))
++            XrefInstance? result = null;
++            try
+             {
+-                XrefInstance? result = null;
+-                try
++                if (instruction.Op1Kind == Arm64OperandKind.ImmediatePcRelative)
+                 {
+-                    if (instruction.Op1Kind == OpKind.Memory && instruction.IsIPRelativeMemoryOperand)
+-                    {
+-                        var movTarget = (IntPtr)instruction.IPRelativeMemoryAddress;
+-                        if (instruction.MemorySize != MemorySize.UInt64)
+-                            continue;
+-
+-                        if (skipClassCheck || XrefScannerManager.Impl.XrefGlobalClassFilter(movTarget))
+-                            result = new XrefInstance(XrefType.Global, movTarget, (IntPtr)instruction.IP);
+-                    }
++                    var movTarget = (IntPtr)((long)instruction.Address + instruction.Op1Imm);
++                    if (skipClassCheck || XrefScannerManager.Impl.XrefGlobalClassFilter(movTarget))
++                        result = new XrefInstance(XrefType.Global, movTarget, (nint)instruction.Address);
+                 }
+-                catch (Exception ex)
+-                {
+-                    Logger.Instance.LogError("{Error}", ex.ToString());
+-                }
+-
+-                if (result != null)
+-                    yield return result.Value;
+             }
+-        }
+-    }
+-
+-    internal static bool IsMoveMnemonic(Mnemonic mnemonic)
+-    {
+-        return mnemonic is Mnemonic.Mov or >= Mnemonic.Cmova and <= Mnemonic.Cmovs;
+-    }
++            catch (Exception ex)
++            {
++                Logger.Instance.LogError("{Error}", ex.ToString());
++            }
+ 
+-    internal static ulong ExtractTargetAddress(in Instruction instruction)
+-    {
+-        switch (instruction.Op0Kind)
+-        {
+-            case OpKind.NearBranch16:
+-                return instruction.NearBranch16;
+-            case OpKind.NearBranch32:
+-                return instruction.NearBranch32;
+-            case OpKind.NearBranch64:
+-                return instruction.NearBranch64;
+-            case OpKind.FarBranch16:
+-                return instruction.FarBranch16;
+-            case OpKind.FarBranch32:
+-                return instruction.FarBranch32;
+-            default:
+-                return 0;
++            if (result != null)
++                yield return result.Value;
+         }
+     }
+ }
+diff --git a/Il2CppInterop.Common/XrefScans/XrefScannerLowLevel.cs b/Il2CppInterop.Common/XrefScans/XrefScannerLowLevel.cs
+index a8d44d7..fbc342f 100644
+--- a/Il2CppInterop.Common/XrefScans/XrefScannerLowLevel.cs
++++ b/Il2CppInterop.Common/XrefScans/XrefScannerLowLevel.cs
+@@ -1,100 +1,52 @@
+-using Iced.Intel;
++using System.Collections.Generic;
++using Disarm;
+ 
+ namespace Il2CppInterop.Common.XrefScans;
+ 
+ public static class XrefScannerLowLevel
+ {
+-    public static IEnumerable<IntPtr> JumpTargets(IntPtr codeStart, bool ignoreRetn = false)
+-    {
+-        return JumpTargetsImpl(XrefScanner.DecoderForAddress(codeStart), ignoreRetn);
+-    }
+-
+-    private static IEnumerable<IntPtr> JumpTargetsImpl(Decoder myDecoder, bool ignoreRetn)
++    public static IEnumerable<IntPtr> JumpTargets(IntPtr codeStart, bool ignoreRetn = false, int instructions = 250)
+     {
++        // An AArch64 function does not necessarily end in RET. A tail call ends
++        // in an unconditional B, and a far export can be a veneer (LDR/BR), so a
++        // RET-only stop rule decodes straight through into whatever function
++        // follows and hands back its branches as well. Upstream's x86 decoder
++        // stopped at the first unconditional branch for exactly that reason;
++        // without that rule the .Single() call sites throw "Sequence contains
++        // more than one element" and the ones that pick silently can aim a
++        // hook at a neighbouring function.
+         var firstFlowControl = true;
+ 
+-        while (true)
++        foreach (var instruction in XrefScanner.DecoderForAddress(codeStart, instructions * 4))
+         {
+-            myDecoder.Decode(out var instruction);
+-            if (myDecoder.LastError == DecoderError.NoMoreBytes) yield break;
+-
+-            // 0xcc - padding after most functions
+-            if (instruction.Mnemonic == Mnemonic.Int3)
++            // Any return ends the function, including the PAC forms RETAA/RETAB.
++            if (instruction.MnemonicCategory == Arm64MnemonicCategory.Return && !ignoreRetn)
+                 yield break;
+ 
+-            if (instruction.FlowControl == FlowControl.Return && !ignoreRetn)
+-                yield break;
+-
+-            if (instruction.FlowControl == FlowControl.UnconditionalBranch ||
+-                instruction.FlowControl == FlowControl.Call)
++            // Only direct PC-relative branches have a statically known target.
++            // BLR/BR are register-indirect; interpreting a register operand as
++            // a displacement returns the instruction's own address and may
++            // install a hook into the wrong function (native SIGSEGV).
++            if ((instruction.Mnemonic is Arm64Mnemonic.B or Arm64Mnemonic.BC or Arm64Mnemonic.BL) &&
++                instruction.Op0Kind == Arm64OperandKind.ImmediatePcRelative &&
++                instruction.MnemonicConditionCode == Arm64ConditionCode.NONE &&
++                instruction.FinalOpConditionCode == Arm64ConditionCode.NONE)
+             {
+-                // We hope and pray that the compiler didn't use short jumps for any function calls
+-                if (!instruction.IsJmpShort)
++                var target = XrefScanUtilFinder.ExtractTargetAddress(in instruction);
++                if (target != 0)
+                 {
+-                    yield return (IntPtr)ExtractTargetAddress(in instruction);
+-                    if (firstFlowControl && instruction.FlowControl == FlowControl.UnconditionalBranch) yield break;
++                    yield return (IntPtr)(long)target;
++
++                    // Tail call: this branch is the end of the function, so the
++                    // branches that follow belong to the next one.
++                    if (firstFlowControl && instruction.Mnemonic == Arm64Mnemonic.B)
++                        yield break;
+                 }
+             }
+ 
+-            if (instruction.FlowControl != FlowControl.Next)
+-            {
++            if (XrefScanUtilFinder.HasGroup(instruction.Mnemonic, "AArch64_GRP_JUMP") ||
++                XrefScanUtilFinder.HasGroup(instruction.Mnemonic, "AArch64_GRP_CALL"))
+                 firstFlowControl = false;
+-            }
+-        }
+-    }
+-
+-    public static IEnumerable<IntPtr> CallAndIndirectTargets(IntPtr pointer)
+-    {
+-        return CallAndIndirectTargetsImpl(XrefScanner.DecoderForAddress(pointer, 1024 * 1024));
+-    }
+-
+-    private static IEnumerable<IntPtr> CallAndIndirectTargetsImpl(Decoder decoder)
+-    {
+-        while (true)
+-        {
+-            decoder.Decode(out var instruction);
+-            if (decoder.LastError == DecoderError.NoMoreBytes) yield break;
+-
+-            if (instruction.FlowControl == FlowControl.Return)
+-                yield break;
+-
+-            if (instruction.Mnemonic == Mnemonic.Int || instruction.Mnemonic == Mnemonic.Int1)
+-                yield break;
+-
+-            if (instruction.Mnemonic == Mnemonic.Call || instruction.Mnemonic == Mnemonic.Jmp)
+-            {
+-                var targetAddress = XrefScanner.ExtractTargetAddress(instruction);
+-                if (targetAddress != 0)
+-                    yield return (IntPtr)targetAddress;
+-                continue;
+-            }
+-
+-            if (instruction.Mnemonic == Mnemonic.Lea)
+-                if (instruction.MemoryBase == Register.RIP)
+-                {
+-                    var targetAddress = instruction.IPRelativeMemoryAddress;
+-                    if (targetAddress != 0)
+-                        yield return (IntPtr)targetAddress;
+-                }
+-        }
+-    }
+-
+-    private static ulong ExtractTargetAddress(in Instruction instruction)
+-    {
+-        switch (instruction.Op0Kind)
+-        {
+-            case OpKind.NearBranch16:
+-                return instruction.NearBranch16;
+-            case OpKind.NearBranch32:
+-                return instruction.NearBranch32;
+-            case OpKind.NearBranch64:
+-                return instruction.NearBranch64;
+-            case OpKind.FarBranch16:
+-                return instruction.FarBranch16;
+-            case OpKind.FarBranch32:
+-                return instruction.FarBranch32;
+-            default:
+-                throw new ArgumentOutOfRangeException();
+         }
+     }
+ }
+diff --git a/Il2CppInterop.Generator/Il2CppInterop.Generator.csproj b/Il2CppInterop.Generator/Il2CppInterop.Generator.csproj
+index bab1795..7b999c4 100644
+--- a/Il2CppInterop.Generator/Il2CppInterop.Generator.csproj
++++ b/Il2CppInterop.Generator/Il2CppInterop.Generator.csproj
+@@ -2,6 +2,7 @@
+ 
+   <PropertyGroup>
+     <PackageId>Il2CppInterop.Generator</PackageId>
++    <Version>1.5.2</Version>
+     <Authors>knah, BepInEx et al.</Authors>
+     <Description>Library for generating assemblies and metadata for calling Il2Cpp functions from .NET</Description>
+     <TargetFrameworks>netstandard2.1;net472</TargetFrameworks>
+diff --git a/Il2CppInterop.Generator/Utils/XrefScanMetadataGenerationUtil.cs b/Il2CppInterop.Generator/Utils/XrefScanMetadataGenerationUtil.cs
+index bb0355d..19a56ee 100644
+--- a/Il2CppInterop.Generator/Utils/XrefScanMetadataGenerationUtil.cs
++++ b/Il2CppInterop.Generator/Utils/XrefScanMetadataGenerationUtil.cs
+@@ -47,7 +47,7 @@ internal static class XrefScanMetadataGenerationUtil
+             FindMetadataInitForMethod(method.DeclaringType.AssemblyContext.GlobalContext, gameAssemblyBase);
+ 
+         var codeStart = (IntPtr)(gameAssemblyBase + method.FileOffset);
+-        var firstCall = XrefScannerLowLevel.JumpTargets(codeStart).FirstOrDefault();
++        var firstCall = XrefScannerLowLevel.JumpTargets(codeStart, false, 250).FirstOrDefault();
+         if (firstCall != MetadataInitForMethodFileOffset || firstCall == IntPtr.Zero) return (0, 0);
+ 
+         var tokenPointer =
+diff --git a/Il2CppInterop.HarmonySupport/Il2CppDetourMethodPatcher.cs b/Il2CppInterop.HarmonySupport/Il2CppDetourMethodPatcher.cs
+index 2accee3..3429612 100644
+--- a/Il2CppInterop.HarmonySupport/Il2CppDetourMethodPatcher.cs
++++ b/Il2CppInterop.HarmonySupport/Il2CppDetourMethodPatcher.cs
+@@ -143,7 +143,7 @@ internal unsafe class Il2CppDetourMethodPatcher : MethodPatcher
+         DelegateCache.Add(unmanagedDelegate);
+ 
+         nativeDetour =
+-            Il2CppInteropRuntime.Instance.DetourProvider.Create(originalNativeMethodInfo.MethodPointer, unmanagedDelegate);
++            Il2CppInteropRuntime.Instance.DetourProvider.Create(originalNativeMethodInfo.MethodPointer, unmanagedDelegate, specialReturnBuffer: false);
+         nativeDetour.Apply();
+         modifiedNativeMethodInfo.MethodPointer = nativeDetour.OriginalTrampoline;
+ 
+diff --git a/Il2CppInterop.HarmonySupport/Il2CppInterop.HarmonySupport.csproj b/Il2CppInterop.HarmonySupport/Il2CppInterop.HarmonySupport.csproj
+index 6e8e09f..c85cd64 100644
+--- a/Il2CppInterop.HarmonySupport/Il2CppInterop.HarmonySupport.csproj
++++ b/Il2CppInterop.HarmonySupport/Il2CppInterop.HarmonySupport.csproj
+@@ -2,7 +2,9 @@
+ 
+   <PropertyGroup>
+     <Description>Module to allow using Harmony with Il2CppInterop assemblies</Description>
+-    <TargetFramework>net6.0</TargetFramework>
++    <PackageId>Il2CppInterop.HarmonySupport</PackageId>
++    <Version>1.5.2</Version>
++    <TargetFramework>net10.0</TargetFramework>
+     <RootNamespace>Il2CppInterop.HarmonySupport</RootNamespace>
+   </PropertyGroup>
+ 
+diff --git a/Il2CppInterop.Runtime/Il2CppInterop.Runtime.csproj b/Il2CppInterop.Runtime/Il2CppInterop.Runtime.csproj
+index ad13e94..e8abaa0 100644
+--- a/Il2CppInterop.Runtime/Il2CppInterop.Runtime.csproj
++++ b/Il2CppInterop.Runtime/Il2CppInterop.Runtime.csproj
+@@ -2,9 +2,10 @@
+ 
+   <PropertyGroup>
+     <PackageId>Il2CppInterop.Runtime</PackageId>
++    <Version>1.5.2</Version>
+     <Authors>knah, BepInEx et al.</Authors>
+     <Description>Runtime tools for bridging .NET and Il2Cpp together</Description>
+-    <TargetFramework>net6.0</TargetFramework>
++    <TargetFramework>net10.0</TargetFramework>
+     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+     <RootNamespace>Il2CppInterop.Runtime</RootNamespace>
+     <Configurations>Debug;Release</Configurations>
+@@ -32,7 +33,6 @@
+   </ItemGroup>
+ 
+   <ItemGroup>
+-    <PackageReference Include="Iced" Version="1.17.0" />
+     <PackageReference Include="TerraFX.Interop.Windows" Version="10.0.22621.2" />
+     <PackageReference Include="PolySharp" Version="1.14.1">
+       <PrivateAssets>all</PrivateAssets>
+diff --git a/Il2CppInterop.Runtime/Injection/DetourProvider.cs b/Il2CppInterop.Runtime/Injection/DetourProvider.cs
+index 24ce64b..de807c0 100644
+--- a/Il2CppInterop.Runtime/Injection/DetourProvider.cs
++++ b/Il2CppInterop.Runtime/Injection/DetourProvider.cs
+@@ -15,14 +15,14 @@ public interface IDetour : IDisposable
+ 
+ public interface IDetourProvider
+ {
+-    IDetour Create<TDelegate>(nint original, TDelegate target) where TDelegate : Delegate;
++    IDetour Create<TDelegate>(nint original, TDelegate target, bool specialReturnBuffer) where TDelegate : Delegate;
+ }
+ 
+ internal static class Detour
+ {
+     public static IDetour Apply<T>(nint original, T target, out T trampoline) where T : Delegate
+     {
+-        var detour = Il2CppInteropRuntime.Instance.DetourProvider.Create(original, target);
++        var detour = Il2CppInteropRuntime.Instance.DetourProvider.Create(original, target, specialReturnBuffer: false);
+         trampoline = detour.GenerateTrampoline<T>();
+         detour.Apply();
+         return detour;
+diff --git a/Il2CppInterop.Runtime/Injection/Hook.cs b/Il2CppInterop.Runtime/Injection/Hook.cs
+index 24bb7bd..b6e5d94 100644
+--- a/Il2CppInterop.Runtime/Injection/Hook.cs
++++ b/Il2CppInterop.Runtime/Injection/Hook.cs
+@@ -20,27 +20,36 @@ namespace Il2CppInterop.Runtime.Injection
+ 
+         public virtual void TargetMethodNotFound()
+         {
+-            throw new Exception($"Required target method {TargetMethodName} not found");
++            Logger.Instance.LogWarning("Target hook method {TargetMethodName} not found", TargetMethodName);
++            _isApplied = true;
+         }
+ 
+         public void ApplyHook()
+         {
+-            if (_isApplied) return;
++            try
++            {
++                if (_isApplied) return;
++
++                var methodPtr = FindTargetMethod();
++
++                if (methodPtr == IntPtr.Zero)
++                {
++                    TargetMethodNotFound();
++                    return;
++                }
+ 
+-            var methodPtr = FindTargetMethod();
++                Logger.Instance.LogTrace("{MethodName} found: 0x{MethodPtr}", TargetMethodName, methodPtr.ToInt64().ToString("X2"));
+ 
+-            if (methodPtr == IntPtr.Zero)
++                _detour = GetDetour();
++                Detour.Apply(methodPtr, _detour, out _original);
++                _method = Marshal.GetDelegateForFunctionPointer<T>(methodPtr);
++                _isApplied = true;
++            }
++            catch (Exception ex)
+             {
+                 TargetMethodNotFound();
+-                return;
++                Logger.Instance.LogError(ex.ToString());
+             }
+-
+-            Logger.Instance.LogTrace("{MethodName} found: 0x{MethodPtr}", TargetMethodName, methodPtr.ToInt64().ToString("X2"));
+-
+-            _detour = GetDetour();
+-            Detour.Apply(methodPtr, _detour, out _original);
+-            _method = Marshal.GetDelegateForFunctionPointer<T>(methodPtr);
+-            _isApplied = true;
+         }
+     }
+ }
+diff --git a/Il2CppInterop.Runtime/Injection/Hooks/Class_FromIl2CppType_Hook.cs b/Il2CppInterop.Runtime/Injection/Hooks/Class_FromIl2CppType_Hook.cs
+index bac0354..2a48f30 100644
+--- a/Il2CppInterop.Runtime/Injection/Hooks/Class_FromIl2CppType_Hook.cs
++++ b/Il2CppInterop.Runtime/Injection/Hooks/Class_FromIl2CppType_Hook.cs
+@@ -41,7 +41,7 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+             var classFromTypeAPI = InjectorHelpers.GetIl2CppExport(nameof(IL2CPP.il2cpp_class_from_il2cpp_type));
+             Logger.Instance.LogTrace("il2cpp_class_from_il2cpp_type: 0x{ClassFromTypeApiAddress}", classFromTypeAPI.ToInt64().ToString("X2"));
+ 
+-            return XrefScannerLowLevel.JumpTargets(classFromTypeAPI).Single();
++            return XrefScannerLowLevel.JumpTargets(classFromTypeAPI, false, 250).First();
+         }
+     }
+ }
+diff --git a/Il2CppInterop.Runtime/Injection/Hooks/Class_FromName_Hook.cs b/Il2CppInterop.Runtime/Injection/Hooks/Class_FromName_Hook.cs
+index 0c09a48..2f4709f 100644
+--- a/Il2CppInterop.Runtime/Injection/Hooks/Class_FromName_Hook.cs
++++ b/Il2CppInterop.Runtime/Injection/Hooks/Class_FromName_Hook.cs
+@@ -36,7 +36,11 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+             var classFromNameAPI = InjectorHelpers.GetIl2CppExport(nameof(IL2CPP.il2cpp_class_from_name));
+             Logger.Instance.LogTrace("il2cpp_class_from_name: 0x{ClassFromNameApiAddress}", classFromNameAPI.ToInt64().ToString("X2"));
+ 
+-            return XrefScannerLowLevel.JumpTargets(classFromNameAPI).Single();
++            var target = XrefScannerLowLevel.JumpTargets(classFromNameAPI, false, 250).First();
++            var throughOneHop = XrefScannerLowLevel.JumpTargets(target, false, 1).SingleOrDefault();
++            if (throughOneHop == IntPtr.Zero)
++                return target;
++            return throughOneHop;
+         }
+     }
+ }
+diff --git a/Il2CppInterop.Runtime/Injection/Hooks/Class_GetFieldDefaultValue_Hook.cs b/Il2CppInterop.Runtime/Injection/Hooks/Class_GetFieldDefaultValue_Hook.cs
+index cf06db2..2238c0e 100644
+--- a/Il2CppInterop.Runtime/Injection/Hooks/Class_GetFieldDefaultValue_Hook.cs
++++ b/Il2CppInterop.Runtime/Injection/Hooks/Class_GetFieldDefaultValue_Hook.cs
+@@ -1,4 +1,4 @@
+-﻿using System;
++using System;
+ using System.Linq;
+ using System.Runtime.InteropServices;
+ using Il2CppInterop.Common;
+@@ -33,54 +33,6 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+             return Original(field, out type);
+         }
+ 
+-        private static readonly MemoryUtils.SignatureDefinition[] s_Signatures =
+-        {
+-            // Test Game - Unity 2021.3.4 (x64)
+-            new MemoryUtils.SignatureDefinition
+-            {
+-                pattern = "\x48\x89\x5C\x24\x08\x48\x89\x74\x24\x10\x57\x48\x83\xEC\x20\x48\x8B\x79\x10\x48\x8B\xD9\x48\x8B\xF2\x48\x2B\x9F",
+-                mask = "xxxxxxxxxxxxxx?xxxxxxxxxxxxx",
+-                xref = false
+-            },
+-            // V Rising - Unity 2022.3.23 (x64)
+-            new MemoryUtils.SignatureDefinition
+-            {
+-                pattern = "\x48\x89\x5C\x24\x08\x48\x89\x74\x24\x10\x57\x48\x83\xEC\x40\x48\x8B\x41\x10",
+-                mask = "xxxxxxxxxxxxxxxxxxx",
+-                xref = false
+-            },
+-            // GTFO - Unity 2019.4.21 (x64)
+-            // DigitalCraft Dolce 3.1.2 - Unity 2022.3.55 (x64)
+-            new MemoryUtils.SignatureDefinition
+-            {
+-                pattern = "\x48\x89\x5C\x24\x08\x57\x48\x83\xEC\x20\x48\x8B\x41\x10\x48\x8B\xD9\x48\x8B",
+-                // mask the stack allocation length
+-                mask = "xxxxxxxxx?xxxxxxxxx",
+-                xref = false
+-            },
+-            // Idle Slayer - Unity 2021.3.17 (x64)
+-            new MemoryUtils.SignatureDefinition
+-            {
+-                pattern = "\x40\x53\x48\x83\xEC\x20\x48\x8B\xDA\xE8\x00\x00\x00\x00\x4C\x8B\xC8\x48\x85\xC0",
+-                mask = "xxxxxxxxxx????xxxxxx",
+-                xref = false
+-            },
+-            // Evony - Unity 2018.4.0 (x86)
+-            new MemoryUtils.SignatureDefinition
+-            {
+-                pattern = "\x55\x8B\xEC\x56\xFF\x75\x08\xE8\x00\x00\x00\x00\x8B\xF0\x83\xC4\x04\x85\xF6",
+-                mask = "xxxxxxxx????xxxxxxx",
+-                xref = false
+-            },
+-            // Idle Slayer - Unity 2021.3.23 (x64)
+-            new MemoryUtils.SignatureDefinition
+-            {
+-                pattern = "\x40\x53\x48\x83\xEC\x20\x48\x8B\xDA\xE8\xCC\xCC\xCC\xCC\x4C",
+-                mask = "xxxxxxxxxx????x",
+-                xref = false
+-            }
+-        };
+-
+         private static nint FindClassGetFieldDefaultValueXref(bool forceICallMethod = false)
+         {
+             nint classGetDefaultFieldValue = 0;
+@@ -94,27 +46,27 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+                 var monoFieldGetValueInternalThunk = InjectorHelpers.GetIl2CppMethodPointer(monoFieldType.GetMethod(nameof(Il2CppSystem.Reflection.MonoField.GetValueInternal)));
+                 Logger.Instance.LogTrace("Il2CppSystem.Reflection.MonoField::thunk_GetValueInternal: 0x{MonoFieldGetValueInternalThunkAddress}", monoFieldGetValueInternalThunk.ToInt64().ToString("X2"));
+ 
+-                var monoFieldGetValueInternal = XrefScannerLowLevel.JumpTargets(monoFieldGetValueInternalThunk).Single();
++                var monoFieldGetValueInternal = XrefScannerLowLevel.JumpTargets(monoFieldGetValueInternalThunk, false, 250).Single();
+                 Logger.Instance.LogTrace("Il2CppSystem.Reflection.MonoField::GetValueInternal: 0x{MonoFieldGetValueInternalAddress}", monoFieldGetValueInternal.ToInt64().ToString("X2"));
+ 
+                 // Field::GetValueObject could be inlined with Field::GetValueObjectForThread
+-                var fieldGetValueObject = XrefScannerLowLevel.JumpTargets(monoFieldGetValueInternal).Single();
++                var fieldGetValueObject = XrefScannerLowLevel.JumpTargets(monoFieldGetValueInternal, false, 250).Single();
+                 Logger.Instance.LogTrace("Field::GetValueObject: 0x{FieldGetValueObjectAddress}", fieldGetValueObject.ToInt64().ToString("X2"));
+ 
+-                var fieldGetValueObjectForThread = XrefScannerLowLevel.JumpTargets(fieldGetValueObject).Last();
++                var fieldGetValueObjectForThread = XrefScannerLowLevel.JumpTargets(fieldGetValueObject, false, 250).Last();
+                 Logger.Instance.LogTrace("Field::GetValueObjectForThread: 0x{FieldGetValueObjectForThreadAddress}", fieldGetValueObjectForThread.ToInt64().ToString("X2"));
+ 
+-                classGetDefaultFieldValue = XrefScannerLowLevel.JumpTargets(fieldGetValueObjectForThread).ElementAt(2);
++                classGetDefaultFieldValue = XrefScannerLowLevel.JumpTargets(fieldGetValueObjectForThread, false, 250).ElementAt(2);
+             }
+             else
+             {
+                 var getStaticFieldValueAPI = InjectorHelpers.GetIl2CppExport(nameof(IL2CPP.il2cpp_field_static_get_value));
+                 Logger.Instance.LogTrace("il2cpp_field_static_get_value: 0x{GetStaticFieldValueApiAddress}", getStaticFieldValueAPI.ToInt64().ToString("X2"));
+ 
+-                var getStaticFieldValue = XrefScannerLowLevel.JumpTargets(getStaticFieldValueAPI).Single();
++                var getStaticFieldValue = XrefScannerLowLevel.JumpTargets(getStaticFieldValueAPI, false, 250).Single();
+                 Logger.Instance.LogTrace("Field::StaticGetValue: 0x{GetStaticFieldValueAddress}", getStaticFieldValue.ToInt64().ToString("X2"));
+ 
+-                var getStaticFieldValueTargets = XrefScannerLowLevel.JumpTargets(getStaticFieldValue).ToList();
++                var getStaticFieldValueTargets = XrefScannerLowLevel.JumpTargets(getStaticFieldValue, false, 250).ToList();
+ 
+                 // Sometimes the compiler can do an optimization and omit 'retn' instruction,
+                 // which then causes code following to grab wrong function pointer. A correct match should not contain more than 4 jumps
+@@ -126,31 +78,42 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+                 var getStaticFieldValueInternal = getStaticFieldValueTargets[^1];
+                 Logger.Instance.LogTrace("Field::StaticGetValueInternal: 0x{GetStaticFieldValueInternalAddress}", getStaticFieldValueInternal.ToInt64().ToString("X2"));
+ 
+-                var getStaticFieldValueInternalTargets = XrefScannerLowLevel.JumpTargets(getStaticFieldValueInternal).ToArray();
++                var getStaticFieldValueInternalTargets = XrefScannerLowLevel.JumpTargets(getStaticFieldValueInternal, false, 250).ToArray();
+ 
+                 if (getStaticFieldValueInternalTargets.Length == 0) return FindClassGetFieldDefaultValueXref(true);
+ 
+                 classGetDefaultFieldValue = getStaticFieldValueInternalTargets.Length == 3 ? getStaticFieldValueInternalTargets.Last() : getStaticFieldValueInternalTargets.First();
+             }
++
++            if (!IsValidFunctionEntry(classGetDefaultFieldValue))
++            {
++                Logger.Instance.LogWarning("Resolved Class::GetDefaultFieldValue candidate 0x{Address} is not a valid hookable function entry point", classGetDefaultFieldValue.ToInt64().ToString("X2"));
++                return IntPtr.Zero;
++            }
++
+             return classGetDefaultFieldValue;
+         }
+ 
++        private static bool IsValidFunctionEntry(nint address)
++        {
++            if (address == 0) return false;
++            if ((address.ToInt64() & 3) != 0) return false;
++            // On ARM64, verify that none of the first 4 instructions is RET
++            for (var i = 0; i < 4; i++)
++            {
++                var opcode = *(uint*)(address + i * 4);
++                if ((opcode & 0xFFFFFC1Fu) == 0xD65F0000u)
++                    return false;
++            }
++            return true;
++        }
++
+         public override IntPtr FindTargetMethod()
+         {
+             // NOTE: In some cases this pointer will be MetadataCache::GetFieldDefaultValueForField due to Field::GetDefaultFieldValue being
+             // inlined but we'll treat it the same even though it doesn't receive the type parameter the RDX register
+             // doesn't get cleared so we still get the same parameters
+-            var classGetDefaultFieldValue = s_Signatures
+-                .Select(s => MemoryUtils.FindSignatureInModule(InjectorHelpers.Il2CppModule, s))
+-                .FirstOrDefault(p => p != 0);
+-
+-            if (classGetDefaultFieldValue == 0)
+-            {
+-                Logger.Instance.LogTrace("Couldn't fetch Class::GetDefaultFieldValue with signatures, using method traversal");
+-                classGetDefaultFieldValue = FindClassGetFieldDefaultValueXref();
+-            }
+-
+-            return classGetDefaultFieldValue;
++            return FindClassGetFieldDefaultValueXref();
+         }
+     }
+ }
+diff --git a/Il2CppInterop.Runtime/Injection/Hooks/GenericMethod_GetMethod_Hook.cs b/Il2CppInterop.Runtime/Injection/Hooks/GenericMethod_GetMethod_Hook.cs
+index 9fa480b..a32c520 100644
+--- a/Il2CppInterop.Runtime/Injection/Hooks/GenericMethod_GetMethod_Hook.cs
++++ b/Il2CppInterop.Runtime/Injection/Hooks/GenericMethod_GetMethod_Hook.cs
+@@ -43,67 +43,59 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+             return Original(gmethod, copyMethodPtr);
+         }
+ 
+-        private static readonly MemoryUtils.SignatureDefinition[] s_Signatures =
++        public override IntPtr FindTargetMethod()
+         {
+-            // Unity 2021.2.5 (x64)
+-            new MemoryUtils.SignatureDefinition
++            // If the shim variant throws (e.g. unexpected jump-target pattern), retry without it.
++            try
+             {
+-                pattern = "\x48\x89\x5C\x24\x08\x48\x89\x6C\x24\x10\x56\x57\x41\x54\x41\x56\x41\x57\x48\x81\xEC\xB0\x00",
+-                mask = "xxxxxxxxxxxxxxxxxxxxxxx",
+-                xref = false
++                return TryFindTargetMethod();
+             }
+-        };
+-
+-        // Compilers might change method location (Unity 2021.2+)
+-        // We do a signature scan to find the correct method
++            catch
++            {
++                if (UnityVersionHandler.HasShimForGetMethod)
++                {
++                    var retry = TryFindTargetMethod(tryShim: false);
++                    if (retry != IntPtr.Zero)
++                        return retry;
++                }
++                throw;
++            }
++        }
+ 
+-        public override IntPtr FindTargetMethod()
++        private IntPtr TryFindTargetMethod(bool tryShim = true)
+         {
+-            var genericMethodGetMethod = s_Signatures
+-                .Select(s => MemoryUtils.FindSignatureInModule(InjectorHelpers.Il2CppModule, s))
+-                .FirstOrDefault(p => p != 0);
++            var getVirtualMethodAPI = InjectorHelpers.GetIl2CppExport(nameof(IL2CPP.il2cpp_object_get_virtual_method));
++            Logger.Instance.LogTrace("il2cpp_object_get_virtual_method: 0x{GetVirtualMethodApiAddress}", getVirtualMethodAPI.ToInt64().ToString("X2"));
+ 
+-            if (genericMethodGetMethod == 0)
++            var getVirtualMethod = XrefScannerLowLevel.JumpTargets(getVirtualMethodAPI, false, 250).First();
++            Logger.Instance.LogTrace("Object::GetVirtualMethod: 0x{GetVirtualMethodAddress}", getVirtualMethod.ToInt64().ToString("X2"));
++
++            var getVirtualMethodXrefs = XrefScannerLowLevel.JumpTargets(getVirtualMethod, false, 250).ToArray();
++
++            // If the game is built with IL2CPP Master setting, this will return 0 entries, so we do another xref scan with retn instructions ignored.
++            if (getVirtualMethodXrefs.Length == 0)
+             {
+-                var getVirtualMethodAPI = InjectorHelpers.GetIl2CppExport(nameof(IL2CPP.il2cpp_object_get_virtual_method));
+-                Logger.Instance.LogTrace("il2cpp_object_get_virtual_method: 0x{GetVirtualMethodApiAddress}", getVirtualMethodAPI.ToInt64().ToString("X2"));
++                return XrefScannerLowLevel.JumpTargets(getVirtualMethod, true, 250).Last();
++            }
+ 
+-                var getVirtualMethod = XrefScannerLowLevel.JumpTargets(getVirtualMethodAPI).Single();
+-                Logger.Instance.LogTrace("Object::GetVirtualMethod: 0x{GetVirtualMethodAddress}", getVirtualMethod.ToInt64().ToString("X2"));
++            // U2021.2.0+, there's additional shim that takes 3 parameters
++            // On U2020.3.41+ there is also a shim, which gets inlined with one added in U2021.2.0+ in release builds
++            if (UnityVersionHandler.HasShimForGetMethod && tryShim)
++            {
++                var shim = getVirtualMethodXrefs.Last();
+ 
+-                var getVirtualMethodXrefs = XrefScannerLowLevel.JumpTargets(getVirtualMethod).ToArray();
++                var shimXrefs = XrefScannerLowLevel.JumpTargets(shim, false, 250).ToArray();
+ 
+-                // If the game is built with IL2CPP Master setting, this will return 0 entries, so we do another xref scan with retn instructions ignored.
+-                if (getVirtualMethodXrefs.Length == 0)
++                // If the xref count is 1, it probably means the target is after ret
++                if (Il2CppInteropRuntime.Instance.UnityVersion.Major == 2020 && shimXrefs.Length == 1)
+                 {
+-                    genericMethodGetMethod = XrefScannerLowLevel.JumpTargets(getVirtualMethod, true).Last();
+-                }
+-                else
+-                {
+-                    // U2021.2.0+, there's additional shim that takes 3 parameters
+-                    // On U2020.3.41+ there is also a shim, which gets inlined with one added in U2021.2.0+ in release builds
+-                    if (UnityVersionHandler.HasShimForGetMethod)
+-                    {
+-                        var shim = getVirtualMethodXrefs.Last();
+-
+-                        var shimXrefs = XrefScannerLowLevel.JumpTargets(shim).ToArray();
+-
+-                        // If the xref count is 1, it probably means the target is after ret
+-                        if (Il2CppInteropRuntime.Instance.UnityVersion.Major == 2020 && shimXrefs.Length == 1)
+-                        {
+-                            shimXrefs = XrefScannerLowLevel.JumpTargets(shim, true).ToArray();
+-                        }
+-
+-                        genericMethodGetMethod = shimXrefs.Take(2).Last();
+-                    }
+-                    else
+-                    {
+-                        genericMethodGetMethod = getVirtualMethodXrefs.Last();
+-                    }
++                    shimXrefs = XrefScannerLowLevel.JumpTargets(shim, true, 250).ToArray();
+                 }
++
++                return shimXrefs.Take(2).Last();
+             }
+ 
+-            return genericMethodGetMethod;
++            return getVirtualMethodXrefs.Last();
+         }
+     }
+ }
+diff --git a/Il2CppInterop.Runtime/Injection/Hooks/GenericMethod_GetMethod_Unity6_Hook.cs b/Il2CppInterop.Runtime/Injection/Hooks/GenericMethod_GetMethod_Unity6_Hook.cs
+index b1b58f7..1954910 100644
+--- a/Il2CppInterop.Runtime/Injection/Hooks/GenericMethod_GetMethod_Unity6_Hook.cs
++++ b/Il2CppInterop.Runtime/Injection/Hooks/GenericMethod_GetMethod_Unity6_Hook.cs
+@@ -95,18 +95,18 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+             if (getVirtualMethodAPI == IntPtr.Zero) return IntPtr.Zero;
+ 
+             // Follow the jump into the actual function body
+-            var getVirtualMethod = XrefScannerLowLevel.JumpTargets(getVirtualMethodAPI).FirstOrDefault();
++            var getVirtualMethod = XrefScannerLowLevel.JumpTargets(getVirtualMethodAPI, false, 250).FirstOrDefault();
+             if (getVirtualMethod == IntPtr.Zero) return IntPtr.Zero;
+ 
+             // We are looking for the call to GetGenericVirtualMethod
+-            var xrefs = XrefScannerLowLevel.JumpTargets(getVirtualMethod).ToArray();
++            var xrefs = XrefScannerLowLevel.JumpTargets(getVirtualMethod, false, 250).ToArray();
+             if (xrefs.Length == 0) return IntPtr.Zero;
+ 
+             // On Linux Unity 6, it's usually the LAST jump before the end of the function
+             IntPtr getGenericVirtualMethod = xrefs.Last();
+ 
+             // Now, inside GetGenericVirtualMethod, there is a tail-call (jmp) to GenericMethod::GetMethod
+-            var finalXrefs = XrefScannerLowLevel.JumpTargets(getGenericVirtualMethod).ToArray();
++            var finalXrefs = XrefScannerLowLevel.JumpTargets(getGenericVirtualMethod, false, 250).ToArray();
+ 
+             if (finalXrefs.Length == 0)
+                 return IntPtr.Zero;
+diff --git a/Il2CppInterop.Runtime/Injection/Hooks/MetadataCache_GetTypeInfoFromTypeDefinitionIndex_Hook.cs b/Il2CppInterop.Runtime/Injection/Hooks/MetadataCache_GetTypeInfoFromTypeDefinitionIndex_Hook.cs
+index 943a9ad..677fb5b 100644
+--- a/Il2CppInterop.Runtime/Injection/Hooks/MetadataCache_GetTypeInfoFromTypeDefinitionIndex_Hook.cs
++++ b/Il2CppInterop.Runtime/Injection/Hooks/MetadataCache_GetTypeInfoFromTypeDefinitionIndex_Hook.cs
+@@ -41,30 +41,30 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+                 );
+                 Logger.Instance.LogTrace("Il2CppSystem.Runtime.CompilerServices.RuntimeHelpers::InitializeArray: 0x{RuntimeHelpersInitializeArrayAddress}", runtimeHelpersInitializeArray.ToInt64().ToString("X2"));
+ 
+-                var runtimeHelpersInitializeArrayICall = XrefScannerLowLevel.JumpTargets(runtimeHelpersInitializeArray).Last();
+-                if (XrefScannerLowLevel.JumpTargets(runtimeHelpersInitializeArrayICall).Count() == 1)
++                var runtimeHelpersInitializeArrayICall = XrefScannerLowLevel.JumpTargets(runtimeHelpersInitializeArray, false, 250).Last();
++                if (XrefScannerLowLevel.JumpTargets(runtimeHelpersInitializeArrayICall, false, 250).Count() == 1)
+                 {
+                     // is a thunk function
+                     Logger.Instance.LogTrace("RuntimeHelpers::thunk_InitializeArray: 0x{RuntimeHelpersInitializeArrayICallAddress}", runtimeHelpersInitializeArrayICall.ToInt64().ToString("X2"));
+-                    runtimeHelpersInitializeArrayICall = XrefScannerLowLevel.JumpTargets(runtimeHelpersInitializeArrayICall).Single();
++                    runtimeHelpersInitializeArrayICall = XrefScannerLowLevel.JumpTargets(runtimeHelpersInitializeArrayICall, false, 250).Single();
+                 }
+ 
+                 Logger.Instance.LogTrace("RuntimeHelpers::InitializeArray: 0x{RuntimeHelpersInitializeArrayICallAddress}", runtimeHelpersInitializeArrayICall.ToInt64().ToString("X2"));
+ 
+-                var typeGetUnderlyingType = XrefScannerLowLevel.JumpTargets(runtimeHelpersInitializeArrayICall).ElementAt(1);
++                var typeGetUnderlyingType = XrefScannerLowLevel.JumpTargets(runtimeHelpersInitializeArrayICall, false, 250).ElementAt(1);
+                 Logger.Instance.LogTrace("Type::GetUnderlyingType: 0x{TypeGetUnderlyingTypeAddress}", typeGetUnderlyingType.ToInt64().ToString("X2"));
+ 
+-                getTypeInfoFromTypeDefinitionIndex = XrefScannerLowLevel.JumpTargets(typeGetUnderlyingType).First();
++                getTypeInfoFromTypeDefinitionIndex = XrefScannerLowLevel.JumpTargets(typeGetUnderlyingType, false, 250).First();
+             }
+             else
+             {
+                 var imageGetClassAPI = InjectorHelpers.GetIl2CppExport(nameof(IL2CPP.il2cpp_image_get_class));
+                 Logger.Instance.LogTrace("il2cpp_image_get_class: 0x{ImageGetClassApiAddress}", imageGetClassAPI.ToInt64().ToString("X2"));
+ 
+-                var imageGetType = XrefScannerLowLevel.JumpTargets(imageGetClassAPI).First();
++                var imageGetType = XrefScannerLowLevel.JumpTargets(imageGetClassAPI, false, 250).First();
+                 Logger.Instance.LogTrace("Image::GetType: 0x{ImageGetTypeAddress}", imageGetType.ToInt64().ToString("X2"));
+ 
+-                var imageGetTypeXrefs = XrefScannerLowLevel.JumpTargets(imageGetType).ToArray();
++                var imageGetTypeXrefs = XrefScannerLowLevel.JumpTargets(imageGetType, false, 250).ToArray();
+ 
+                 if (imageGetTypeXrefs.Length == 0)
+                 {
+@@ -90,7 +90,7 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+ 
+                     Logger.Instance.LogTrace($"getTypeInfoFromHandle: {getTypeInfoFromHandle:X2}");
+ 
+-                    var getTypeInfoFromHandleXrefs = XrefScannerLowLevel.JumpTargets(getTypeInfoFromHandle).ToArray();
++                    var getTypeInfoFromHandleXrefs = XrefScannerLowLevel.JumpTargets(getTypeInfoFromHandle, false, 250).ToArray();
+ 
+                     // If getTypeInfoFromHandle xrefs is not a single call, it's the function we want, if not, we keep xrefing until we find it
+                     if (getTypeInfoFromHandleXrefs.Length != 1)
+@@ -103,9 +103,9 @@ namespace Il2CppInterop.Runtime.Injection.Hooks
+                         // Two calls, second one (GetIndexForTypeDefinitionInternal) is inlined
+                         getTypeInfoFromTypeDefinitionIndex = getTypeInfoFromHandleXrefs.Single();
+                         // Xref scanner is sometimes confused about getTypeInfoFromHandle so we walk all the thunks until we hit the big method we need
+-                        while (XrefScannerLowLevel.JumpTargets(getTypeInfoFromTypeDefinitionIndex).ToArray().Length == 1)
++                        while (XrefScannerLowLevel.JumpTargets(getTypeInfoFromTypeDefinitionIndex, false, 250).ToArray().Length == 1)
+                         {
+-                            getTypeInfoFromTypeDefinitionIndex = XrefScannerLowLevel.JumpTargets(getTypeInfoFromTypeDefinitionIndex).Single();
++                            getTypeInfoFromTypeDefinitionIndex = XrefScannerLowLevel.JumpTargets(getTypeInfoFromTypeDefinitionIndex, false, 250).Single();
+                         }
+                     }
+                 }
+diff --git a/Il2CppInterop.Runtime/Injection/InjectorHelpers.cs b/Il2CppInterop.Runtime/Injection/InjectorHelpers.cs
+index 9418c06..78cd3eb 100644
+--- a/Il2CppInterop.Runtime/Injection/InjectorHelpers.cs
++++ b/Il2CppInterop.Runtime/Injection/InjectorHelpers.cs
+@@ -1,4 +1,4 @@
+-﻿using System;
++using System;
+ using System.Collections.Concurrent;
+ using System.Collections.Generic;
+ using System.Diagnostics;
+@@ -29,9 +29,9 @@ namespace Il2CppInterop.Runtime.Injection
+         internal static INativeImageStruct InjectedImage;
+         internal static ProcessModule Il2CppModule = Process.GetCurrentProcess()
+             .Modules.OfType<ProcessModule>()
+-            .Single((x) => x.ModuleName is "GameAssembly.dll" or "GameAssembly.dylib" or "GameAssembly.so" or "UserAssembly.dll" || string.Equals(x.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase));
++            .Last((x) => x.ModuleName is "GameAssembly.dll" or "GameAssembly.dylib" or "GameAssembly.so" or "UserAssembly.dll" or "libil2cpp.so");
+ 
+-        internal static IntPtr Il2CppHandle = NativeLibrary.Load("GameAssembly", typeof(InjectorHelpers).Assembly, null);
++        internal static IntPtr Il2CppHandle = NativeLibrary.Load("libil2cpp.so", typeof(InjectorHelpers).Assembly, null);
+ 
+         internal static readonly Dictionary<Type, OpCode> StIndOpcodes = new()
+         {
+@@ -75,7 +75,10 @@ namespace Il2CppInterop.Runtime.Injection
+                 GenericMethodGetMethodHook_Unity6.ApplyHook();
+             else
+                 GenericMethodGetMethodHook.ApplyHook();
+-            GetTypeInfoFromTypeDefinitionIndexHook.ApplyHook();
++            // GetTypeInfoFromTypeDefinitionIndexHook is excluded on Android/ARM64:
++            // on metadata v29+ (Unity 2022.3+), MetadataCache::GetTypeInfoFromTypeHandle takes a 64-bit
++            // struct pointer in X0, whereas MethodDelegate expects a 32-bit int index, corrupting
++            // the pointer and causing SIGSEGV (SEGV_MAPERR) at 0x502434c0 on dereference.
+             GetFieldDefaultValueHook.ApplyHook();
+             ClassInit ??= FindClassInit();
+             FromIl2CppTypeHook.ApplyHook();
+@@ -146,26 +149,25 @@ namespace Il2CppInterop.Runtime.Injection
+         internal delegate void d_ClassInit(Il2CppClass* klass);
+         internal static d_ClassInit ClassInit;
+ 
+-        private static readonly MemoryUtils.SignatureDefinition[] s_ClassInitSignatures =
+-        {
+-            new MemoryUtils.SignatureDefinition
+-            {
+-                pattern = "\xE8\x00\x00\x00\x00\x0F\xB7\x47\x28\x83",
+-                mask = "x????xxxxx",
+-                xref = true
+-            },
+-            new MemoryUtils.SignatureDefinition
+-            {
+-                pattern = "\xE8\x00\x00\x00\x00\x0F\xB7\x47\x48\x48",
+-                mask = "x????xxxxx",
+-                xref = true
+-            }
+-        };
+-
+         private static d_ClassInit FindClassInit()
+         {
+             static nint GetClassInitSubstitute()
+             {
++                // ARM64: il2cpp_array_new_specific -> Array::NewSpecific -> Class::Init.
++                // The old x86-only signature scan could read inaccessible ELF pages.
++                if (TryGetIl2CppExport("il2cpp_array_new_specific", out nint arrayNew))
++                {
++                    var firstHop = XrefScannerLowLevel.JumpTargets(arrayNew, false, 250).FirstOrDefault();
++                    if (firstHop != 0)
++                    {
++                        var bnmTarget = XrefScannerLowLevel.JumpTargets(firstHop, false, 250).FirstOrDefault();
++                        if (bnmTarget != 0)
++                        {
++                            Logger.Instance.LogTrace("Used BNM method to find Class::Init.");
++                            return bnmTarget;
++                        }
++                    }
++                }
+                 if (TryGetIl2CppExport("mono_class_instance_size", out nint classInit))
+                 {
+                     Logger.Instance.LogTrace("Picked mono_class_instance_size as a Class::Init substitute");
+@@ -185,16 +187,7 @@ namespace Il2CppInterop.Runtime.Injection
+                 Logger.Instance.LogTrace("GameAssembly.dll: 0x{Il2CppModuleAddress}", Il2CppModule.BaseAddress.ToInt64().ToString("X2"));
+                 throw new NotSupportedException("Failed to use signature for Class::Init and a substitute cannot be found, please create an issue and report your unity version & game");
+             }
+-            nint pClassInit = s_ClassInitSignatures
+-                .Select(s => MemoryUtils.FindSignatureInModule(Il2CppModule, s))
+-                .FirstOrDefault(p => p != 0);
+-
+-            if (pClassInit == 0)
+-            {
+-                Logger.Instance.LogWarning("Class::Init signatures have been exhausted, using a substitute!");
+-                pClassInit = GetClassInitSubstitute();
+-            }
+-
++            nint pClassInit = GetClassInitSubstitute();
+             Logger.Instance.LogTrace("Class::Init: 0x{PClassInitAddress}", pClassInit.ToString("X2"));
+ 
+             return Marshal.GetDelegateForFunctionPointer<d_ClassInit>(pClassInit);
+diff --git a/Il2CppInterop.Runtime/MemoryUtils.cs b/Il2CppInterop.Runtime/MemoryUtils.cs
+index 9fd2abd..7cbdaf5 100644
+--- a/Il2CppInterop.Runtime/MemoryUtils.cs
++++ b/Il2CppInterop.Runtime/MemoryUtils.cs
+@@ -43,7 +43,7 @@ internal class MemoryUtils
+         }
+ 
+         if (ptr != 0 && sigDef.xref)
+-            ptr = XrefScannerLowLevel.JumpTargets(ptr).FirstOrDefault();
++            ptr = XrefScannerLowLevel.JumpTargets(ptr, false, 250).FirstOrDefault();
+         return ptr;
+     }
+ 
+diff --git a/global.json b/global.json
+index 3fea262..8eb62be 100644
+--- a/global.json
++++ b/global.json
+@@ -1,6 +1,6 @@
+ {
+   "sdk": {
+     "version": "8.0.0",
+-    "rollForward": "latestFeature"
++    "rollForward": "latestMajor"
+   }
+ }

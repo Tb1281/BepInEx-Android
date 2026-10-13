@@ -1,0 +1,102 @@
+name: build-native-deps
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      # The pins now live in provenance/*.env, so a pin change is what should
+      # rebuild the hook engines. third_party/** was dropped when the sources
+      # stopped being read from the submodules; keeping it would trigger a build
+      # on a gitlink bump that no longer affects what is compiled.
+      - 'provenance/dobby.env'
+      - 'provenance/pine.env'
+      - 'references/dobby-android-log-include.patch'
+      - 'references/pine-scoped-local-ref.patch'
+      - 'references/pine-ndk-cxx-package.patch'
+      - 'scripts/build_native_deps.sh'
+      - 'scripts/check_elf_alignment.sh'
+      - 'provenance/SOURCES.md'
+jobs:
+  build:
+    # Pinned, not ubuntu-latest: the label migrates to Ubuntu 26 on 2026-10-19,
+    # and an NDK/C++ toolchain bump must never be silent here.
+    runs-on: ubuntu-24.04
+    # Declaring this block replaces the token's scopes entirely, so `contents: read`
+    # is restated rather than assumed - see the same note in fetch-runtime.yml,
+    # where omitting it broke checkout.
+    permissions:
+      contents: read
+      # actions/attest-build-provenance only.
+      attestations: write
+      id-token: write
+    steps:
+      # Egress audit on every job. A compromised action or build script
+      # exfiltrating data is otherwise invisible: the log shows green steps and
+      # nothing records where the runner talked to. `audit` only records — it
+      # never blocks — so this cannot break a build. Graduating to `block`
+      # needs a per-job allow-list measured from these logs first; an
+      # unmeasured block list is how a build fails on a mirror it never named.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: audit
+
+      # No submodules: build_native_deps.sh clones dobby and Pine from the pins in
+      # provenance/dobby.env and provenance/pine.env, and asserts each clone landed
+      # on the pinned commit before compiling anything.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install NDK
+        run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1"
+
+      - name: Build dobby + Pine from source
+        env:
+          ANDROID_NDK_HOME: ${{ github.workspace }}/launcher/app/src/main/ndk-placeholder
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          ./scripts/build_native_deps.sh
+
+      - name: Check 16KB page alignment
+        # Only the two libraries this job builds. The other nine .so in jniLibs
+        # are committed binaries this job never writes; they are checked against
+        # the manifest by verify-prebuilts.sh, which also asserts no unlisted
+        # binary is shipped. Re-checking them here cost a readelf per file and
+        # reported nothing this job could act on.
+        run: |
+          ./scripts/check_elf_alignment.sh \
+            launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so \
+            launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
+
+      - name: Record checksums
+        run: |
+          cd launcher/app/src/main/jniLibs/arm64-v8a
+          sha256sum libdobby.so libpine.so > "$GITHUB_WORKSPACE/native-deps.sha256"
+          cat "$GITHUB_WORKSPACE/native-deps.sha256"
+
+      # Attest before upload, not after: the consumer's gate checks that these
+      # exact bytes carry an attestation naming this run and commit, so a bundle
+      # emitted after the artifact left the job would describe nothing the
+      # consumer can verify.
+      #
+      # attestations: write is required, and without it this step produces no
+      # statement and the consumer fails closed on libdobby.so and libpine.so.
+      # That is deliberate - a missing attestation must stop the shipping path,
+      # not be logged and stepped over.
+      - name: Attest the hook engines
+        uses: ./.github/actions/attest-inputs
+        with:
+          bundle-output: native-deps.attestation.json
+          paths: |
+            launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so
+            launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: native-deps
+          path: |
+            launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so
+            launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
+            native-deps.sha256
+            native-deps.attestation.json
+          retention-days: 1

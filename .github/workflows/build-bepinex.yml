@@ -1,0 +1,206 @@
+name: build-bepinex
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'patches/**'
+      - 'provenance/bepinex.env'
+      - 'scripts/apply_patches.sh'
+      - 'scripts/bepinex_paths.sh'
+      - 'scripts/package_bepinex_android.sh'
+      - 'scripts/build_packages_parallel.sh'
+      - 'scripts/zip_deterministic.py'
+      - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/build_monomod.sh'
+      - 'provenance/monomod.env'
+      - 'references/**'
+      - 'provenance/il2cppinterop.env'
+jobs:
+  build:
+    # Pinned, not ubuntu-latest: the label migrates to Ubuntu 26 on 2026-10-19,
+    # and this job's 16KB-page and AOT-sensitive assertions are not worth
+    # re-validating against a new distro image mid-flight.
+    runs-on: ubuntu-24.04
+    # Declaring this block replaces the token's scopes entirely, so `contents: read`
+    # is restated rather than assumed - see the same note in fetch-runtime.yml,
+    # where omitting it broke checkout.
+    permissions:
+      contents: read
+      # actions/attest-build-provenance only.
+      attestations: write
+      id-token: write
+    steps:
+      # Egress pilot: blocks with an explicit allow-list covering setup-dotnet
+      # (Microsoft install endpoints), upstream git clones (github.com), the
+      # two restore feeds in nuget.config (api.nuget.org, nuget.bepinex.dev)
+      # and the artifact blob storage the upload step writes to
+      # (*.blob.core.windows.net — named in harden-runner's own GitHub meta
+      # domains; the upload path stays unproven until the artifact quota
+      # recalculates, see docs/ci-cd.md).
+      # Same profile as the verify-provenance:patch-queue pilot, confirmed
+      # green there first. Rollback is one line back to audit.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+            *.blob.core.windows.net
+            builds.dotnet.microsoft.com
+            dotnetcli.azureedge.net
+            dotnetbuilds.blob.core.windows.net
+            api.nuget.org
+            nuget.bepinex.dev
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # No download caches (SDK, NuGet HTTP, Gradle): tried 2026-10-12, reverted
+      # the same day. A single NuGet HTTP entry reached 323 MB against the
+      # private 500 MB quota and blocked verification runs — runner minutes are
+      # cheaper than shared quota here. See docs/ci-cd.md for the full list of
+      # what stays uncached and why.
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          # Exact, not '10.0.x'. The floating form resolves to whatever the newest
+          # 10.0 SDK is on the day the runner boots, so the same commit could
+          # compile under a different compiler tomorrow - and this repository's
+          # managed assemblies already cannot be byte-reproduced, so a silent
+          # compiler change has nothing else to reveal it.
+          #
+          # 10.0.401 is what '10.0.x' resolves to today, so this changes no
+          # build today. It is also the SDK provenance/monomod.env already pins,
+          # and MonoMod is built from the same job, so the port and the patcher
+          # no longer disagree about which compiler is running. Bumping it is a
+          # deliberate change, like every other pin here.
+          dotnet-version: '10.0.401'
+
+      # No submodules: the upstream tree is cloned from the pin in
+      # provenance/bepinex.env by apply_patches.sh below, not checked out as a
+      # gitlink. The clone destination is build/bepinex, which .gitignore covers,
+      # so no build step can leave the working tree dirty.
+      - name: Replay the patch queue
+        run: ./scripts/apply_patches.sh
+
+      # Both package sets must exist before restore, and both are built here:
+      # MonoMod first in effect because BepInEx.Core/Preloader.Core reference
+      # it directly, and a missing package there is an NU1603 that silently
+      # substitutes official MonoMod - the build that throws on Android.
+      # Built concurrently (scripts/build_packages_parallel.sh), which waits
+      # for both and fails if either failed, so "both present" holds exactly
+      # as with the sequential steps this replaces. The two builds are
+      # independent: separate scratch clones, distinct .nupkg filenames.
+      - name: Rebuild the MonoMod and Il2CppInterop packages
+        run: ./scripts/build_packages_parallel.sh
+
+      - name: Restore dependencies
+        run: |
+          # pipefail is required here, not cosmetic. GitHub runs a `run:` block
+          # with `bash -e {0}` and no pipefail, so `dotnet restore | tee` would
+          # report tee's exit status (always 0) and a restore that failed
+          # outright would leave an empty log, pass the grep below, and print
+          # "no version substitution" - the step that exists to catch exactly
+          # that class of silent substitution.
+          set -o pipefail
+          . ./scripts/bepinex_paths.sh
+          dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/" -v normal 2>&1 |
+            tee /tmp/restore.log
+          # A pin that cannot be resolved must fail here, not degrade to a
+          # different package with a warning. NU1602 is that for a stable
+          # version; NU1603 is the same for a prerelease, which is what the
+          # -android package versions are. Missing only NU1602 let this job
+          # pass while official MonoMod - whose CreateCurrentSystem throws
+          # NotImplementedException on Android - was substituted for ours.
+          #
+          # Scoped to the packages this repository builds: upstream BepInEx's
+          # own Samboy063.Cpp2IL.Core pin has never resolved and is not ours to
+          # silently accept either, but failing on it here would mask ours.
+          if grep -E 'NU160[23]' /tmp/restore.log | grep -qiE 'MonoMod\.|Il2CppInterop\.'; then
+            echo "::error::a package this repository builds fell back to a different version"
+            grep -E 'NU160[23]' /tmp/restore.log | grep -iE 'MonoMod\.|Il2CppInterop\.'
+            exit 1
+          fi
+          echo "no version substitution"
+
+      - name: Build the IL2CPP runtime
+        run: |
+          # SolutionDir is pinned so every project writes to one predictable tree
+          # regardless of whether it is reached through the solution or directly.
+          . ./scripts/bepinex_paths.sh
+          dotnet build "$BEPINEX_SRC/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj" \
+            -c Release --no-restore -p:GeneratePackageOnBuild=false -p:SolutionDir="$BEPINEX_SRC/"
+
+      - name: Package BepInEx.Android.zip
+        run: |
+          OUT="$PWD/out/BepInEx.Android.zip" ./scripts/package_bepinex_android.sh
+          cp out/BepInEx.Android.zip launcher/app/src/main/assets/BepInEx.Android.zip
+
+      - name: Assert the Android entrypoint is reachable from fusion
+        run: |
+          # libfusion resolves the entrypoint by assembly + type + method name.
+          # A rename on either side turns into a silent "entry point not found" on
+          # device, so assert the exact coordinate here.
+          . ./scripts/bepinex_paths.sh
+          DLL="$BEPINEX_SRC/bin/Unity.IL2CPP/BepInEx.Unity.IL2CPP.dll"
+          test -f "$DLL" || DLL="$(find "$BEPINEX_SRC" -path '*/Unity.IL2CPP/BepInEx.Unity.IL2CPP.dll' | head -1)"
+          test -f "$DLL" || { echo "managed output not found"; exit 1; }
+
+          ASM=$(sed -n 's/.*"\(BepInEx\.Unity\.IL2CPP\)",$/\1/p' launcher/app/src/main/cpp/fusion/src/dotnet.cpp | head -1)
+          TYPE=$(sed -n 's/.*"\(BepInEx\.Unity\.IL2CPP\.[A-Za-z]*\)", "\([A-Za-z]*\)",$/\1/p' launcher/app/src/main/cpp/fusion/src/dotnet.cpp | head -1)
+          METHOD=$(sed -n 's/.*"\(BepInEx\.Unity\.IL2CPP\.[A-Za-z]*\)", "\([A-Za-z]*\)",$/\2/p' launcher/app/src/main/cpp/fusion/src/dotnet.cpp | head -1)
+          echo "fusion calls: $ASM -> $TYPE.$METHOD"
+          test "$ASM" = "BepInEx.Unity.IL2CPP"
+          test -n "$TYPE" && test -n "$METHOD" || { echo "could not parse entrypoint from dotnet.cpp"; exit 1; }
+
+          # Metadata stores the type's simple name, not its namespace-qualified
+          # form, so `strings` finds "AndroidEntrypoint" and never
+          # "BepInEx.Unity.IL2CPP.AndroidEntrypoint". Grepping for the qualified
+          # name asserted a string that cannot exist in a well-formed assembly,
+          # which is how a correct build failed CI. Assert the two halves the
+          # runtime actually resolves by: the assembly, the simple type name and
+          # the method name.
+          TYPESIMPLE="${TYPE##*.}"
+          strings "$DLL" | grep -qx "$TYPESIMPLE" \
+            || { echo "$TYPESIMPLE not present in $DLL"; exit 1; }
+          strings "$DLL" | grep -qx "$METHOD" \
+            || { echo "$METHOD not present in $DLL"; exit 1; }
+          echo "entrypoint OK"
+
+      - name: Assert the export-stub resolver is linked in
+        run: |
+          . ./scripts/bepinex_paths.sh
+          DLL="$(find "$BEPINEX_SRC" -path '*/Unity.IL2CPP/BepInEx.Unity.IL2CPP.dll' | head -1)"
+          strings "$DLL" | grep -q 'ExportThunkResolver' \
+            || { echo "ExportThunkResolver missing from the managed output"; exit 1; }
+          # The fallback chain that used to be here must stay gone.
+          if strings "$DLL" | grep -q 'ignoreRetn'; then
+            echo "xref fallback path is back in IL2CPPChainloader"
+            exit 1
+          fi
+          echo "resolver OK"
+
+      - name: Record checksums
+        run: |
+          sha256sum launcher/app/src/main/assets/BepInEx.Android.zip | tee bepinex-managed.sha256
+
+      # Attest the managed framework before it leaves the job. The hash above says
+      # what the zip is; this says this repository, this workflow and this commit
+      # produced it, which a hash cannot. build-launcher-apk fails closed without it.
+      - name: Attest the managed framework
+        uses: ./.github/actions/attest-inputs
+        with:
+          bundle-output: bepinex-managed.attestation.json
+          paths: |
+            launcher/app/src/main/assets/BepInEx.Android.zip
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: bepinex-managed
+          path: |
+            launcher/app/src/main/assets/BepInEx.Android.zip
+            bepinex-managed.sha256
+            bepinex-managed.attestation.json
+          retention-days: 1

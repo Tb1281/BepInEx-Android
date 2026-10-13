@@ -1,0 +1,1317 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Sun, 4 Oct 2026 15:45:12 +0900
+Subject: [PATCH 7/8] core: delete the Unix and Windows console drivers
+
+ConsoleManager probes for a Windows console first and then for a Unix tty.
+Neither exists on Android: there is no console to allocate and /dev/tty is not
+reachable from an app process. Both drivers P/Invoke into APIs that are absent
+there, so they are deleted rather than left to fail at probe time. The Android
+driver added earlier becomes the only implementation, together with the
+ConsoleWriter helper the Windows driver needed.
+---
+ BepInEx.Core/Console/Unix/ConsoleWriter.cs    |  55 -----
+ .../Console/Unix/LinuxConsoleDriver.cs        | 113 ----------
+ BepInEx.Core/Console/Unix/TtyHandler.cs       | 203 ------------------
+ BepInEx.Core/Console/Unix/UnixStream.cs       |  74 -------
+ BepInEx.Core/Console/Unix/UnixStreamHelper.cs |  66 ------
+ .../ConsoleEncoding.Buffers.cs                |  59 -----
+ .../ConsoleEncoding.PInvoke.cs                |  49 -----
+ .../ConsoleEncoding/ConsoleEncoding.cs        |  81 -------
+ BepInEx.Core/Console/Windows/ConsoleWindow.cs | 183 ----------------
+ BepInEx.Core/Console/Windows/Kon.cs           | 152 -------------
+ .../Console/Windows/WindowsConsoleDriver.cs   | 180 ----------------
+ 11 files changed, 1215 deletions(-)
+ delete mode 100644 BepInEx.Core/Console/Unix/ConsoleWriter.cs
+ delete mode 100644 BepInEx.Core/Console/Unix/LinuxConsoleDriver.cs
+ delete mode 100644 BepInEx.Core/Console/Unix/TtyHandler.cs
+ delete mode 100644 BepInEx.Core/Console/Unix/UnixStream.cs
+ delete mode 100644 BepInEx.Core/Console/Unix/UnixStreamHelper.cs
+ delete mode 100644 BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.Buffers.cs
+ delete mode 100644 BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.PInvoke.cs
+ delete mode 100644 BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.cs
+ delete mode 100644 BepInEx.Core/Console/Windows/ConsoleWindow.cs
+ delete mode 100644 BepInEx.Core/Console/Windows/Kon.cs
+ delete mode 100644 BepInEx.Core/Console/Windows/WindowsConsoleDriver.cs
+
+diff --git a/BepInEx.Core/Console/Unix/ConsoleWriter.cs b/BepInEx.Core/Console/Unix/ConsoleWriter.cs
+deleted file mode 100644
+index c3e98c2..0000000
+--- a/BepInEx.Core/Console/Unix/ConsoleWriter.cs
++++ /dev/null
+@@ -1,55 +0,0 @@
+-﻿using System;
+-using System.IO;
+-using System.Linq;
+-using System.Reflection;
+-using System.Text;
+-using HarmonyLib;
+-
+-namespace BepInEx.Unix;
+-
+-internal static class ConsoleWriter
+-{
+-    private static Func<Stream, Encoding, bool, StreamWriter> cStreamWriterConstructor;
+-
+-    private static Func<Stream, Encoding, bool, StreamWriter> CStreamWriterConstructor
+-    {
+-        get
+-        {
+-            if (cStreamWriterConstructor != null)
+-                return cStreamWriterConstructor;
+-
+-            var cStreamWriter = AccessTools.TypeByName("System.IO.CStreamWriter");
+-
+-            Func<Stream, Encoding, bool, StreamWriter> GetCtor(int[] perm)
+-            {
+-                var parameters = new[] { typeof(Stream), typeof(Encoding), typeof(bool) };
+-                var ctor = AccessTools.Constructor(cStreamWriter, perm.Select(i => parameters[i]).ToArray());
+-                if (ctor != null)
+-                    return (stream, encoding, l) =>
+-                    {
+-                        var vals = new object[] { stream, encoding, l };
+-                        return (StreamWriter) ctor.Invoke(perm.Select(i => vals[i]).ToArray());
+-                    };
+-                return null;
+-            }
+-
+-            var ctorParams = new[]
+-            {
+-                new[] { 0, 1, 2 }, // Unity 5.x and up
+-                new[] { 0, 1 }     // Unity 4.7 and older
+-            };
+-
+-            cStreamWriterConstructor = ctorParams.Select(GetCtor).FirstOrDefault(f => f != null);
+-            if (cStreamWriterConstructor == null)
+-                throw new AmbiguousMatchException("Failed to find suitable constructor for CStreamWriter");
+-            return cStreamWriterConstructor;
+-        }
+-    }
+-
+-    public static TextWriter CreateConsoleStreamWriter(Stream stream, Encoding encoding, bool leaveOpen)
+-    {
+-        var writer = CStreamWriterConstructor(stream, encoding, leaveOpen);
+-        writer.AutoFlush = true;
+-        return writer;
+-    }
+-}
+diff --git a/BepInEx.Core/Console/Unix/LinuxConsoleDriver.cs b/BepInEx.Core/Console/Unix/LinuxConsoleDriver.cs
+deleted file mode 100644
+index 96ff64f..0000000
+--- a/BepInEx.Core/Console/Unix/LinuxConsoleDriver.cs
++++ /dev/null
+@@ -1,113 +0,0 @@
+-using System;
+-using System.IO;
+-using BepInEx.Configuration;
+-using BepInEx.Logging;
+-using HarmonyLib;
+-using UnityInjector.ConsoleUtil;
+-
+-namespace BepInEx.Unix;
+-
+-internal class LinuxConsoleDriver : IConsoleDriver
+-{
+-    private static readonly ConfigEntry<bool> ForceCustomTtyDriverConfig =
+-        ConfigFile.CoreConfig.Bind(
+-                                   "Logging.Console",
+-                                   "ForceBepInExTTYDriver",
+-                                   false,
+-                                   "If enabled, forces to use custom BepInEx TTY driver for handling terminal output on unix.");
+-
+-    static LinuxConsoleDriver()
+-    {
+-        UseMonoTtyDriver = false;
+-
+-        if (ForceCustomTtyDriverConfig.Value)
+-            return;
+-
+-        var consoleDriverType = typeof(Console).Assembly.GetType("System.ConsoleDriver");
+-
+-        if (consoleDriverType != null)
+-            UseMonoTtyDriver = typeof(Console).Assembly.GetType("System.ParameterizedStrings") != null;
+-    }
+-
+-    public static bool UseMonoTtyDriver { get; }
+-
+-    public bool StdoutRedirected { get; private set; }
+-
+-    public TtyInfo TtyInfo { get; private set; }
+-
+-    public TextWriter StandardOut { get; private set; }
+-    public TextWriter ConsoleOut { get; private set; }
+-
+-    public bool ConsoleActive { get; private set; }
+-    public bool ConsoleIsExternal => false;
+-
+-    public void PreventClose()
+-    {
+-        // Not supported by all distros
+-    }
+-
+-    public void Initialize(bool alreadyActive, bool useManagedEncoder)
+-    {
+-        // Console is always considered active on Unix
+-        ConsoleActive = true;
+-
+-        StdoutRedirected = UnixStreamHelper.isatty(1) != 1;
+-
+-        var duplicateStream = UnixStreamHelper.CreateDuplicateStream(1);
+-
+-        if (UseMonoTtyDriver && !StdoutRedirected)
+-        {
+-            // Mono implementation handles xterm for us
+-
+-            var writer = ConsoleWriter.CreateConsoleStreamWriter(duplicateStream, Console.Out.Encoding, true);
+-
+-            StandardOut = TextWriter.Synchronized(writer);
+-
+-            var driver = AccessTools.Field(AccessTools.TypeByName("System.ConsoleDriver"), "driver").GetValue(null);
+-            AccessTools.Field(AccessTools.TypeByName("System.TermInfoDriver"), "stdout").SetValue(driver, writer);
+-        }
+-        else
+-        {
+-            // Handle TTY ourselves
+-
+-            var writer = new StreamWriter(duplicateStream, Console.Out.Encoding);
+-
+-            writer.AutoFlush = true;
+-
+-            StandardOut = TextWriter.Synchronized(writer);
+-
+-            TtyInfo = TtyHandler.GetTtyInfo();
+-        }
+-
+-        ConsoleOut = StandardOut;
+-    }
+-
+-    public void CreateConsole(uint codepage) =>
+-        Logger.Log(LogLevel.Warning, "An external console currently cannot be spawned on a Unix platform.");
+-
+-    public void DetachConsole() =>
+-        throw new PlatformNotSupportedException("Cannot detach console on a Unix platform");
+-
+-    public void SetConsoleColor(ConsoleColor color)
+-    {
+-        if (StdoutRedirected)
+-            return;
+-
+-        if (UseMonoTtyDriver)
+-            // Use mono's inbuilt terminfo driver to set the foreground color for us
+-            SafeConsole.ForegroundColor = color;
+-        else
+-            ConsoleOut.Write(TtyInfo.GetAnsiCode(color));
+-    }
+-
+-    public void SetConsoleTitle(string title)
+-    {
+-        if (StdoutRedirected)
+-            return;
+-
+-        if (UseMonoTtyDriver && SafeConsole.TitleExists)
+-            SafeConsole.Title = title;
+-        else
+-            ConsoleOut.Write($"\u001B]2;{title.Replace("\\", "\\\\")}\u0007");
+-    }
+-}
+diff --git a/BepInEx.Core/Console/Unix/TtyHandler.cs b/BepInEx.Core/Console/Unix/TtyHandler.cs
+deleted file mode 100644
+index 32b024d..0000000
+--- a/BepInEx.Core/Console/Unix/TtyHandler.cs
++++ /dev/null
+@@ -1,203 +0,0 @@
+-﻿// Sections of this code have been abridged from https://github.com/mono/mono/blob/master/mcs/class/corlib/System/TermInfoReader.cs under the MIT license
+-
+-using System;
+-using System.IO;
+-using System.Linq;
+-using System.Text;
+-
+-namespace BepInEx.Unix;
+-
+-internal class TtyInfo
+-{
+-    public string TerminalType { get; set; } = "default";
+-
+-    public int MaxColors { get; set; }
+-
+-    public string[] ForegroundColorStrings { get; set; }
+-
+-    public static TtyInfo Default { get; } = new()
+-    {
+-        MaxColors = 0
+-    };
+-
+-    public string GetAnsiCode(ConsoleColor color)
+-    {
+-        if (MaxColors <= 0 || ForegroundColorStrings == null)
+-            return string.Empty;
+-
+-        var index = (int) color % MaxColors;
+-        return ForegroundColorStrings[index];
+-    }
+-}
+-
+-internal static class TtyHandler
+-{
+-    private static readonly string[] ncursesLocations =
+-    {
+-        "/usr/share/terminfo",
+-        "/etc/terminfo",
+-        "/usr/lib/terminfo",
+-        "/lib/terminfo"
+-    };
+-
+-    private static string TryTermInfoDir(string dir, string term)
+-    {
+-        var infoFilePath = $"{dir}/{(int) term[0]:x}/{term}";
+-
+-        if (File.Exists(infoFilePath))
+-            return infoFilePath;
+-
+-        infoFilePath = Utility.CombinePaths(dir, term.Substring(0, 1), term);
+-
+-        if (File.Exists(infoFilePath))
+-            return infoFilePath;
+-
+-        return null;
+-    }
+-
+-    private static string FindTermInfoPath(string term)
+-    {
+-        if (string.IsNullOrEmpty(term))
+-            return null;
+-
+-        var termInfoVar = Environment.GetEnvironmentVariable("TERMINFO");
+-        if (termInfoVar != null && Directory.Exists(termInfoVar))
+-        {
+-            var text = TryTermInfoDir(termInfoVar, term);
+-            if (text != null) return text;
+-        }
+-
+-        foreach (var location in ncursesLocations)
+-            if (Directory.Exists(location))
+-            {
+-                var text = TryTermInfoDir(location, term);
+-
+-                if (text != null)
+-                    return text;
+-            }
+-
+-        return null;
+-    }
+-
+-    public static TtyInfo GetTtyInfo(string terminal = null)
+-    {
+-        terminal = terminal ?? Environment.GetEnvironmentVariable("TERM");
+-        var path = FindTermInfoPath(terminal);
+-
+-        if (path == null)
+-            return TtyInfo.Default;
+-
+-        var buffer = File.ReadAllBytes(path);
+-
+-        var info = TtyInfoParser.Parse(buffer);
+-        info.TerminalType = terminal;
+-
+-        return info;
+-    }
+-}
+-
+-internal static class TtyInfoParser
+-{
+-    private static readonly int[] ansiColorMapping =
+-    {
+-        0, 4, 2, 6, 1, 5, 3, 7, 8, 12, 10, 14, 9, 13, 11, 15
+-    };
+-
+-    public static TtyInfo Parse(byte[] buffer)
+-    {
+-        int intSize;
+-
+-
+-        int magic = GetInt16(buffer, 0);
+-
+-        switch (magic)
+-        {
+-            case 0x11a:
+-                intSize = 2;
+-                break;
+-
+-            case 0x21E:
+-                intSize = 4;
+-                break;
+-
+-            default:
+-                // Unknown ttyinfo format
+-                return TtyInfo.Default;
+-        }
+-
+-        int boolFieldLength = GetInt16(buffer, 4);
+-        int intFieldLength = GetInt16(buffer, 6);
+-        int strOffsetFieldLength = GetInt16(buffer, 8);
+-
+-        // Normally i'd put a more complete implementation here, but I only need to parse this info to get the max color count
+-        // Feel free to implement the rest of this using these sources:
+-        // https://github.com/mono/mono/blob/master/mcs/class/corlib/System/TermInfoReader.cs
+-        // https://invisible-island.net/ncurses/man/term.5.html
+-        // https://invisible-island.net/ncurses/man/terminfo.5.html
+-
+-        var baseOffset = 12 + GetString(buffer, 12).Length + 1; // Skip the terminal name
+-        baseOffset += boolFieldLength;                          // Length of bool field section
+-        baseOffset += baseOffset % 2;                           // Correct for boundary
+-
+-        var colorOffset =
+-            baseOffset
+-          + intSize * (int) TermInfoNumbers.MaxColors; // Finally the offset for the max color integer
+-
+-        //int stringOffset = baseOffset + (intSize * intFieldLength);
+-
+-        //int foregoundColorOffset =
+-        //	stringOffset
+-        //	+ (2 * (int)TermInfoStrings.SetAForeground);
+-
+-        //foregoundColorOffset = stringOffset
+-        //					   + (2 * strOffsetFieldLength)
+-        //					   + GetInt16(buffer, foregoundColorOffset);
+-
+-        var info = new TtyInfo();
+-
+-        info.MaxColors = GetInteger(intSize, buffer, colorOffset);
+-
+-        //string setForegroundTemplate = GetString(buffer, foregoundColorOffset);
+-
+-        //info.ForegroundColorStrings = ansiColorMapping.Select(x => setForegroundTemplate.Replace("%p1%", x.ToString())).ToArray();
+-        info.ForegroundColorStrings =
+-            ansiColorMapping.Select(x => $"\u001B[{(x > 7 ? 82 + x : 30 + x)}m").ToArray();
+-
+-        return info;
+-    }
+-
+-    private static int GetInt32(byte[] buffer, int offset) =>
+-        buffer[offset]
+-      | (buffer[offset + 1] << 8)
+-      | (buffer[offset + 2] << 16)
+-      | (buffer[offset + 3] << 24);
+-
+-    private static short GetInt16(byte[] buffer, int offset) =>
+-        (short) (buffer[offset]
+-               | (buffer[offset + 1] << 8));
+-
+-    private static int GetInteger(int intSize, byte[] buffer, int offset) =>
+-        intSize == 2
+-            ? GetInt16(buffer, offset)
+-            : GetInt32(buffer, offset);
+-
+-    private static string GetString(byte[] buffer, int offset)
+-    {
+-        var length = 0;
+-
+-        while (buffer[offset + length] != 0x00)
+-            length++;
+-
+-        return Encoding.ASCII.GetString(buffer, offset, length);
+-    }
+-
+-    internal enum TermInfoNumbers
+-    {
+-        MaxColors = 13
+-    }
+-
+-    internal enum TermInfoStrings
+-    {
+-        SetAForeground = 359
+-    }
+-}
+diff --git a/BepInEx.Core/Console/Unix/UnixStream.cs b/BepInEx.Core/Console/Unix/UnixStream.cs
+deleted file mode 100644
+index f1ee8de..0000000
+--- a/BepInEx.Core/Console/Unix/UnixStream.cs
++++ /dev/null
+@@ -1,74 +0,0 @@
+-﻿using System;
+-using System.IO;
+-using System.Runtime.InteropServices;
+-
+-namespace BepInEx.Unix;
+-
+-internal class UnixStream : Stream
+-{
+-    public UnixStream(int fileDescriptor, FileAccess access)
+-    {
+-        Access = access;
+-
+-        var newFd = UnixStreamHelper.dup(fileDescriptor);
+-        FileHandle = UnixStreamHelper.fdopen(newFd, access == FileAccess.Write ? "w" : "r");
+-    }
+-
+-    public override bool CanRead => Access == FileAccess.Read || Access == FileAccess.ReadWrite;
+-    public override bool CanSeek => false;
+-    public override bool CanWrite => Access == FileAccess.Write || Access == FileAccess.ReadWrite;
+-    public override long Length => throw new InvalidOperationException();
+-
+-    public override long Position
+-    {
+-        get => throw new InvalidOperationException();
+-        set => throw new InvalidOperationException();
+-    }
+-
+-
+-    public FileAccess Access { get; }
+-
+-    public IntPtr FileHandle { get; }
+-
+-
+-    public override void Flush() => UnixStreamHelper.fflush(FileHandle);
+-
+-    public override long Seek(long offset, SeekOrigin origin) => throw new InvalidOperationException();
+-
+-    public override void SetLength(long value) => throw new InvalidOperationException();
+-
+-    public override int Read(byte[] buffer, int offset, int count)
+-    {
+-        var gcHandle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+-
+-        var read = UnixStreamHelper.fread(new IntPtr(gcHandle.AddrOfPinnedObject().ToInt64() + offset),
+-                                          (IntPtr) count, (IntPtr) 1, FileHandle);
+-
+-        gcHandle.Free();
+-
+-        return read.ToInt32();
+-    }
+-
+-    public override void Write(byte[] buffer, int offset, int count)
+-    {
+-        var gcHandle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+-
+-        UnixStreamHelper.fwrite(new IntPtr(gcHandle.AddrOfPinnedObject().ToInt64() + offset), (IntPtr) count,
+-                                (IntPtr) 1, FileHandle);
+-
+-        gcHandle.Free();
+-    }
+-
+-    private void ReleaseUnmanagedResources() => UnixStreamHelper.fclose(FileHandle);
+-
+-    protected override void Dispose(bool disposing)
+-    {
+-        ReleaseUnmanagedResources();
+-        base.Dispose(disposing);
+-    }
+-
+-    ~UnixStream()
+-    {
+-        Dispose(false);
+-    }
+-}
+diff --git a/BepInEx.Core/Console/Unix/UnixStreamHelper.cs b/BepInEx.Core/Console/Unix/UnixStreamHelper.cs
+deleted file mode 100644
+index f308fb8..0000000
+--- a/BepInEx.Core/Console/Unix/UnixStreamHelper.cs
++++ /dev/null
+@@ -1,66 +0,0 @@
+-﻿using System;
+-using System.Collections.Generic;
+-using System.IO;
+-using MonoMod.Utils;
+-
+-namespace BepInEx.Unix;
+-
+-internal static class UnixStreamHelper
+-{
+-    public delegate int dupDelegate(int fd);
+-
+-    public delegate int fcloseDelegate(IntPtr stream);
+-
+-    public delegate IntPtr fdopenDelegate(int fd, string mode);
+-
+-    public delegate int fflushDelegate(IntPtr stream);
+-
+-    public delegate IntPtr freadDelegate(IntPtr ptr, IntPtr size, IntPtr nmemb, IntPtr stream);
+-
+-    public delegate int fwriteDelegate(IntPtr ptr, IntPtr size, IntPtr nmemb, IntPtr stream);
+-
+-    public delegate int isattyDelegate(int fd);
+-
+-    [DynDllImport("libc")]
+-    public static dupDelegate dup;
+-
+-    [DynDllImport("libc")]
+-    public static fdopenDelegate fdopen;
+-
+-    [DynDllImport("libc")]
+-    public static freadDelegate fread;
+-
+-    [DynDllImport("libc")]
+-    public static fwriteDelegate fwrite;
+-
+-    [DynDllImport("libc")]
+-    public static fcloseDelegate fclose;
+-
+-    [DynDllImport("libc")]
+-    public static fflushDelegate fflush;
+-
+-    [DynDllImport("libc")]
+-    public static isattyDelegate isatty;
+-
+-    static UnixStreamHelper()
+-    {
+-        var libcMapping = new Dictionary<string, List<DynDllMapping>>
+-        {
+-            ["libc"] = new()
+-            {
+-                "libc.so.6",               // Ubuntu glibc
+-                "libc",                    // Linux glibc
+-                "/usr/lib/libSystem.dylib" // OSX POSIX
+-            }
+-        };
+-
+-        typeof(UnixStreamHelper).ResolveDynDllImports(libcMapping);
+-    }
+-
+-    public static Stream CreateDuplicateStream(int fileDescriptor)
+-    {
+-        var newFd = dup(fileDescriptor);
+-
+-        return new UnixStream(newFd, FileAccess.Write);
+-    }
+-}
+diff --git a/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.Buffers.cs b/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.Buffers.cs
+deleted file mode 100644
+index b4099e5..0000000
+--- a/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.Buffers.cs
++++ /dev/null
+@@ -1,59 +0,0 @@
+-﻿// --------------------------------------------------
+-// UnityInjector - ConsoleEncoding.Buffers.cs
+-// Copyright (c) Usagirei 2015 - 2015
+-// --------------------------------------------------
+-
+-namespace UnityInjector.ConsoleUtil;
+-// --------------------------------------------------
+-// Code ported from
+-// https://gist.github.com/asm256/9bfb88336a1433e2328a
+-// Which in turn was seemingly ported from
+-// http://jonskeet.uk/csharp/ebcdic/
+-// using only safe (managed) code
+-// --------------------------------------------------
+-
+-internal partial class ConsoleEncoding
+-{
+-    private readonly byte[] _zeroByte = new byte[0];
+-    private readonly char[] _zeroChar = new char[0];
+-    private byte[] _byteBuffer = new byte[256];
+-    private char[] _charBuffer = new char[256];
+-
+-    private void ExpandByteBuffer(int count)
+-    {
+-        if (_byteBuffer.Length < count)
+-            _byteBuffer = new byte[count];
+-    }
+-
+-    private void ExpandCharBuffer(int count)
+-    {
+-        if (_charBuffer.Length < count)
+-            _charBuffer = new char[count];
+-    }
+-
+-    private void ReadByteBuffer(byte[] bytes, int index, int count)
+-    {
+-        for (var i = 0; i < count; i++)
+-            bytes[index + i] = _byteBuffer[i];
+-    }
+-
+-    private void ReadCharBuffer(char[] chars, int index, int count)
+-    {
+-        for (var i = 0; i < count; i++)
+-            chars[index + i] = _charBuffer[i];
+-    }
+-
+-    private void WriteByteBuffer(byte[] bytes, int index, int count)
+-    {
+-        ExpandByteBuffer(count);
+-        for (var i = 0; i < count; i++)
+-            _byteBuffer[i] = bytes[index + i];
+-    }
+-
+-    private void WriteCharBuffer(char[] chars, int index, int count)
+-    {
+-        ExpandCharBuffer(count);
+-        for (var i = 0; i < count; i++)
+-            _charBuffer[i] = chars[index + i];
+-    }
+-}
+diff --git a/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.PInvoke.cs b/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.PInvoke.cs
+deleted file mode 100644
+index 97ad9e9..0000000
+--- a/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.PInvoke.cs
++++ /dev/null
+@@ -1,49 +0,0 @@
+-﻿// --------------------------------------------------
+-// UnityInjector - ConsoleEncoding.PInvoke.cs
+-// Copyright (c) Usagirei 2015 - 2015
+-// --------------------------------------------------
+-
+-using System;
+-using System.Runtime.InteropServices;
+-
+-namespace UnityInjector.ConsoleUtil;
+-
+-// --------------------------------------------------
+-// Code ported from
+-// https://gist.github.com/asm256/9bfb88336a1433e2328a
+-// Which in turn was seemingly ported from
+-// http://jonskeet.uk/csharp/ebcdic/
+-// using only safe (managed) code
+-// --------------------------------------------------
+-internal partial class ConsoleEncoding
+-{
+-    [DllImport("kernel32.dll")]
+-    private static extern uint GetConsoleOutputCP();
+-
+-    [DllImport("kernel32.dll")]
+-    private static extern uint GetACP();
+-
+-    [DllImport("kernel32.dll", SetLastError = true)]
+-    private static extern int MultiByteToWideChar(uint codePage,
+-                                                  uint dwFlags,
+-                                                  [In] [MarshalAs(UnmanagedType.LPArray)]
+-                                                  byte[] lpMultiByteStr,
+-                                                  int cbMultiByte,
+-                                                  [Out] [MarshalAs(UnmanagedType.LPWStr)]
+-                                                  char[] lpWideCharStr,
+-                                                  int cchWideChar);
+-
+-    [DllImport("kernel32.dll")]
+-    private static extern IntPtr SetConsoleOutputCP(uint codepage);
+-
+-    [DllImport("kernel32.dll", SetLastError = true)]
+-    private static extern int WideCharToMultiByte(uint codePage,
+-                                                  uint dwFlags,
+-                                                  [In] [MarshalAs(UnmanagedType.LPWStr)] char[] lpWideCharStr,
+-                                                  int cchWideChar,
+-                                                  [Out] [MarshalAs(UnmanagedType.LPArray)]
+-                                                  byte[] lpMultiByteStr,
+-                                                  int cbMultiByte,
+-                                                  IntPtr lpDefaultChar,
+-                                                  IntPtr lpUsedDefaultChar);
+-}
+diff --git a/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.cs b/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.cs
+deleted file mode 100644
+index b9d7c1c..0000000
+--- a/BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.cs
++++ /dev/null
+@@ -1,81 +0,0 @@
+-﻿// --------------------------------------------------
+-// UnityInjector - ConsoleEncoding.cs
+-// Copyright (c) Usagirei 2015 - 2015
+-// --------------------------------------------------
+-
+-using System;
+-using System.Text;
+-
+-namespace UnityInjector.ConsoleUtil;
+-
+-// --------------------------------------------------
+-// Code ported from
+-// https://gist.github.com/asm256/9bfb88336a1433e2328a
+-// Which in turn was seemingly ported from
+-// http://jonskeet.uk/csharp/ebcdic/
+-// using only safe (managed) code
+-// --------------------------------------------------
+-internal partial class ConsoleEncoding : Encoding
+-{
+-    private readonly uint _codePage;
+-
+-    private ConsoleEncoding(uint codePage)
+-    {
+-        _codePage = codePage;
+-    }
+-
+-    public override int CodePage => (int)_codePage;
+-
+-    public static Encoding OutputEncoding => new ConsoleEncoding(ConsoleCodePage);
+-
+-    public static uint ConsoleCodePage
+-    {
+-        get => GetConsoleOutputCP();
+-        set => SetConsoleOutputCP(value);
+-    }
+-
+-    public static uint GetActiveCodePage() => GetACP();
+-
+-    public static ConsoleEncoding GetEncoding(uint codePage) => new(codePage);
+-
+-    public override int GetByteCount(char[] chars, int index, int count)
+-    {
+-        WriteCharBuffer(chars, index, count);
+-        var result = WideCharToMultiByte(_codePage, 0, _charBuffer, count, _zeroByte, 0, IntPtr.Zero, IntPtr.Zero);
+-        return result;
+-    }
+-
+-    public override int GetBytes(char[] chars, int charIndex, int charCount, byte[] bytes, int byteIndex)
+-    {
+-        var byteCount = GetByteCount(chars, charIndex, charCount);
+-        WriteCharBuffer(chars, charIndex, charCount);
+-        ExpandByteBuffer(byteCount);
+-        _ = WideCharToMultiByte(_codePage, 0, _charBuffer, charCount, _byteBuffer, byteCount, IntPtr.Zero,
+-                                IntPtr.Zero);
+-        var readCount = Math.Min(bytes.Length, byteCount);
+-        ReadByteBuffer(bytes, byteIndex, readCount);
+-        return readCount;
+-    }
+-
+-    public override int GetCharCount(byte[] bytes, int index, int count)
+-    {
+-        WriteByteBuffer(bytes, index, count);
+-        var result = MultiByteToWideChar(_codePage, 0, _byteBuffer, count, _zeroChar, 0);
+-        return result;
+-    }
+-
+-    public override int GetChars(byte[] bytes, int byteIndex, int byteCount, char[] chars, int charIndex)
+-    {
+-        var charCount = GetCharCount(bytes, byteIndex, byteCount);
+-        WriteByteBuffer(bytes, byteIndex, byteCount);
+-        ExpandCharBuffer(charCount);
+-        _ = MultiByteToWideChar(_codePage, 0, _byteBuffer, byteCount, _charBuffer, charCount);
+-        var readCount = Math.Min(chars.Length, charCount);
+-        ReadCharBuffer(chars, charIndex, readCount);
+-        return readCount;
+-    }
+-
+-    // Account for some exotic UTF-8 characters
+-    public override int GetMaxByteCount(int charCount) => charCount * 4;
+-    public override int GetMaxCharCount(int byteCount) => byteCount;
+-}
+diff --git a/BepInEx.Core/Console/Windows/ConsoleWindow.cs b/BepInEx.Core/Console/Windows/ConsoleWindow.cs
+deleted file mode 100644
+index dbf1855..0000000
+--- a/BepInEx.Core/Console/Windows/ConsoleWindow.cs
++++ /dev/null
+@@ -1,183 +0,0 @@
+-﻿// --------------------------------------------------
+-// UnityInjector - ConsoleWindow.cs
+-// Copyright (c) Usagirei 2015 - 2015
+-// --------------------------------------------------
+-
+-using System;
+-using System.ComponentModel;
+-using System.Runtime.InteropServices;
+-using BepInEx;
+-using BepInEx.ConsoleUtil;
+-using MonoMod.Utils;
+-
+-namespace UnityInjector.ConsoleUtil;
+-
+-internal class ConsoleWindow
+-{
+-    private const int STD_OUTPUT_HANDLE = -11;
+-    private const uint SC_CLOSE = 0xF060;
+-    private const uint MF_BYCOMMAND = 0x00000000;
+-
+-    private const uint LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800;
+-    public static IntPtr ConsoleOutHandle;
+-    public static IntPtr OriginalStdoutHandle;
+-
+-    private static bool methodsInited;
+-    private static SetForegroundWindowDelegate setForeground;
+-    private static GetForegroundWindowDelegate getForeground;
+-    private static GetSystemMenuDelegate getSystemMenu;
+-    private static DeleteMenuDelegate deleteMenu;
+-    public static bool IsAttached { get; private set; }
+-
+-    public static string Title
+-    {
+-        set
+-        {
+-            if (!IsAttached)
+-                return;
+-
+-            if (value == null)
+-                throw new ArgumentNullException(nameof(value));
+-
+-            if (value.Length > 24500)
+-                throw new InvalidOperationException("Console title too long");
+-
+-            if (!SetConsoleTitle(value))
+-                throw new InvalidOperationException("Console title invalid");
+-        }
+-    }
+-
+-    public static void Attach()
+-    {
+-        if (IsAttached)
+-            return;
+-        Initialize();
+-
+-        if (OriginalStdoutHandle == IntPtr.Zero)
+-            OriginalStdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+-
+-        var cur = GetConsoleWindow();
+-
+-        if (cur == IntPtr.Zero)
+-        {
+-            // Store Current Window
+-            var currWnd = getForeground();
+-
+-            if (!AllocConsole())
+-            {
+-                var error = Marshal.GetLastWin32Error();
+-                if (error != 5) throw new Win32Exception("AllocConsole() failed");
+-            }
+-
+-            // Restore Foreground
+-            setForeground(currWnd);
+-        }
+-
+-        ConsoleOutHandle = CreateFile("CONOUT$", 0x80000000 | 0x40000000, 2, IntPtr.Zero, 3, 0, IntPtr.Zero);
+-        Kon.conOut = ConsoleOutHandle;
+-
+-        if (!SetStdHandle(STD_OUTPUT_HANDLE, ConsoleOutHandle))
+-            throw new Win32Exception("SetStdHandle() failed");
+-
+-        if (OriginalStdoutHandle != IntPtr.Zero && ConsoleManager.ConfigConsoleOutRedirectType.Value ==
+-            ConsoleManager.ConsoleOutRedirectType.ConsoleOut)
+-            CloseHandle(OriginalStdoutHandle);
+-
+-        IsAttached = true;
+-    }
+-
+-    public static void PreventClose()
+-    {
+-        if (!IsAttached)
+-            return;
+-        Initialize();
+-
+-        var hwnd = GetConsoleWindow();
+-        var hmenu = getSystemMenu(hwnd, false);
+-        if (hmenu != IntPtr.Zero)
+-            deleteMenu(hmenu, SC_CLOSE, MF_BYCOMMAND);
+-    }
+-
+-    public static void Detach()
+-    {
+-        if (!IsAttached)
+-            return;
+-
+-        if (!CloseHandle(ConsoleOutHandle))
+-            throw new Win32Exception("CloseHandle() failed");
+-
+-        ConsoleOutHandle = IntPtr.Zero;
+-
+-        if (!FreeConsole())
+-            throw new Win32Exception("FreeConsole() failed");
+-
+-        if (!SetStdHandle(STD_OUTPUT_HANDLE, OriginalStdoutHandle))
+-            throw new Win32Exception("SetStdHandle() failed");
+-
+-        IsAttached = false;
+-    }
+-
+-    private static void Initialize()
+-    {
+-        if (methodsInited)
+-            return;
+-        methodsInited = true;
+-
+-        // Some games may ship user32.dll with some methods missing. As such, we load the DLL explicitly from system folder
+-        var user32Dll = LoadLibraryEx("user32.dll", IntPtr.Zero, LOAD_LIBRARY_SEARCH_SYSTEM32);
+-        setForeground = GetProcAddress(user32Dll, "SetForegroundWindow").AsDelegate<SetForegroundWindowDelegate>();
+-        getForeground = GetProcAddress(user32Dll, "GetForegroundWindow").AsDelegate<GetForegroundWindowDelegate>();
+-        getSystemMenu = GetProcAddress(user32Dll, "GetSystemMenu").AsDelegate<GetSystemMenuDelegate>();
+-        deleteMenu = GetProcAddress(user32Dll, "DeleteMenu").AsDelegate<DeleteMenuDelegate>();
+-    }
+-
+-    [DllImport("kernel32.dll", SetLastError = true)]
+-    private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+-
+-    [DllImport("kernel32.dll", SetLastError = true)]
+-    private static extern bool AllocConsole();
+-
+-    [DllImport("kernel32.dll")]
+-    private static extern IntPtr GetConsoleWindow();
+-
+-    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+-    private static extern bool CloseHandle(IntPtr handle);
+-
+-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+-    private static extern IntPtr CreateFile(string fileName,
+-                                            uint desiredAccess,
+-                                            int shareMode,
+-                                            IntPtr securityAttributes,
+-                                            int creationDisposition,
+-                                            int flagsAndAttributes,
+-                                            IntPtr templateFile);
+-
+-    [DllImport("kernel32.dll", SetLastError = false)]
+-    private static extern bool FreeConsole();
+-
+-    [DllImport("kernel32.dll", SetLastError = true)]
+-    private static extern IntPtr GetStdHandle(int nStdHandle);
+-
+-    [DllImport("kernel32.dll", SetLastError = true)]
+-    private static extern bool SetStdHandle(int nStdHandle, IntPtr hConsoleOutput);
+-
+-    [DllImport("kernel32.dll", BestFitMapping = true, CharSet = CharSet.Auto, SetLastError = true)]
+-    private static extern bool SetConsoleTitle(string title);
+-
+-    [DllImport("kernel32.dll", SetLastError = true)]
+-    private static extern IntPtr LoadLibraryEx(string lpLibFileName, IntPtr hFile, uint dwFlags);
+-
+-
+-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+-    [return: MarshalAs(UnmanagedType.Bool)]
+-    private delegate bool SetForegroundWindowDelegate(IntPtr hWnd);
+-
+-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+-    private delegate IntPtr GetForegroundWindowDelegate();
+-
+-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+-    private delegate IntPtr GetSystemMenuDelegate(IntPtr hwnd, bool bRevert);
+-
+-    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+-    private delegate bool DeleteMenuDelegate(IntPtr hMenu, uint uPosition, uint uFlags);
+-}
+diff --git a/BepInEx.Core/Console/Windows/Kon.cs b/BepInEx.Core/Console/Windows/Kon.cs
+deleted file mode 100644
+index d6784f8..0000000
+--- a/BepInEx.Core/Console/Windows/Kon.cs
++++ /dev/null
+@@ -1,152 +0,0 @@
+-using System;
+-using System.Runtime.InteropServices;
+-#if NET35
+-using System.Security.Permissions;
+-
+-#endif
+-
+-namespace BepInEx.ConsoleUtil
+-{
+-    internal class Kon
+-    {
+-        #region pinvoke
+-
+-        [DllImport("kernel32.dll", SetLastError = true)]
+-        private static extern bool GetConsoleScreenBufferInfo(IntPtr hConsoleOutput,
+-                                                              out CONSOLE_SCREEN_BUFFER_INFO lpConsoleScreenBufferInfo);
+-
+-        [DllImport("kernel32.dll", SetLastError = true)]
+-        private static extern bool SetConsoleTextAttribute(IntPtr hConsoleOutput, short attributes);
+-
+-        [DllImport("kernel32.dll", SetLastError = true)]
+-        private static extern IntPtr GetStdHandle(int nStdHandle);
+-
+-        #endregion
+-
+-        #region Types
+-
+-        private struct CONSOLE_SCREEN_BUFFER_INFO
+-        {
+-            internal COORD dwSize;
+-            internal COORD dwCursorPosition;
+-            internal short wAttributes;
+-            internal SMALL_RECT srWindow;
+-            internal COORD dwMaximumWindowSize;
+-        }
+-
+-        private struct COORD
+-        {
+-            internal short X;
+-            internal short Y;
+-        }
+-
+-        private struct SMALL_RECT
+-        {
+-            internal short Left;
+-            internal short Top;
+-            internal short Right;
+-            internal short Bottom;
+-        }
+-
+-        private static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
+-
+-        #endregion
+-
+-        #region Private
+-
+-        private static short ConsoleColorToColorAttribute(short color, bool isBackground)
+-        {
+-            if ((color & -16) != 0)
+-                throw new ArgumentException("Arg_InvalidConsoleColor");
+-            if (isBackground)
+-                color <<= 4;
+-            return color;
+-        }
+-
+-        private static CONSOLE_SCREEN_BUFFER_INFO GetBufferInfo(bool throwOnNoConsole, out bool succeeded)
+-        {
+-            succeeded = false;
+-            if (!(conOut == INVALID_HANDLE_VALUE))
+-            {
+-                CONSOLE_SCREEN_BUFFER_INFO console_SCREEN_BUFFER_INFO;
+-                if (!GetConsoleScreenBufferInfo(conOut, out console_SCREEN_BUFFER_INFO))
+-                {
+-                    var consoleScreenBufferInfo =
+-                        GetConsoleScreenBufferInfo(GetStdHandle(-12), out console_SCREEN_BUFFER_INFO);
+-                    if (!consoleScreenBufferInfo)
+-                        consoleScreenBufferInfo =
+-                            GetConsoleScreenBufferInfo(GetStdHandle(-10), out console_SCREEN_BUFFER_INFO);
+-
+-                    if (!consoleScreenBufferInfo)
+-                        if (Marshal.GetLastWin32Error() == 6 && !throwOnNoConsole)
+-                            return default;
+-                }
+-
+-                succeeded = true;
+-                return console_SCREEN_BUFFER_INFO;
+-            }
+-
+-            if (!throwOnNoConsole)
+-                return default;
+-            throw new Exception("IO.IO_NoConsole");
+-        }
+-
+-        private static void SetConsoleColor(bool isBackground, ConsoleColor c)
+-        {
+-#if NET35
+-            new UIPermission(UIPermissionWindow.SafeTopLevelWindows).Demand();
+-#endif
+-            var color = ConsoleColorToColorAttribute((short) c, isBackground);
+-            bool flag;
+-            var bufferInfo = GetBufferInfo(false, out flag);
+-            if (!flag)
+-                return;
+-            var num = bufferInfo.wAttributes;
+-            num &= (short) (isBackground ? -241 : -16);
+-            num = (short) ((ushort) num | (ushort) color);
+-            SetConsoleTextAttribute(conOut, num);
+-        }
+-
+-        private static ConsoleColor GetConsoleColor(bool isBackground)
+-        {
+-            bool flag;
+-            var bufferInfo = GetBufferInfo(false, out flag);
+-            if (!flag)
+-                return isBackground ? ConsoleColor.Black : ConsoleColor.Gray;
+-            return ColorAttributeToConsoleColor((short) (bufferInfo.wAttributes & 240));
+-        }
+-
+-        private static ConsoleColor ColorAttributeToConsoleColor(short c)
+-        {
+-            if ((short) (c & 255) != 0)
+-                c >>= 4;
+-            return (ConsoleColor) c;
+-        }
+-
+-        internal static IntPtr conOut = IntPtr.Zero;
+-
+-        #endregion
+-
+-        #region Public
+-
+-        public static void ResetConsoleColor()
+-        {
+-            SetConsoleColor(true, ConsoleColor.Black);
+-            SetConsoleColor(false, ConsoleColor.Gray);
+-        }
+-
+-        public static ConsoleColor ForegroundColor
+-        {
+-            get => GetConsoleColor(false);
+-            set => SetConsoleColor(false, value);
+-        }
+-
+-        public static ConsoleColor BackgroundColor
+-        {
+-            get => GetConsoleColor(true);
+-            set => SetConsoleColor(true, value);
+-        }
+-
+-        #endregion
+-    }
+-}
+diff --git a/BepInEx.Core/Console/Windows/WindowsConsoleDriver.cs b/BepInEx.Core/Console/Windows/WindowsConsoleDriver.cs
+deleted file mode 100644
+index 802cd52..0000000
+--- a/BepInEx.Core/Console/Windows/WindowsConsoleDriver.cs
++++ /dev/null
+@@ -1,180 +0,0 @@
+-using System;
+-using System.IO;
+-using System.Linq;
+-using System.Reflection;
+-using BepInEx.ConsoleUtil;
+-using HarmonyLib;
+-using Microsoft.Win32.SafeHandles;
+-using MonoMod.Utils;
+-using UnityInjector.ConsoleUtil;
+-
+-namespace BepInEx;
+-
+-internal class WindowsConsoleDriver : IConsoleDriver
+-{
+-    // Apparently on some versions of Unity (e.g. 2018.4) using old mono causes crashes on game close if
+-    // IntPtr overload is used for file streams (check #139).
+-    // On the other hand, not all Unity games come with SafeFileHandle overload for FileStream
+-    // As such, we're trying to use SafeFileHandle when it's available and go back to IntPtr overload if not available
+-    private static readonly ConstructorInfo FileStreamCtor = new[]
+-    {
+-        AccessTools.Constructor(typeof(FileStream), new[] { typeof(SafeFileHandle), typeof(FileAccess) }),
+-        AccessTools.Constructor(typeof(FileStream), new[] { typeof(IntPtr), typeof(FileAccess) })
+-    }.FirstOrDefault(m => m != null);
+-
+-    private readonly Func<int> getWindowHeight = AccessTools
+-                                                 .PropertyGetter(typeof(Console), nameof(Console.WindowHeight))
+-                                                 ?.CreateDelegate<Func<int>>();
+-
+-    private readonly Func<int> getWindowWidth = AccessTools
+-                                                .PropertyGetter(typeof(Console), nameof(Console.WindowWidth))
+-                                                ?.CreateDelegate<Func<int>>();
+-
+-    private bool useManagedEncoder;
+-
+-    private int ConsoleWidth
+-    {
+-        get
+-        {
+-            try
+-            {
+-                return getWindowWidth?.Invoke() ?? 0;
+-            }
+-            catch (IOException)
+-            {
+-                return 0;
+-            }
+-        }
+-    }
+-
+-    private int ConsoleHeight
+-    {
+-        get
+-        {
+-            try
+-            {
+-                return getWindowHeight?.Invoke() ?? 0;
+-            }
+-            catch (IOException)
+-            {
+-                return 0;
+-            }
+-        }
+-    }
+-
+-    public TextWriter StandardOut { get; private set; }
+-    public TextWriter ConsoleOut { get; private set; }
+-
+-    public bool ConsoleActive { get; private set; }
+-    public bool ConsoleIsExternal => true;
+-
+-    public void Initialize(bool alreadyActive, bool useManagedEncoder)
+-    {
+-        ConsoleActive = alreadyActive;
+-        this.useManagedEncoder = useManagedEncoder;
+-
+-        if (ConsoleActive)
+-        {
+-            // We're in a .NET framework / XNA environment; console *is* stdout
+-            ConsoleOut = Console.Out;
+-            StandardOut = new StreamWriter(Console.OpenStandardOutput());
+-        }
+-        else
+-        {
+-            StandardOut = Console.Out;
+-        }
+-    }
+-
+-    public void CreateConsole(uint codepage)
+-    {
+-        ConsoleWindow.Attach();
+-
+-        // Make sure of ConsoleEncoding helper class because on some Monos
+-        // Encoding.GetEncoding throws NotImplementedException on most codepages
+-        // NOTE: We don't set Console.OutputEncoding because it resets any existing Console.Out writers
+-        // Always set the console output codepage so the Windows console interprets bytes correctly,
+-        // regardless of whether we use a managed encoder or ConsoleEncoding to produce those bytes.
+-        ConsoleEncoding.ConsoleCodePage = codepage;
+-
+-        // If stdout exists, write to it, otherwise make it the same as console out
+-        // Not sure if this is needed? Does the original Console.Out still work?
+-        var stdout = GetOutHandle();
+-        if (stdout == IntPtr.Zero)
+-        {
+-            StandardOut = TextWriter.Null;
+-            ConsoleOut = TextWriter.Null;
+-            return;
+-        }
+-
+-        var originalOutStream = OpenFileStream(stdout);
+-        StandardOut = new StreamWriter(originalOutStream, Utility.UTF8NoBom)
+-        {
+-            AutoFlush = true
+-        };
+-
+-        var consoleOutStream = OpenFileStream(ConsoleWindow.ConsoleOutHandle);
+-        // Can't use Console.OutputEncoding because it can be null (i.e. not preference by user)
+-        ConsoleOut = new StreamWriter(consoleOutStream,
+-                                      useManagedEncoder ? Utility.UTF8NoBom : ConsoleEncoding.OutputEncoding)
+-        {
+-            AutoFlush = true
+-        };
+-        ConsoleActive = true;
+-    }
+-
+-    public void PreventClose() => ConsoleWindow.PreventClose();
+-
+-    public void DetachConsole()
+-    {
+-        ConsoleWindow.Detach();
+-
+-        ConsoleOut.Close();
+-        ConsoleOut = null;
+-
+-        ConsoleActive = false;
+-    }
+-
+-    public void SetConsoleColor(ConsoleColor color)
+-    {
+-        SafeConsole.ForegroundColor = color;
+-        Kon.ForegroundColor = color;
+-    }
+-
+-    public void SetConsoleTitle(string title) => ConsoleWindow.Title = title;
+-
+-    private static Stream OpenFileStream(IntPtr handle)
+-    {
+-        if (ReflectionHelper.IsCore)
+-        {
+-            var windowsConsoleStreamType = Type.GetType("System.ConsolePal+WindowsConsoleStream, System.Console", true);
+-            var constructor = AccessTools.Constructor(windowsConsoleStreamType,
+-                                                      new[] { typeof(IntPtr), typeof(FileAccess), typeof(bool) });
+-            return (Stream)constructor.Invoke(new object[] { handle, FileAccess.Write, true });
+-        }
+-
+-        var fileHandle = new SafeFileHandle(handle, false);
+-        var ctorParams = AccessTools.ActualParameters(FileStreamCtor,
+-                                                      new object[]
+-                                                      {
+-                                                          fileHandle, fileHandle.DangerousGetHandle(),
+-                                                          FileAccess.Write
+-                                                      });
+-        return (FileStream) Activator.CreateInstance(typeof(FileStream), ctorParams);
+-    }
+-
+-    private IntPtr GetOutHandle()
+-    {
+-        switch (ConsoleManager.ConfigConsoleOutRedirectType.Value)
+-        {
+-            case ConsoleManager.ConsoleOutRedirectType.ConsoleOut:
+-                return ConsoleWindow.ConsoleOutHandle;
+-            case ConsoleManager.ConsoleOutRedirectType.StandardOut:
+-                return ConsoleWindow.OriginalStdoutHandle;
+-            case ConsoleManager.ConsoleOutRedirectType.Auto:
+-            default:
+-                return ConsoleWindow.OriginalStdoutHandle != IntPtr.Zero
+-                           ? ConsoleWindow.OriginalStdoutHandle
+-                           : ConsoleWindow.ConsoleOutHandle;
+-        }
+-    }
+-}

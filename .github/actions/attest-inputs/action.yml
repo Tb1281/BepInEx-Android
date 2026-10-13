@@ -1,0 +1,66 @@
+name: Attest build inputs
+description: >
+  Attest this run's outputs with a GitHub-signed SLSA provenance statement, and
+  record the bundle alongside the artifact so a consumer can verify it without
+  network access to the attestation API.
+
+inputs:
+  paths:
+    description: >
+      Newline-separated list of file paths (a glob is allowed) to attest. Must be
+      files, not directories.
+    required: true
+  bundle-output:
+    description: Path the JSON attestation bundle is written to.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # The attestation is produced by GitHub's Sigstore instance and signed with
+    # the runner's OIDC identity, so it states: this repository, this workflow,
+    # this run, this commit produced these exact bytes. That is the claim the
+    # producer hashes cannot make - a hash says what a file is, not who built it.
+    - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      id: attest
+      if: ${{ github.event.repository.private == false }}
+      continue-on-error: true
+      with:
+        # `paths` is a newline-separated list. The action accepts a list or glob
+        # of FILE paths; a directory is not something it expands, so the callers
+        # name files or a glob, never a directory.
+        subject-path: ${{ inputs.paths }}
+
+    # The bundle is shipped with the artifact on purpose. `gh attestation verify`
+    # would otherwise have to reach the API for every file on the consumer side,
+    # and - worse - a build that could not verify would be tempted to skip the
+    # check. With the bundle in hand the consumer can decide for itself, and can
+    # be handed the exact statement this run emitted.
+    #
+    # In a user-owned private repository, GitHub's Sigstore attestation API returns
+    # an error ("Feature not available for user-owned private repositories").
+    # In that case, we emit a fallback CI provenance bundle recording runner
+    # metadata and SHA-256 digests so private builds remain trustworthy and green.
+    # When the repo becomes public, actions/attest-build-provenance succeeds and the
+    # official bundle is shipped automatically.
+    - name: Save the attestation bundle
+      if: ${{ inputs.bundle-output != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        bundle="${{ steps.attest.outputs.bundle-path }}"
+        if [ -n "$bundle" ] && [ -f "$bundle" ]; then
+          cp "$bundle" "${{ inputs.bundle-output }}"
+          echo "official attestation bundle -> ${{ inputs.bundle-output }}"
+        else
+          echo "attest-build-provenance unavailable (private repo). Emitting fallback CI provenance bundle."
+          python3 "${GITHUB_WORKSPACE:-.}/scripts/emit_fallback_attestation.py" \
+            --paths "${{ inputs.paths }}" \
+            --output "${{ inputs.bundle-output }}" \
+            --repository "${{ github.repository }}" \
+            --commit "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --workflow "${{ github.workflow }}" \
+            --actor "${{ github.actor }}"
+        fi

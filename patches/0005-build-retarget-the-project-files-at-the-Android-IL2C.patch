@@ -1,0 +1,188 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Sun, 4 Oct 2026 15:45:02 +0900
+Subject: [PATCH 5/8] build: retarget the project files at the Android IL2CPP
+ runtime
+
+- BepInEx.Core and BepInEx.Preloader.Core move to net10.0/netstandard2.0 so the
+  managed assemblies load in the embedded CoreCLR host.
+- The IL2CPP project takes the MonoMod.RuntimeDetour package explicitly and
+  drops the packages only the removed Mono runtime needed.
+- The solution no longer references BepInEx.Unity.Mono or
+  BepInEx.Unity.Mono.Preloader, which the next commits delete.
+---
+ BepInEx.Core/BepInEx.Core.csproj              |  3 +-
+ .../BepInEx.Preloader.Core.csproj             |  4 +-
+ BepInEx.sln                                   | 52 ++++---------------
+ .../BepInEx.Unity.IL2CPP.csproj               | 17 +++---
+ 4 files changed, 24 insertions(+), 52 deletions(-)
+
+diff --git a/BepInEx.Core/BepInEx.Core.csproj b/BepInEx.Core/BepInEx.Core.csproj
+index c2873d3..01a52d5 100644
+--- a/BepInEx.Core/BepInEx.Core.csproj
++++ b/BepInEx.Core/BepInEx.Core.csproj
+@@ -10,7 +10,8 @@
+         <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All"/>
+         <PackageReference Include="HarmonyX" Version="2.10.2" />
+         <PackageReference Include="SemanticVersioning" Version="2.0.2"/>
+-        <PackageReference Include="MonoMod.Utils" Version="22.7.31.1"/>
++        <PackageReference Include="MonoMod.Utils" Version="25.0.12-star"/>
++        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4-star"/>
+     </ItemGroup>
+     <ItemGroup>
+         <Compile Remove="Contract\IPlugin.cs"/>
+diff --git a/BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj b/BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj
+index 6002a99..c6099ef 100644
+--- a/BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj
++++ b/BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj
+@@ -9,7 +9,7 @@
+     <ItemGroup>
+         <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All"/>
+         <PackageReference Include="HarmonyX" Version="2.10.2" />
+-        <PackageReference Include="MonoMod.RuntimeDetour" Version="22.7.31.1"/>
+-        <PackageReference Include="MonoMod.Utils" Version="22.7.31.1"/>
++        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4-star"/>
++        <PackageReference Include="MonoMod.Utils" Version="25.0.12-star"/>
+     </ItemGroup>
+ </Project>
+diff --git a/BepInEx.sln b/BepInEx.sln
+index 356b05d..e777122 100644
+--- a/BepInEx.sln
++++ b/BepInEx.sln
+@@ -1,22 +1,16 @@
+ ﻿
+ Microsoft Visual Studio Solution File, Format Version 12.00
+-# Visual Studio Version 17
+-VisualStudioVersion = 17.0.32112.339
++# Visual Studio Version 18
++VisualStudioVersion = 18.8.12023.21 stable
+ MinimumVisualStudioVersion = 10.0.40219.1
+ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BepInEx.Preloader.Core", "BepInEx.Preloader.Core\BepInEx.Preloader.Core.csproj", "{15F8BC38-A761-4F93-8903-1B531AC5D9F9}"
+ EndProject
+-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BepInEx.Unity.Mono", "Runtimes\Unity\BepInEx.Unity.Mono\BepInEx.Unity.Mono.csproj", "{EAE9FAE6-8011-45A3-8B6E-0C7F14210533}"
+-EndProject
+-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BepInEx.Unity.Mono.Preloader", "Runtimes\Unity\BepInEx.Unity.Mono.Preloader\BepInEx.Unity.Mono.Preloader.csproj", "{D404C973-441D-48ED-B266-C21320BA0D87}"
+-EndProject
+ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BepInEx.Core", "BepInEx.Core\BepInEx.Core.csproj", "{4FFBA620-F5ED-47F9-B90C-DAD1316FD9B9}"
+ EndProject
+-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Mono", "Mono", "{6E2DD21E-0854-4F4A-B925-D90E0016D03D}"
++Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "NET", "NET", "{6EC98884-A3DC-4828-85EF-5F10F7519429}"
+ EndProject
+ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BepInEx.NET.Framework.Launcher", "Runtimes\NET\BepInEx.NET.Framework.Launcher\BepInEx.NET.Framework.Launcher.csproj", "{490B052B-7F23-4052-AD04-613856618901}"
+ EndProject
+-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "NET", "NET", "{6EC98884-A3DC-4828-85EF-5F10F7519429}"
+-EndProject
+ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BepInEx.Unity.IL2CPP", "Runtimes\Unity\BepInEx.Unity.IL2CPP\BepInEx.Unity.IL2CPP.csproj", "{429D5F83-7FEC-4D09-AB82-E868EB61AF59}"
+ EndProject
+ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Markdown", "Markdown", "{68C57430-3E92-4B50-A9A5-208FE9CCD914}"
+@@ -52,19 +46,6 @@ EndProject
+ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Build", "build\Build.csproj", "{0C38DDF2-EAAA-43FA-BA0A-985636AC6040}"
+ EndProject
+ Global
+-	GlobalSection(SharedMSBuildProjectFiles) = preSolution
+-		BepInEx.NetLauncher.Shared\BepInEx.NetLauncher.Shared.projitems*{067bcc8c-fc25-4929-b4f4-c6a5a7496994}*SharedItemsImports = 13
+-		BepInEx.NetLauncher.Shared\BepInEx.NetLauncher.Shared.projitems*{08083f40-98aa-4176-ba01-817c18c35c7f}*SharedItemsImports = 5
+-		BepInEx.Shared\BepInEx.Shared.projitems*{08083f40-98aa-4176-ba01-817c18c35c7f}*SharedItemsImports = 5
+-		BepInEx.Shared\BepInEx.Shared.projitems*{15f8bc38-a761-4f93-8903-1b531ac5d9f9}*SharedItemsImports = 5
+-		BepInEx.Shared\BepInEx.Shared.projitems*{429d5f83-7fec-4d09-ab82-e868eb61af59}*SharedItemsImports = 5
+-		BepInEx.NetLauncher.Shared\BepInEx.NetLauncher.Shared.projitems*{490b052b-7f23-4052-ad04-613856618901}*SharedItemsImports = 5
+-		BepInEx.Shared\BepInEx.Shared.projitems*{490b052b-7f23-4052-ad04-613856618901}*SharedItemsImports = 5
+-		BepInEx.Shared\BepInEx.Shared.projitems*{4ffba620-f5ed-47f9-b90c-dad1316fd9b9}*SharedItemsImports = 5
+-		BepInEx.Shared\BepInEx.Shared.projitems*{5c7847fb-c16d-47bd-bb17-1045669f9aa7}*SharedItemsImports = 13
+-		BepInEx.Shared\BepInEx.Shared.projitems*{d404c973-441d-48ed-b266-c21320ba0d87}*SharedItemsImports = 5
+-		BepInEx.Shared\BepInEx.Shared.projitems*{eae9fae6-8011-45a3-8b6e-0c7f14210533}*SharedItemsImports = 5
+-	EndGlobalSection
+ 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+ 		Debug|Any CPU = Debug|Any CPU
+ 		Release_NetFramework|Any CPU = Release_NetFramework|Any CPU
+@@ -80,20 +61,6 @@ Global
+ 		{15F8BC38-A761-4F93-8903-1B531AC5D9F9}.Release_Unity|Any CPU.Build.0 = Release|Any CPU
+ 		{15F8BC38-A761-4F93-8903-1B531AC5D9F9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+ 		{15F8BC38-A761-4F93-8903-1B531AC5D9F9}.Release|Any CPU.Build.0 = Release|Any CPU
+-		{EAE9FAE6-8011-45A3-8B6E-0C7F14210533}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+-		{EAE9FAE6-8011-45A3-8B6E-0C7F14210533}.Debug|Any CPU.Build.0 = Debug|Any CPU
+-		{EAE9FAE6-8011-45A3-8B6E-0C7F14210533}.Release_NetFramework|Any CPU.ActiveCfg = Release|Any CPU
+-		{EAE9FAE6-8011-45A3-8B6E-0C7F14210533}.Release_Unity|Any CPU.ActiveCfg = Release|Any CPU
+-		{EAE9FAE6-8011-45A3-8B6E-0C7F14210533}.Release_Unity|Any CPU.Build.0 = Release|Any CPU
+-		{EAE9FAE6-8011-45A3-8B6E-0C7F14210533}.Release|Any CPU.ActiveCfg = Release|Any CPU
+-		{EAE9FAE6-8011-45A3-8B6E-0C7F14210533}.Release|Any CPU.Build.0 = Release|Any CPU
+-		{D404C973-441D-48ED-B266-C21320BA0D87}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+-		{D404C973-441D-48ED-B266-C21320BA0D87}.Debug|Any CPU.Build.0 = Debug|Any CPU
+-		{D404C973-441D-48ED-B266-C21320BA0D87}.Release_NetFramework|Any CPU.ActiveCfg = Release|Any CPU
+-		{D404C973-441D-48ED-B266-C21320BA0D87}.Release_Unity|Any CPU.ActiveCfg = Release|Any CPU
+-		{D404C973-441D-48ED-B266-C21320BA0D87}.Release_Unity|Any CPU.Build.0 = Release|Any CPU
+-		{D404C973-441D-48ED-B266-C21320BA0D87}.Release|Any CPU.ActiveCfg = Release|Any CPU
+-		{D404C973-441D-48ED-B266-C21320BA0D87}.Release|Any CPU.Build.0 = Release|Any CPU
+ 		{4FFBA620-F5ED-47F9-B90C-DAD1316FD9B9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+ 		{4FFBA620-F5ED-47F9-B90C-DAD1316FD9B9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+ 		{4FFBA620-F5ED-47F9-B90C-DAD1316FD9B9}.Release_NetFramework|Any CPU.ActiveCfg = Release|Any CPU
+@@ -152,20 +119,23 @@ Global
+ 		HideSolutionNode = FALSE
+ 	EndGlobalSection
+ 	GlobalSection(NestedProjects) = preSolution
+-		{EAE9FAE6-8011-45A3-8B6E-0C7F14210533} = {6E2DD21E-0854-4F4A-B925-D90E0016D03D}
+-		{D404C973-441D-48ED-B266-C21320BA0D87} = {6E2DD21E-0854-4F4A-B925-D90E0016D03D}
+ 		{490B052B-7F23-4052-AD04-613856618901} = {6EC98884-A3DC-4828-85EF-5F10F7519429}
++		{429D5F83-7FEC-4D09-AB82-E868EB61AF59} = {E4E75C18-4156-4213-A20C-8677EF6B5312}
+ 		{76EB1952-7826-471C-9CF3-815D094DA077} = {6EC98884-A3DC-4828-85EF-5F10F7519429}
+ 		{08083F40-98AA-4176-BA01-817C18C35C7F} = {6EC98884-A3DC-4828-85EF-5F10F7519429}
+ 		{067BCC8C-FC25-4929-B4F4-C6A5A7496994} = {6EC98884-A3DC-4828-85EF-5F10F7519429}
+-		{68C57430-3E92-4B50-A9A5-208FE9CCD914} = {12081C35-76DF-450C-AC83-1E1CB84516AA}
+-		{6E2DD21E-0854-4F4A-B925-D90E0016D03D} = {BF8F4E07-3B89-4152-89F4-9EF9D4AAA1E0}
+ 		{C32E74A3-C0BD-42DE-9E2F-D033D496ACB9} = {BF8F4E07-3B89-4152-89F4-9EF9D4AAA1E0}
+ 		{E4E75C18-4156-4213-A20C-8677EF6B5312} = {BF8F4E07-3B89-4152-89F4-9EF9D4AAA1E0}
+-		{429D5F83-7FEC-4D09-AB82-E868EB61AF59} = {E4E75C18-4156-4213-A20C-8677EF6B5312}
+ 		{CE06453E-44E7-4D50-9A68-AA15F4C1C8D1} = {BF8F4E07-3B89-4152-89F4-9EF9D4AAA1E0}
+ 	EndGlobalSection
+ 	GlobalSection(ExtensibilityGlobals) = postSolution
+ 		SolutionGuid = {55AC11EF-F568-4C79-A356-7ED9510145B1}
+ 	EndGlobalSection
++	GlobalSection(SharedMSBuildProjectFiles) = preSolution
++		Runtimes\NET\BepInEx.NET.Shared\BepInEx.NET.Shared.projitems*{08083f40-98aa-4176-ba01-817c18c35c7f}*SharedItemsImports = 5
++		BepInEx.Shared\BepInEx.Shared.projitems*{15f8bc38-a761-4f93-8903-1b531ac5d9f9}*SharedItemsImports = 5
++		BepInEx.Shared\BepInEx.Shared.projitems*{429d5f83-7fec-4d09-ab82-e868eb61af59}*SharedItemsImports = 5
++		Runtimes\NET\BepInEx.NET.Shared\BepInEx.NET.Shared.projitems*{490b052b-7f23-4052-ad04-613856618901}*SharedItemsImports = 5
++		BepInEx.Shared\BepInEx.Shared.projitems*{4ffba620-f5ed-47f9-b90c-dad1316fd9b9}*SharedItemsImports = 5
++	EndGlobalSection
+ EndGlobal
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj b/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
+index 1fcd6e4..bb3b809 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
+@@ -1,11 +1,12 @@
+ ﻿<Project Sdk="Microsoft.NET.Sdk">
+     <PropertyGroup>
+         <Description>BepInEx support library for Il2Cpp games</Description>
+-        <TargetFramework>net6.0</TargetFramework>
++        <TargetFramework>net10.0</TargetFramework>
+         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+         <OutputPath>$(BuildDir)/Unity.IL2CPP</OutputPath>
+         <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
++        <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+     </PropertyGroup>
+     <ItemGroup>
+         <ProjectReference Include="..\..\..\BepInEx.Core\BepInEx.Core.csproj" />
+@@ -13,15 +14,15 @@
+         <ProjectReference Include="..\BepInEx.Unity.Common\BepInEx.Unity.Common.csproj" />
+     </ItemGroup>
+     <ItemGroup>
+-        <PackageReference Include="HarmonyX" Version="2.10.2" />
++        <PackageReference Include="HarmonyX" Version="2.16.0" />
+         <PackageReference Include="Iced" Version="1.21.0" />
+-        <PackageReference Include="Il2CppInterop.Generator" Version="1.5.3" />
+-        <PackageReference Include="Il2CppInterop.HarmonySupport" Version="1.5.3" />
++        <PackageReference Include="Il2CppInterop.Generator" Version="1.5.2-ci.star.12" />
++        <PackageReference Include="Il2CppInterop.HarmonySupport" Version="1.5.2-ci.star.12" />
+         <PackageReference Include="Il2CppInterop.ReferenceLibs" Version="1.0.0" IncludeAssets="compile" PrivateAssets="all" />
+-        <PackageReference Include="Il2CppInterop.Runtime" Version="1.5.3" />
+-        <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" IncludeAssets="compile" PrivateAssets="all" />
+-        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="6.0.1" IncludeAssets="compile" PrivateAssets="all" />
+-        <PackageReference Include="MonoMod.RuntimeDetour" Version="22.7.31.1" />
++        <PackageReference Include="Il2CppInterop.Runtime" Version="1.5.2-ci.star.12" />
++        <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
++        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="6.0.1" />
++        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4-star" />
+         <PackageReference Include="Samboy063.Cpp2IL.Core" Version="2022.1.0-development.1452" />
+     </ItemGroup>
+     <ItemGroup>

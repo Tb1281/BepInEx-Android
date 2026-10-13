@@ -1,0 +1,2284 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Sun, 4 Oct 2026 15:44:22 +0900
+Subject: [PATCH 4/8] il2cpp: hook through libfusion and resolve export stubs
+
+Three changes are needed before the chainloader can run on Android.
+
+1. Native library name. The chainloader only ever tried to dlopen
+   'GameAssembly', which is the Windows layout. Linux and Android ship
+   libil2cpp.so.
+
+2. Detour provider. Upstream detours through Dobby/Funchook loaded as
+   separate libraries. Here the inline hook engine already lives inside
+   libfusion.so, the library that hosts the CoreCLR bootstrap, so
+   NativeDetour calls libfusion's hook/unhook exports and Il2CppInterop is
+   pointed at NativeDetourProvider. CacheDetourWrapper keeps the delegate and
+   the generated trampoline reachable, because CoreCLR collects them otherwise.
+   The Desktop-only detour types are removed rather than left behind unused.
+
+3. Export stub resolution. il2cpp_runtime_invoke is reached through a linker
+   stub, not the function body: on ELF it is a single B instruction, sometimes
+   behind a literal-pool veneer. Dobby cannot patch a 4-byte stub, and doing so
+   produces a broken prologue or a SIGILL under pointer authentication.
+   ExportThunkResolver follows those stubs explicitly, bounded and with a hop
+   limit, then validates the result against /proc/self/maps so a detached or
+   unresolvable address fails loudly instead of being hooked.
+---
+ .../Configuration/KeyboardShortcut.cs         | 178 ----
+ .../Hook/BaseNativeDetour.cs                  |  98 --
+ .../Hook/CacheDetourWrapper.cs                |  41 +
+ .../Hook/Dobby/DobbyDetour.cs                 |  21 -
+ .../Hook/Dobby/DobbyLib.cs                    |  18 -
+ .../Hook/ExportThunkResolver.cs               | 239 +++++
+ .../Hook/Funchook/FunchookDetour.cs           |  38 -
+ .../Hook/Funchook/FunchookLib.cs              |  44 -
+ .../Hook/INativeDetour.cs                     | 150 ---
+ .../Hook/Il2CppInteropDetourProvider.cs       |  30 -
+ .../BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs |  44 +
+ .../Hook/NativeDetourProvider.cs              |  19 +
+ .../BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs |  28 +-
+ .../Il2CppInteropManager.cs                   |  77 +-
+ .../Logging/AndroidLogListener.cs             |   2 +-
+ .../Unity/BepInEx.Unity.IL2CPP/Preloader.cs   |  19 +-
+ .../RuntimeFixes/RedirectStdErrFix.cs         |   2 +-
+ .../Unity/BepInEx.Unity.IL2CPP/UnityInput.cs  | 898 ------------------
+ .../UnityPreloadRunner.cs                     |   8 +-
+ .../BepInEx.Unity.IL2CPP/Utils/MessageBox.cs  |   2 +-
+ 20 files changed, 401 insertions(+), 1555 deletions(-)
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Configuration/KeyboardShortcut.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/BaseNativeDetour.cs
+ create mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/CacheDetourWrapper.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyDetour.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyLib.cs
+ create mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookDetour.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookLib.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/INativeDetour.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Il2CppInteropDetourProvider.cs
+ create mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs
+ create mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetourProvider.cs
+ delete mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityInput.cs
+
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Configuration/KeyboardShortcut.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Configuration/KeyboardShortcut.cs
+deleted file mode 100644
+index 024b8df..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Configuration/KeyboardShortcut.cs
++++ /dev/null
+@@ -1,178 +0,0 @@
+-using System;
+-using System.Collections.Generic;
+-using System.Linq;
+-using BepInEx.Configuration;
+-using BepInEx.Logging;
+-using UnityEngine;
+-using Logger = BepInEx.Logging.Logger;
+-
+-namespace BepInEx.Unity.IL2CPP.Configuration;
+-
+-/// <summary>
+-///     A keyboard shortcut that can be used in Update method to check if user presses a key combo. The shortcut is only
+-///     triggered when the user presses the exact combination. For example, <c>F + LeftCtrl</c> will trigger only if user
+-///     presses and holds only LeftCtrl, and then presses F. If any other keys are pressed, the shortcut will not trigger.
+-///     Can be used as a value of a setting in <see cref="ConfigFile.Bind{T}(ConfigDefinition,T,ConfigDescription)" />
+-///     to allow user to change this shortcut and have the changes saved.
+-///     How to use: Use <see cref="IsDown" /> in this class instead of <see cref="Input.GetKeyDown(KeyCode)" /> in the
+-///     Update loop.
+-/// </summary>
+-public struct KeyboardShortcut
+-{
+-    static KeyboardShortcut()
+-    {
+-        TomlTypeConverter.AddConverter(
+-                                       typeof(KeyboardShortcut),
+-                                       new TypeConverter
+-                                       {
+-                                           ConvertToString = (o, type) => ((KeyboardShortcut) o).Serialize(),
+-                                           ConvertToObject = (s, type) => Deserialize(s)
+-                                       });
+-    }
+-
+-    /// <summary>
+-    ///     Shortcut that never triggers.
+-    /// </summary>
+-    public static readonly KeyboardShortcut Empty = new();
+-
+-    // Don't block hotkeys if mouse is being pressed, e.g. when shooting and trying to strafe
+-    private static KeyCode[] modifierBlockKeyCodes;
+-
+-    private readonly KeyCode[] _allKeys;
+-
+-    /// <summary>
+-    ///     Create a new keyboard shortcut.
+-    /// </summary>
+-    /// <param name="mainKey">Main key to press</param>
+-    /// <param name="modifiers">Keys that should be held down before main key is registered</param>
+-    public KeyboardShortcut(KeyCode mainKey, params KeyCode[] modifiers) : this(new[] { mainKey }.Concat(modifiers)
+-                                                                                    .ToArray())
+-    {
+-        if (mainKey == KeyCode.None && modifiers.Any())
+-            throw new
+-                ArgumentException($"Can't set {nameof(mainKey)} to KeyCode.None if there are any {nameof(modifiers)}");
+-    }
+-
+-    private KeyboardShortcut(KeyCode[] keys)
+-    {
+-        _allKeys = SanitizeKeys(keys);
+-    }
+-
+-    private static KeyCode[] SanitizeKeys(params KeyCode[] keys)
+-    {
+-        if (keys.Length == 0 || keys[0] == KeyCode.None)
+-            return new[] { KeyCode.None };
+-
+-        return new[] { keys[0] }.Concat(keys.Skip(1).Distinct().Where(x => x != keys[0]).OrderBy(x => (int) x))
+-                                .ToArray();
+-    }
+-
+-    /// <summary>
+-    ///     Main key of the key combination. It has to be pressed / let go last for the combination to be triggered.
+-    ///     If the combination is empty, <see cref="KeyCode.None" /> is returned.
+-    /// </summary>
+-    public KeyCode MainKey => _allKeys != null && _allKeys.Length > 0 ? _allKeys[0] : KeyCode.None;
+-
+-    /// <summary>
+-    ///     Modifiers of the key combination, if any.
+-    /// </summary>
+-    public IEnumerable<KeyCode> Modifiers => _allKeys?.Skip(1) ?? Enumerable.Empty<KeyCode>();
+-
+-    /// <summary>
+-    ///     Attempt to deserialize key combination from the string.
+-    /// </summary>
+-    public static KeyboardShortcut Deserialize(string str)
+-    {
+-        try
+-        {
+-            var parts = str.Split(new[] { ' ', '+', ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries)
+-                           .Select(x => (KeyCode) Enum.Parse(typeof(KeyCode), x)).ToArray();
+-            return new KeyboardShortcut(parts);
+-        }
+-        catch (SystemException ex)
+-        {
+-            Logger.Log(LogLevel.Error, "Failed to read keybind from settings: " + ex.Message);
+-            return Empty;
+-        }
+-    }
+-
+-    /// <summary>
+-    ///     Serialize the key combination into a user readable string.
+-    /// </summary>
+-    public string Serialize()
+-    {
+-        if (_allKeys == null) return string.Empty;
+-        return string.Join(" + ", _allKeys.Select(x => x.ToString()).ToArray());
+-    }
+-
+-    /// <summary>
+-    ///     Check if the main key was just pressed (Input.GetKeyDown), and specified modifier keys are all pressed
+-    /// </summary>
+-    public bool IsDown()
+-    {
+-        var mainKey = MainKey;
+-        if (mainKey == KeyCode.None) return false;
+-
+-        return UnityInput.Current.GetKeyDown(mainKey) && ModifierKeyTest();
+-    }
+-
+-    /// <summary>
+-    ///     Check if the main key is currently held down (Input.GetKey), and specified modifier keys are all pressed
+-    /// </summary>
+-    public bool IsPressed()
+-    {
+-        var mainKey = MainKey;
+-        if (mainKey == KeyCode.None) return false;
+-
+-        return UnityInput.Current.GetKey(mainKey) && ModifierKeyTest();
+-    }
+-
+-    /// <summary>
+-    ///     Check if the main key was just lifted (Input.GetKeyUp), and specified modifier keys are all pressed.
+-    /// </summary>
+-    public bool IsUp()
+-    {
+-        var mainKey = MainKey;
+-        if (mainKey == KeyCode.None) return false;
+-
+-        return UnityInput.Current.GetKeyUp(mainKey) && ModifierKeyTest();
+-    }
+-
+-    private bool ModifierKeyTest()
+-    {
+-        var allKeys = _allKeys;
+-        var mainKey = MainKey;
+-
+-        var allModifiersPressed = allKeys.All(c => c == mainKey || UnityInput.Current.GetKey(c));
+-        if (!allModifiersPressed) return false;
+-
+-        // Lazy init to make sure the game is initialized, and we're in main thread before calling UnityInput.Current
+-        modifierBlockKeyCodes ??= UnityInput.Current.SupportedKeyCodes.Except([KeyCode.Mouse0, KeyCode.Mouse1,
+-            KeyCode.Mouse2, KeyCode.Mouse3, KeyCode.Mouse4, KeyCode.Mouse5, KeyCode.Mouse6, KeyCode.None
+-        ]).ToArray();
+-
+-        bool noOtherModifiersPressed = modifierBlockKeyCodes.All(c => !UnityInput.Current.GetKey(c) || allKeys.Contains(c));
+-        return noOtherModifiersPressed;
+-    }
+-
+-    /// <inheritdoc />
+-    public override string ToString()
+-    {
+-        if (MainKey == KeyCode.None) return "Not set";
+-
+-        return string.Join(" + ", _allKeys.Select(c => c.ToString()).ToArray());
+-    }
+-
+-    /// <inheritdoc />
+-    public override bool Equals(object obj) =>
+-        obj is KeyboardShortcut shortcut && MainKey == shortcut.MainKey &&
+-        Modifiers.SequenceEqual(shortcut.Modifiers);
+-
+-    /// <inheritdoc />
+-    public override int GetHashCode()
+-    {
+-        if (MainKey == KeyCode.None) return 0;
+-
+-        return _allKeys.Aggregate(_allKeys.Length, (current, item) => unchecked(current * 31 + (int) item));
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/BaseNativeDetour.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/BaseNativeDetour.cs
+deleted file mode 100644
+index a8b0ae9..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/BaseNativeDetour.cs
++++ /dev/null
+@@ -1,98 +0,0 @@
+-using System;
+-using System.Reflection;
+-using System.Runtime.InteropServices;
+-using BepInEx.Logging;
+-using MonoMod.RuntimeDetour;
+-
+-namespace BepInEx.Unity.IL2CPP.Hook;
+-
+-internal abstract class BaseNativeDetour<T> : INativeDetour where T : BaseNativeDetour<T>
+-{
+-    protected static readonly ManualLogSource Logger = BepInEx.Logging.Logger.CreateLogSource(typeof(T).Name);
+-
+-    protected BaseNativeDetour(nint originalMethodPtr, Delegate detourMethod)
+-    {
+-        OriginalMethodPtr = originalMethodPtr;
+-        DetourMethod = detourMethod;
+-        DetourMethodPtr = Marshal.GetFunctionPointerForDelegate(detourMethod);
+-    }
+-
+-    public bool IsPrepared { get; protected set; }
+-    protected MethodInfo TrampolineMethod { get; set; }
+-    protected Delegate DetourMethod { get; set; }
+-
+-    public nint OriginalMethodPtr { get; }
+-    public nint DetourMethodPtr { get; }
+-    public nint TrampolinePtr { get; protected set; }
+-    public bool IsValid { get; private set; } = true;
+-    public bool IsApplied { get; private set; }
+-
+-    public void Dispose()
+-    {
+-        if (!IsValid) return;
+-        Undo();
+-        Free();
+-    }
+-
+-    public void Apply()
+-    {
+-        if (IsApplied) return;
+-
+-        Prepare();
+-        ApplyImpl();
+-
+-        Logger.Log(LogLevel.Debug,
+-                   $"Original: {OriginalMethodPtr:X}, Trampoline: {TrampolinePtr:X}, diff: {Math.Abs(OriginalMethodPtr - TrampolinePtr):X}");
+-
+-        IsApplied = true;
+-    }
+-
+-    public void Undo()
+-    {
+-        if (IsApplied && IsPrepared) UndoImpl();
+-    }
+-
+-    public void Free()
+-    {
+-        FreeImpl();
+-        IsValid = false;
+-    }
+-
+-    public MethodBase GenerateTrampoline(MethodBase signature = null)
+-    {
+-        if (TrampolineMethod == null)
+-        {
+-            Prepare();
+-            TrampolineMethod = DetourHelper.GenerateNativeProxy(TrampolinePtr, signature);
+-        }
+-
+-        return TrampolineMethod;
+-    }
+-
+-    public TDelegate GenerateTrampoline<TDelegate>() where TDelegate : Delegate
+-    {
+-        if (!typeof(Delegate).IsAssignableFrom(typeof(TDelegate)))
+-            throw new InvalidOperationException($"Type {typeof(TDelegate)} not a delegate type.");
+-
+-        _ = GenerateTrampoline(typeof(TDelegate).GetMethod("Invoke"));
+-
+-        return Marshal.GetDelegateForFunctionPointer<TDelegate>(TrampolinePtr);
+-    }
+-
+-    protected abstract void ApplyImpl();
+-
+-    private void Prepare()
+-    {
+-        if (IsPrepared) return;
+-        Logger.LogDebug($"Preparing detour from 0x{OriginalMethodPtr:X2} to 0x{DetourMethodPtr:X2}");
+-        PrepareImpl();
+-        Logger.LogDebug($"Prepared detour; Trampoline: 0x{TrampolinePtr:X2}");
+-        IsPrepared = true;
+-    }
+-
+-    protected abstract void PrepareImpl();
+-
+-    protected abstract void UndoImpl();
+-
+-    protected abstract void FreeImpl();
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/CacheDetourWrapper.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/CacheDetourWrapper.cs
+new file mode 100644
+index 0000000..fecc3bf
+--- /dev/null
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/CacheDetourWrapper.cs
+@@ -0,0 +1,41 @@
++using System;
++using System.Collections.Generic;
++using Il2CppInterop.Runtime.Injection;
++
++namespace BepInEx.Unity.IL2CPP.Hook;
++
++// Workaround for CoreCLR collecting all delegates
++internal class CacheDetourWrapper : IDetour
++{
++    public IntPtr Target => wrapped.Target;
++    public IntPtr Detour => wrapped.Detour;
++    public IntPtr OriginalTrampoline => wrapped.OriginalTrampoline;
++
++    private readonly IDetour wrapped;
++
++    private readonly List<object> cache = [];
++
++    public CacheDetourWrapper(IDetour wrapped, Delegate target)
++    {
++        this.wrapped = wrapped;
++        cache.Add(target);
++    }
++
++    public void Apply()
++    {
++        wrapped.Apply();
++    }
++
++    public void Dispose()
++    {
++        wrapped.Dispose();
++        cache.Clear();
++    }
++
++    public T GenerateTrampoline<T>() where T : Delegate
++    {
++        var trampoline = wrapped.GenerateTrampoline<T>();
++        cache.Add(trampoline);
++        return trampoline;
++    }
++}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyDetour.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyDetour.cs
+deleted file mode 100644
+index 022de28..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyDetour.cs
++++ /dev/null
+@@ -1,21 +0,0 @@
+-using System;
+-
+-namespace BepInEx.Unity.IL2CPP.Hook.Dobby;
+-
+-internal class DobbyDetour : BaseNativeDetour<DobbyDetour>
+-{
+-    public DobbyDetour(nint originalMethodPtr, Delegate detourMethod) : base(originalMethodPtr, detourMethod) { }
+-
+-    protected override void ApplyImpl() => DobbyLib.Commit(OriginalMethodPtr);
+-
+-    protected override unsafe void PrepareImpl()
+-    {
+-        nint trampolinePtr = 0;
+-        DobbyLib.Prepare(OriginalMethodPtr, DetourMethodPtr, &trampolinePtr);
+-        TrampolinePtr = trampolinePtr;
+-    }
+-
+-    protected override void UndoImpl() => DobbyLib.Destroy(OriginalMethodPtr);
+-
+-    protected override void FreeImpl() { }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyLib.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyLib.cs
+deleted file mode 100644
+index 7da5461..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyLib.cs
++++ /dev/null
+@@ -1,18 +0,0 @@
+-using System.Runtime.InteropServices;
+-
+-namespace BepInEx.Unity.IL2CPP.Hook.Dobby;
+-
+-internal static unsafe class DobbyLib
+-{
+-    [DllImport("dobby", EntryPoint = "DobbyHook", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern int Hook(nint target, nint replacement, nint* originalCall);
+-
+-    [DllImport("dobby", EntryPoint = "DobbyPrepare", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern int Prepare(nint target, nint replacement, nint* originalCall);
+-
+-    [DllImport("dobby", EntryPoint = "DobbyCommit", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern int Commit(nint target);
+-
+-    [DllImport("dobby", EntryPoint = "DobbyDestroy", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern int Destroy(nint target);
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+new file mode 100644
+index 0000000..d00eb6f
+--- /dev/null
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+@@ -0,0 +1,239 @@
++using System;
++using System.Collections.Generic;
++using System.Globalization;
++using System.IO;
++using BepInEx.Logging;
++using BepInEx.Preloader.Core.Logging;
++
++namespace BepInEx.Unity.IL2CPP.Hook;
++
++/// <summary>
++///     Resolves the address of a native library export to the address of the function body that should be
++///     hooked.
++/// </summary>
++/// <remarks>
++///     <para>
++///         Native linkers routinely place a stub in the export table instead of the function body itself.
++///         On Windows the stub is a <c>jmp rel32</c> (<c>E9</c>) or a <c>jmp [rip+disp32]</c> (<c>FF 25</c>);
++///         on ELF platforms, which is what Android games use, it is a single <c>B</c> instruction, sometimes
++///         followed by a literal-pool veneer.
++///     </para>
++///     <para>
++///         Inline hook engines such as Dobby need at least a handful of relocatable instructions to work
++///         with, and a 4-byte stub does not have them: patching one yields a broken prologue (and, on
++///         AArch64 with pointer authentication, a <c>SIGILL</c>). Following the stub explicitly, the way
++///         the Android port of BepInEx does through
++///         <c>XrefScannerLowLevel.JumpTargets(...).First()</c>, keeps the resolution bounded, architecture
++///         aware and verifiable, and avoids reading a speculative window of memory past the end of the
++///         stub.
++///     </para>
++///     <para>
++///         Forms that are not recognised are returned unchanged after validation, because a thunk that this
++///         decoder does not understand (an <c>adrp</c>/<c>add</c>/<c>ldr</c>/<c>br</c> sequence, for example)
++///         is still a real function body that can be hooked safely.
++///     </para>
++/// </remarks>
++internal static unsafe class ExportThunkResolver
++{
++    /// <summary>Maximum number of stub hops to follow before giving up.</summary>
++    private const int MAX_HOPS = 8;
++
++    private static List<KeyValuePair<ulong, ulong>> executableRegions;
++
++    /// <summary>
++    ///     Follows the export stub of <paramref name="export"/> and returns the address of the function body.
++    /// </summary>
++    /// <param name="export">Address of the native export.</param>
++    /// <param name="exportName">Name of the export, used for diagnostics only.</param>
++    /// <exception cref="InvalidOperationException">
++    ///     The export is null, or does not lead to a mapped executable address.
++    /// </exception>
++    public static nint Resolve(nint export, string exportName)
++    {
++        if (export == 0)
++            throw new InvalidOperationException($"Native export '{exportName}' resolved to a null address.");
++
++        var hops = new List<string>(MAX_HOPS);
++        var current = export;
++
++        for (var hop = 0; hop < MAX_HOPS && TryFollowThunk(current, out var next); hop++)
++        {
++            // A stub that branches to itself is a cycle, not a function body.
++            if (next == 0 || next == current)
++                break;
++
++            hops.Add($"0x{current.ToInt64():X}=>{next.ToInt64():X}");
++            current = next;
++        }
++
++        if (!IsExecutable(current))
++            throw new InvalidOperationException(
++                $"Native export '{exportName}' does not lead to a mapped executable address: " +
++                $"start=0x{export.ToInt64():X}, " +
++                (hops.Count == 0 ? "no stub recognised" : $"hops={string.Join(",", hops)}"));
++
++        if (hops.Count > 0)
++            PreloaderLogger.Log.Log(LogLevel.Info,
++                                    $"Resolved {exportName} export stub: 0x{export.ToInt64():X}=>{current.ToInt64():X} ({hops.Count} hop(s))");
++
++        return current;
++    }
++
++    /// <summary>
++    ///     Decodes the single instruction at <paramref name="address"/> and, if it is a forwarding stub,
++    ///     stores the address it forwards to in <paramref name="target"/>.
++    /// </summary>
++    private static bool TryFollowThunk(nint address, out nint target)
++    {
++        target = 0;
++
++        // Every architecture handled here is little-endian, so a 32-bit read yields the instruction word.
++        switch (GetInstructionArchitecture())
++        {
++            case InstructionArchitecture.Arm64:
++                return TryFollowArm64Thunk(address, out target);
++            case InstructionArchitecture.X86:
++            case InstructionArchitecture.X64:
++                return TryFollowX86Thunk(address, out target);
++            default:
++                return false;
++        }
++    }
++
++    private static InstructionArchitecture GetInstructionArchitecture()
++    {
++        if (!OperatingSystem.IsAndroid() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() &&
++            !OperatingSystem.IsWindows())
++            return InstructionArchitecture.Unknown;
++
++        return System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
++        {
++            System.Runtime.InteropServices.Architecture.Arm64 => InstructionArchitecture.Arm64,
++            System.Runtime.InteropServices.Architecture.X64   => InstructionArchitecture.X64,
++            System.Runtime.InteropServices.Architecture.X86   => InstructionArchitecture.X86,
++            _                                               => InstructionArchitecture.Unknown
++        };
++    }
++
++    private static bool TryFollowArm64Thunk(nint address, out nint target)
++    {
++        target = 0;
++
++        var opcode = *(uint*)address;
++
++        // B <label>: 0b0001_01xx_xxxx_xxxx_xxxx_xxxx_xxxx_xxxx
++        if ((opcode & 0xFC000000u) == 0x14000000u)
++        {
++            var imm26 = (int)(opcode & 0x03FFFFFFu);
++
++            // imm26 is a signed 26-bit value in units of 4 bytes.
++            if ((imm26 & 0x02000000) != 0)
++                imm26 -= 0x04000000;
++
++            target = address + 4 + (imm26 << 2);
++            return true;
++        }
++
++        // Literal-pool veneer, as emitted for long-range forwarding stubs:
++        //   0x00  LDR X16, <label>   (label = this instruction + 8)
++        //   0x04  BR   X16
++        //   0x08  .quad <target>
++        if (opcode == 0x58000050u && *(uint*)(address + 4) == 0xD61F0200u)
++        {
++            target = *(nint*)(address + 8);
++            return true;
++        }
++
++        return false;
++    }
++
++    private static bool TryFollowX86Thunk(nint address, out nint target)
++    {
++        target = 0;
++
++        var opcode = *(byte*)address;
++
++        // E9 <rel32>: jmp rel32
++        if (opcode == 0xE9)
++        {
++            target = address + 5 + *(int*)(address + 1);
++            return true;
++        }
++
++        // FF 25 <disp32>: jmp [rip + disp32]
++        if (opcode == 0xFF && *(byte*)(address + 1) == 0x25)
++        {
++            var slot = GetInstructionArchitecture() == InstructionArchitecture.X64
++                ? address + 6 + *(int*)(address + 2)
++                : (nint)(uint)*(int*)(address + 2);
++
++            target = *(nint*)slot;
++            return true;
++        }
++
++        return false;
++    }
++
++    /// <summary>
++    ///     Checks that <paramref name="address"/> falls inside a mapped executable region.
++    /// </summary>
++    private static bool IsExecutable(nint address)
++    {
++        if (address == 0)
++            return false;
++
++        var target = (ulong)address.ToInt64();
++
++        executableRegions ??= ReadExecutableRegions();
++
++        foreach (var region in executableRegions)
++        {
++            if (target >= region.Key && target < region.Value)
++                return true;
++        }
++
++        return false;
++    }
++
++    private static List<KeyValuePair<ulong, ulong>> ReadExecutableRegions()
++    {
++        var regions = new List<KeyValuePair<ulong, ulong>>();
++
++        if (!File.Exists("/proc/self/maps"))
++        {
++            // Not a Linux-style platform; validation is not possible, so do not block the caller.
++            return regions;
++        }
++
++        foreach (var line in File.ReadLines("/proc/self/maps"))
++        {
++            var separator = line.IndexOf(' ');
++            if (separator < 0)
++                continue;
++
++            var bounds = line.Substring(0, separator).Split('-');
++            if (bounds.Length != 2)
++                continue;
++
++            // perms start one field after the bounds, e.g. "r-xp".
++            var perms = line.Substring(separator + 1, 4);
++            if (perms.Length != 4 || perms[2] != 'x')
++                continue;
++
++            if (ulong.TryParse(bounds[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var start) &&
++                ulong.TryParse(bounds[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var end) &&
++                end > start)
++                regions.Add(new KeyValuePair<ulong, ulong>(start, end));
++        }
++
++        return regions;
++    }
++
++    private enum InstructionArchitecture
++    {
++        Unknown,
++        X86,
++        X64,
++        Arm64
++    }
++}
+\ No newline at end of file
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookDetour.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookDetour.cs
+deleted file mode 100644
+index 019b841..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookDetour.cs
++++ /dev/null
+@@ -1,38 +0,0 @@
+-using System;
+-using System.Runtime.CompilerServices;
+-
+-namespace BepInEx.Unity.IL2CPP.Hook.Funchook;
+-
+-internal class FunchookDetour : BaseNativeDetour<FunchookDetour>
+-{
+-    private readonly nint funchookInstance;
+-
+-    public FunchookDetour(nint originalMethodPtr, Delegate detourMethod) : base(originalMethodPtr, detourMethod)
+-    {
+-        funchookInstance = FunchookLib.Create();
+-    }
+-
+-    protected override void ApplyImpl() => EnsureSuccess(FunchookLib.Install(funchookInstance, 0));
+-
+-    protected override unsafe void PrepareImpl()
+-    {
+-        var trampolinePtr = OriginalMethodPtr;
+-        EnsureSuccess(FunchookLib.Prepare(funchookInstance, &trampolinePtr, DetourMethodPtr));
+-        TrampolinePtr = trampolinePtr;
+-    }
+-
+-    protected override void UndoImpl() => EnsureSuccess(FunchookLib.Uninstall(funchookInstance, 0));
+-
+-    protected override void FreeImpl() => EnsureSuccess(FunchookLib.Destroy(funchookInstance));
+-
+-    private string GetErrorMessage()
+-        => FunchookLib.ErrorMessage(funchookInstance);
+-
+-    private void EnsureSuccess(FunchookResult result, [CallerArgumentExpression("result")] string methodName = null)
+-    {
+-        if (result == FunchookResult.Success) return;
+-        var errorMsg = GetErrorMessage();
+-        if (result == FunchookResult.OutOfMemory) throw new OutOfMemoryException($"{methodName} failed: {errorMsg}");
+-        throw new Exception($"{methodName} failed with result {result}: {errorMsg}");
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookLib.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookLib.cs
+deleted file mode 100644
+index 498aa0f..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookLib.cs
++++ /dev/null
+@@ -1,44 +0,0 @@
+-using System.Runtime.InteropServices;
+-
+-namespace BepInEx.Unity.IL2CPP.Hook.Funchook;
+-
+-internal enum FunchookResult
+-{
+-    InternalError = -1,
+-    Success = 0,
+-    OutOfMemory = 1,
+-    AlreadyInstalled = 2,
+-    Disassembly = 3,
+-    IPRelativeOffset = 4,
+-    CannotFixIPRelative = 5,
+-    FoundBackJump = 6,
+-    TooShortInstructions = 7,
+-    MemoryAllocation = 8,
+-    MemoryFunction = 9,
+-    NotInstalled = 10,
+-    NoAvailableRegisters = 11
+-}
+-
+-internal static unsafe class FunchookLib
+-{
+-    [DllImport("funchook", EntryPoint = "funchook_create", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern nint Create();
+-
+-    [DllImport("funchook", EntryPoint = "funchook_destroy", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern FunchookResult Destroy(nint handle);
+-
+-    [DllImport("funchook", EntryPoint = "funchook_prepare", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern FunchookResult Prepare(nint handle, nint* target, nint hook);
+-
+-    [DllImport("funchook", EntryPoint = "funchook_install", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern FunchookResult Install(nint handle, int flags);
+-
+-    [DllImport("funchook", EntryPoint = "funchook_uninstall", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern FunchookResult Uninstall(nint handle, int flags);
+-
+-    [DllImport("funchook", EntryPoint = "funchook_error_message", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern string ErrorMessage(nint handle);
+-
+-    [DllImport("funchook", EntryPoint = "funchook_set_debug_file", CallingConvention = CallingConvention.Cdecl)]
+-    public static extern FunchookResult SetDebugFile([MarshalAs(UnmanagedType.LPStr)] string name);
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/INativeDetour.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/INativeDetour.cs
+deleted file mode 100644
+index 61ec72c..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/INativeDetour.cs
++++ /dev/null
+@@ -1,150 +0,0 @@
+-﻿using System;
+-using System.Collections.Generic;
+-using System.Reflection;
+-using System.Runtime.InteropServices;
+-using BepInEx.Configuration;
+-using BepInEx.Logging;
+-using BepInEx.Unity.IL2CPP.Hook.Dobby;
+-using BepInEx.Unity.IL2CPP.Hook.Funchook;
+-using MonoMod.RuntimeDetour;
+-using MonoMod.Utils;
+-
+-namespace BepInEx.Unity.IL2CPP.Hook;
+-
+-public interface INativeDetour : IDetour
+-{
+-    private static readonly ConfigEntry<DetourProvider> DetourProviderType = ConfigFile.CoreConfig.Bind(
+-         "Detours", "DetourProviderType",
+-         DetourProvider.Default,
+-         "The native provider to use for managed detours"
+-        );
+-
+-    private static readonly ManualLogSource ThunkLog = Logger.CreateLogSource("NativeDetour");
+-
+-    public nint OriginalMethodPtr { get; }
+-    public nint DetourMethodPtr { get; }
+-    public nint TrampolinePtr { get; }
+-
+-    private static INativeDetour CreateDefault<T>(nint original, T target) where T : Delegate =>
+-        // TODO: check and provide an OS accurate provider
+-        new DobbyDetour(original, target);
+-
+-    public static INativeDetour Create<T>(nint original, T target) where T : Delegate
+-    {
+-        var resolved = FollowExportThunks(original);
+-        if (resolved != original)
+-            ThunkLog.LogDebug($"Resolved export thunk 0x{original:X} -> 0x{resolved:X}");
+-        original = resolved;
+-
+-        var detour = DetourProviderType.Value switch
+-        {
+-            DetourProvider.Dobby    => new DobbyDetour(original, target),
+-            DetourProvider.Funchook => new FunchookDetour(original, target),
+-            _                       => CreateDefault(original, target)
+-        };
+-        if (!ReflectionHelper.IsMono)
+-        {
+-            return new CacheDetourWrapper(detour, target);
+-        }
+-
+-        return detour;
+-    }
+-
+-    /// <summary>
+-    /// PE exports are often a <c>jmp rel32</c> (or <c>jmp [rip+disp]</c>) stub with int3 padding.
+-    /// Dobby aborts if asked to patch that stub. Follow to the real prologue first.
+-    /// No-op when the pointer is already a function body.
+-    /// </summary>
+-    private static nint FollowExportThunks(nint func)
+-    {
+-        if (func == 0) return func;
+-        var fn = func;
+-        for (var hops = 0; hops < 8; hops++)
+-        {
+-            byte op;
+-            try { op = Marshal.ReadByte(fn); }
+-            catch { return fn; }
+-
+-            if (op == 0xE9)
+-            {
+-                fn += 5 + Marshal.ReadInt32(fn + 1);
+-                continue;
+-            }
+-
+-            if (op == 0xFF && Marshal.ReadByte(fn + 1) == 0x25)
+-            {
+-                if (IntPtr.Size == 8)
+-                    fn = Marshal.ReadIntPtr(fn + 6 + Marshal.ReadInt32(fn + 2));
+-                else
+-                    fn = Marshal.ReadIntPtr((nint)(uint)Marshal.ReadInt32(fn + 2));
+-                continue;
+-            }
+-
+-            break;
+-        }
+-
+-        return fn;
+-    }
+-
+-    public static INativeDetour CreateAndApply<T>(nint from, T to, out T original)
+-        where T : Delegate
+-    {
+-        var detour = Create(from, to);
+-        original = detour.GenerateTrampoline<T>();
+-        detour.Apply();
+-
+-        return detour;
+-    }
+-
+-    // Workaround for CoreCLR collecting all delegates
+-    private class CacheDetourWrapper : INativeDetour
+-    {
+-        private readonly INativeDetour _wrapped;
+-
+-        private List<object> _cache = new();
+-
+-        public CacheDetourWrapper(INativeDetour wrapped, Delegate target)
+-        {
+-            _wrapped = wrapped;
+-            _cache.Add(target);
+-        }
+-
+-        public void Dispose()
+-        {
+-            _wrapped.Dispose();
+-            _cache.Clear();
+-        }
+-
+-        public void Apply() => _wrapped.Apply();
+-
+-        public void Undo() => _wrapped.Undo();
+-
+-        public void Free() => _wrapped.Free();
+-
+-        public MethodBase GenerateTrampoline(MethodBase signature = null) => _wrapped.GenerateTrampoline(signature);
+-
+-        public T GenerateTrampoline<T>() where T : Delegate
+-        {
+-            var trampoline = _wrapped.GenerateTrampoline<T>();
+-            _cache.Add(trampoline);
+-            return trampoline;
+-        }
+-
+-        public bool IsValid => _wrapped.IsValid;
+-
+-        public bool IsApplied => _wrapped.IsApplied;
+-
+-        public nint OriginalMethodPtr => _wrapped.OriginalMethodPtr;
+-
+-        public nint DetourMethodPtr => _wrapped.DetourMethodPtr;
+-
+-        public nint TrampolinePtr => _wrapped.TrampolinePtr;
+-    }
+-
+-    internal enum DetourProvider
+-    {
+-        Default,
+-        Dobby,
+-        Funchook
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Il2CppInteropDetourProvider.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Il2CppInteropDetourProvider.cs
+deleted file mode 100644
+index b7d7cfa..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Il2CppInteropDetourProvider.cs
++++ /dev/null
+@@ -1,30 +0,0 @@
+-﻿using System;
+-using Il2CppInterop.Runtime.Injection;
+-
+-namespace BepInEx.Unity.IL2CPP.Hook;
+-
+-internal class Il2CppInteropDetourProvider : IDetourProvider
+-{
+-    public IDetour Create<TDelegate>(nint original, TDelegate target) where TDelegate : Delegate =>
+-        new Il2CppInteropDetour(INativeDetour.Create(original, target));
+-}
+-
+-internal class Il2CppInteropDetour : IDetour
+-{
+-    private readonly INativeDetour detour;
+-
+-    public Il2CppInteropDetour(INativeDetour detour)
+-    {
+-        this.detour = detour;
+-    }
+-
+-    public void Dispose() => detour.Dispose();
+-
+-    public void Apply() => detour.Apply();
+-
+-    public T GenerateTrampoline<T>() where T : Delegate => detour.GenerateTrampoline<T>();
+-
+-    public nint Target => detour.OriginalMethodPtr;
+-    public nint Detour => detour.DetourMethodPtr;
+-    public nint OriginalTrampoline => detour.TrampolinePtr;
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs
+new file mode 100644
+index 0000000..90ac126
+--- /dev/null
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs
+@@ -0,0 +1,44 @@
++using System;
++using System.Runtime.InteropServices;
++using Il2CppInterop.Runtime.Injection;
++
++namespace BepInEx.Unity.IL2CPP.Hook;
++
++public unsafe class NativeDetour : IDetour
++{
++    public IntPtr Target { get; }
++    public IntPtr Detour { get; }
++    public bool SpecialReturnBuffer { get; }
++    public IntPtr OriginalTrampoline { get; private set; }
++
++    public NativeDetour(IntPtr target, Delegate detour, bool specialReturnBuffer = false)
++    {
++        Target = target;
++        Detour = Marshal.GetFunctionPointerForDelegate(detour);
++        SpecialReturnBuffer = specialReturnBuffer;
++        Apply();
++    }
++
++    public void Apply()
++    {
++        if (OriginalTrampoline != IntPtr.Zero)
++        {
++            return;
++        }
++        OriginalTrampoline = NativeInterop.hook(Target, Detour, SpecialReturnBuffer);
++    }
++
++    public void Dispose()
++    {
++        if (OriginalTrampoline == IntPtr.Zero)
++        {
++            return;
++        }
++        NativeInterop.unhook(Target);
++    }
++
++    public T GenerateTrampoline<T>() where T : Delegate
++    {
++        return Marshal.GetDelegateForFunctionPointer<T>(OriginalTrampoline);
++    }
++}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetourProvider.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetourProvider.cs
+new file mode 100644
+index 0000000..e5453d0
+--- /dev/null
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetourProvider.cs
+@@ -0,0 +1,19 @@
++using System;
++using Il2CppInterop.Runtime.Injection;
++
++namespace BepInEx.Unity.IL2CPP.Hook;
++
++public class NativeDetourProvider : IDetourProvider
++{
++    public IDetour Create<TDelegate>(IntPtr original, TDelegate target) where TDelegate : Delegate
++    {
++        var detour = new NativeDetour(original, target);
++        return new CacheDetourWrapper(detour, target);
++    }
++
++    public IDetour Create<TDelegate>(IntPtr original, TDelegate target, bool specialReturnBuffer) where TDelegate : Delegate
++    {
++        var detour = new NativeDetour(original, target, specialReturnBuffer);
++        return new CacheDetourWrapper(detour, target);
++    }
++}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+index 5fcdb35..3aa95c2 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+@@ -30,7 +30,7 @@ public class IL2CPPChainloader : BaseChainloader<BasePlugin>
+      "Include unity log messages in log file output.");
+ 
+ 
+-    private static INativeDetour RuntimeInvokeDetour { get; set; }
++    private static NativeDetour RuntimeInvokeDetour { get; set; }
+ 
+     public static IL2CPPChainloader Instance { get; set; }
+ 
+@@ -58,7 +58,21 @@ public class IL2CPPChainloader : BaseChainloader<BasePlugin>
+         base.Initialize(gameExePath);
+         Instance = this;
+ 
+-        if (!NativeLibrary.TryLoad("GameAssembly", typeof(IL2CPPChainloader).Assembly, null, out var il2CppHandle))
++        string gameLibraryName;
++        if (PlatformDetection.OS is OSKind.Windows or OSKind.OSX)
++        {
++            gameLibraryName = "GameAssembly";
++        }
++        else if (PlatformDetection.OS is OSKind.Linux or OSKind.Android)
++        {
++            gameLibraryName = "libil2cpp.so";
++        }
++        else
++        {
++            throw new PlatformNotSupportedException("Unsupported platform!");
++        }
++
++        if (!NativeLibrary.TryLoad(gameLibraryName, typeof(IL2CPPChainloader).Assembly, null, out var il2CppHandle))
+         {
+             Logger.Log(LogLevel.Fatal,
+                        "Could not locate Il2Cpp game assembly (GameAssembly.dll, UserAssembly.dll or libil2cpp.so). The game might be obfuscated or use a yet unsupported build of Unity.");
+@@ -66,11 +80,17 @@ public class IL2CPPChainloader : BaseChainloader<BasePlugin>
+         }
+ 
+         var runtimeInvokePtr = NativeLibrary.GetExport(il2CppHandle, "il2cpp_runtime_invoke");
++
++        // The export points at a linker stub rather than at the function body; inline hooking the stub
++        // breaks the prologue, so resolve the body before detaching.
++        runtimeInvokePtr = ExportThunkResolver.Resolve(runtimeInvokePtr, "il2cpp_runtime_invoke");
++
+         PreloaderLogger.Log.Log(LogLevel.Debug, $"Runtime invoke pointer: 0x{runtimeInvokePtr.ToInt64():X}");
+         RuntimeInvokeDetourDelegate invokeMethodDetour = OnInvokeMethod;
+ 
+-        RuntimeInvokeDetour =
+-            INativeDetour.CreateAndApply(runtimeInvokePtr, invokeMethodDetour, out originalInvoke);
++        RuntimeInvokeDetour = new NativeDetour(runtimeInvokePtr, invokeMethodDetour);
++        originalInvoke = RuntimeInvokeDetour.GenerateTrampoline<RuntimeInvokeDetourDelegate>();
++
+         PreloaderLogger.Log.Log(LogLevel.Debug, "Runtime invoke patched");
+     }
+ 
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Il2CppInteropManager.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Il2CppInteropManager.cs
+index fe9de89..ad12949 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Il2CppInteropManager.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Il2CppInteropManager.cs
+@@ -6,7 +6,6 @@ using System.IO.Compression;
+ using System.Linq;
+ using System.Net.Http;
+ using System.Reflection;
+-using System.Security.Cryptography;
+ using System.Text;
+ using System.Text.RegularExpressions;
+ using System.Threading;
+@@ -40,8 +39,7 @@ internal static partial class Il2CppInteropManager
+ {
+     static Il2CppInteropManager()
+     {
+-        InstructionSetRegistry.RegisterInstructionSet<X86InstructionSet>(DefaultInstructionSets.X86_32);
+-        InstructionSetRegistry.RegisterInstructionSet<X86InstructionSet>(DefaultInstructionSets.X86_64);
++        InstructionSetRegistry.RegisterInstructionSet<NewArmV8InstructionSet>(DefaultInstructionSets.ARM_V8);
+         LibCpp2IlBinaryRegistry.RegisterBuiltInBinarySupport();
+     }
+ 
+@@ -103,7 +101,8 @@ internal static partial class Il2CppInteropManager
+ 
+     private static readonly ConfigEntry<string> GlobalMetadataPath = ConfigFile.CoreConfig.Bind(
+      "IL2CPP", "GlobalMetadataPath",
+-     "{GameDataPath}/il2cpp_data/Metadata/global-metadata.dat",
++     "{GameDataPath}/Managed/Metadata/global-metadata.dat",
++     // 这会他妈有问题吧。
+      new StringBuilder()
+          .AppendLine("The path to the IL2CPP metadata file.")
+          .AppendLine("Supports the following placeholders:")
+@@ -119,8 +118,7 @@ internal static partial class Il2CppInteropManager
+     private static bool initialized;
+ 
+     public static string GameAssemblyPath => Environment.GetEnvironmentVariable("BEPINEX_GAME_ASSEMBLY_PATH") ??
+-                                             Path.Combine(Paths.GameRootPath,
+-                                                          "GameAssembly." + PlatformHelper.LibrarySuffix);
++                                             Path.Combine(Paths.GameRootPath, "GameAssembly.dll");
+ 
+     private static string HashPath => Path.Combine(IL2CPPInteropAssemblyPath, "assembly-hash.txt");
+ 
+@@ -149,74 +147,45 @@ internal static partial class Il2CppInteropManager
+ 
+     private static string ComputeHash()
+     {
+-        using var md5 = MD5.Create();
+-
+-        static void HashFile(ICryptoTransform hash, string file)
+-        {
+-            const int defaultCopyBufferSize = 81920;
+-            using var fs = File.OpenRead(file);
+-            var buffer = new byte[defaultCopyBufferSize];
+-            int read;
+-            while ((read = fs.Read(buffer)) > 0)
+-                hash.TransformBlock(buffer, 0, read, buffer, 0);
+-        }
+-
+-        static void HashString(ICryptoTransform hash, string str)
+-        {
+-            var buffer = Encoding.UTF8.GetBytes(str);
+-            hash.TransformBlock(buffer, 0, buffer.Length, buffer, 0);
+-        }
+-
+-        HashFile(md5, GameAssemblyPath);
++        var hashes = new System.Collections.Generic.List<string>();
++        hashes.Add(Utility.HashStream(File.OpenRead(GameAssemblyPath)));
+ 
+         if (Directory.Exists(UnityBaseLibsDirectory))
+             foreach (var file in Directory.EnumerateFiles(UnityBaseLibsDirectory, "*.dll",
+                                                           SearchOption.TopDirectoryOnly))
+-            {
+-                HashString(md5, Path.GetFileName(file));
+-                HashFile(md5, file);
+-            }
+-
++                hashes.Add(Utility.HashStrings(Path.GetFileName(file)));
+         if (File.Exists(RenameMapPath))
+-        {
+-            HashFile(md5, RenameMapPath);
+-        }
+-
+-        // Hash some common dependencies as they can affect output
+-        HashString(md5, typeof(InteropAssemblyGenerator).Assembly.GetName().Version.ToString());
+-        HashString(md5, typeof(Cpp2IlApi).Assembly.GetName().Version.ToString());
++            hashes.Add(Utility.HashStream(File.OpenRead(RenameMapPath)));
++        hashes.Add(typeof(InteropAssemblyGenerator).Assembly.GetName().Version.ToString());
++        hashes.Add(typeof(Cpp2IlApi).Assembly.GetName().Version.ToString());
+ 
+-        md5.TransformFinalBlock(new byte[0], 0, 0);
+-
+-        return Utility.ByteArrayToString(md5.Hash);
++        return Utility.HashStrings(hashes.ToArray());
+     }
+ 
+     private static bool CheckIfGenerationRequired()
+     {
+-        static bool NeedGenerationOrSkip()
+-        {
+-            if (!UpdateInteropAssemblies.Value)
+-            {
+-                var hash = ComputeHash();
+-                Logger.LogWarning($"Interop assemblies are possibly out of date. To disable this message, create file {HashPath} with the following contents: {hash}");
+-                return false;
+-            }
+-
+-            return true;
+-        }
++        if (!UpdateInteropAssemblies.Value)
++            return false;
+ 
+         if (!Directory.Exists(IL2CPPInteropAssemblyPath))
++        {
++            Logger.LogInfo("Interop assemblies not found — will generate now");
+             return true;
++        }
+ 
+         if (!File.Exists(HashPath))
+-            return NeedGenerationOrSkip();
++        {
++            Logger.LogInfo("No assembly hash file — will generate interop");
++            return true;
++        }
+ 
+-        if (ComputeHash() != File.ReadAllText(HashPath) && NeedGenerationOrSkip())
++        if (ComputeHash() != File.ReadAllText(HashPath))
+         {
+             Logger.LogInfo("Detected outdated interop assemblies, will regenerate them now");
+             return true;
+         }
+ 
++        Logger.LogInfo("Interop assemblies up to date");
+         return false;
+     }
+ 
+@@ -244,7 +213,7 @@ internal static partial class Il2CppInteropManager
+         Il2CppInteropRuntime.Create(new RuntimeConfiguration
+                             {
+                                 UnityVersion = new Version(unityVersion.Major, unityVersion.Minor, unityVersion.Build),
+-                                DetourProvider = new Il2CppInteropDetourProvider()
++                                DetourProvider = new NativeDetourProvider()
+                             })
+                             .AddLogger(interopLogger)
+                             .AddHarmonySupport()
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs
+index a57a40a..92dd41d 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs
+@@ -29,7 +29,7 @@ public class AndroidLogListener : ILogListener
+             var _ => AndroidLogLevel.Default
+         };
+ 
+-        NextInterop.write_log_level((int)logLevel, eventArgs.ToStringLine());
++        NativeInterop.write_log_level((int)logLevel, eventArgs.ToStringLine());
+     }
+ 
+     public void Dispose() { }
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Preloader.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Preloader.cs
+index 690d4ef..acbb158 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Preloader.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Preloader.cs
+@@ -8,6 +8,7 @@ using BepInEx.Preloader.Core.Logging;
+ using BepInEx.Preloader.Core.Patching;
+ using BepInEx.Preloader.RuntimeFixes;
+ using BepInEx.Unity.Common;
++using BepInEx.Unity.IL2CPP.Logging;
+ using MonoMod.Utils;
+ 
+ namespace BepInEx.Unity.IL2CPP;
+@@ -26,21 +27,13 @@ public static class Preloader
+         try
+         {
+             HarmonyBackendFix.Initialize();
+-            ConsoleSetOutFix.Apply();
+-            UnityInfo.Initialize(Paths.ExecutablePath, Paths.GameDataPath);
++            UnityInfo.Initialize(Paths.ExecutablePath, Paths.GameDataPath, EnvVars.NEXT_UNITY_VERSION);
+ 
+             ConsoleManager.Initialize(false, true);
+ 
+             PreloaderLog = new PreloaderConsoleListener();
+             Logger.Listeners.Add(PreloaderLog);
+-
+-            if (ConsoleManager.ConsoleEnabled)
+-            {
+-                ConsoleManager.CreateConsole();
+-                Logger.Listeners.Add(new ConsoleLogListener());
+-            }
+-
+-            RedirectStdErrFix.Apply();
++            Logger.Listeners.Add(new AndroidLogListener());
+ 
+             ChainloaderLogHelper.PrintLogInfo(Log);
+ 
+@@ -52,7 +45,7 @@ public static class Preloader
+             Logger.Log(LogLevel.Debug, $"Interop assembly directory: {Il2CppInteropManager.IL2CPPInteropAssemblyPath}");
+             Logger.Log(LogLevel.Debug, $"BepInEx root path: {Paths.BepInExRootPath}");
+ 
+-            if (PlatformHelper.Is(Platform.Wine) && !Environment.Is64BitProcess)
++            if (PlatformDetection.OS is OSKind.Wine && !Environment.Is64BitProcess)
+             {
+                 if (!NativeLibrary.TryGetExport(NativeLibrary.Load("ntdll"), "RtlRestoreContext", out var _))
+                 {
+@@ -78,10 +71,8 @@ public static class Preloader
+                 assemblyPatcher.PatchAndLoad();
+             }
+ 
+-
+             Logger.Listeners.Remove(PreloaderLog);
+ 
+-
+             Chainloader = new IL2CPPChainloader();
+ 
+             Chainloader.Initialize();
+@@ -96,7 +87,7 @@ public static class Preloader
+ 
+     private static IntPtr DllImportResolver(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+     {
+-        if (libraryName == "GameAssembly")
++        if (libraryName is "GameAssembly" or "libil2cpp" or "libil2cpp.so")
+         {
+             return NativeLibrary.Load(Il2CppInteropManager.GameAssemblyPath, assembly, searchPath);
+         }
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/RuntimeFixes/RedirectStdErrFix.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/RuntimeFixes/RedirectStdErrFix.cs
+index 9e41dad..5fa560b 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/RuntimeFixes/RedirectStdErrFix.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/RuntimeFixes/RedirectStdErrFix.cs
+@@ -29,7 +29,7 @@ internal static class RedirectStdErrFix
+ 
+     public static void Apply()
+     {
+-        if (PlatformHelper.Is(Platform.Windows))
++        if (PlatformDetection.OS is OSKind.Windows)
+         {
+             var errorFile = CreateFile(Path.Combine(Paths.BepInExRootPath, "ErrorLog.log"), GENERIC_WRITE,
+                                        FILE_SHARE_READ,
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityInput.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityInput.cs
+deleted file mode 100644
+index ab0a814..0000000
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityInput.cs
++++ /dev/null
+@@ -1,898 +0,0 @@
+-using System;
+-using System.Collections.Generic;
+-using System.Linq;
+-using System.Runtime.CompilerServices;
+-using BepInEx.Logging;
+-using UnityEngine;
+-using UnityEngine.InputSystem;
+-using UnityEngine.InputSystem.Controls;
+-
+-// ReSharper disable InconsistentNaming
+-
+-namespace BepInEx
+-{
+-    /// <summary>
+-    /// Abstraction layer over Unity's input systems for use in universal plugins that need to use hotkeys.
+-    /// It can use either Input or Unity.InputSystem, depending on what's available. Input is preferred.
+-    /// WARNING: Use only inside of Unity's main thread!
+-    /// </summary>
+-    public class UnityInput
+-    {
+-        private static IInputSystem current;
+-        /// <summary>
+-        /// Best currently supported input system.
+-        /// </summary>
+-        public static IInputSystem Current
+-        {
+-            get
+-            {
+-                if (current == null)
+-                {
+-                    try
+-                    {
+-                        try
+-                        {
+-                            current = new LegacyInputSystem();
+-                            BepInEx.Logging.Logger.Log(LogLevel.Debug, "[UnityInput] Using LegacyInputSystem");
+-                        }
+-                        catch
+-                        {
+-                            var newInputSystem = new NewInputSystem();
+-                            current = newInputSystem;
+-                            BepInEx.Logging.Logger.Log(LogLevel.Debug, "[UnityInput] Using NewInputSystem");
+-                        }
+-                    }
+-                    catch (Exception ex)
+-                    {
+-                        current = new NullInputSystem();
+-                        BepInEx.Logging.Logger.Log(LogLevel.Warning, "[UnityInput] Failed to detect available input systems - " + ex);
+-                    }
+-                }
+-                return current;
+-            }
+-        }
+-
+-        /// <summary>
+-        /// True if the Input class is not disabled.
+-        /// </summary>
+-        public bool LegacyInputSystemAvailable => Current is LegacyInputSystem;
+-    }
+-
+-    /// <summary>
+-    /// Generic input system interface. Just barely good enough for hotkeys.
+-    /// </summary>
+-    public interface IInputSystem
+-    {
+-        // No easy way to use these with the new input system
+-        //bool GetButton(string buttonName);
+-        //bool GetButtonDown(string buttonName);
+-        //bool GetButtonUp(string buttonName);
+-
+-        /// <inheritdoc cref="Input.GetKey(string)"/>
+-        bool GetKey(string name);
+-        /// <inheritdoc cref="Input.GetKey(KeyCode)"/>
+-        bool GetKey(KeyCode key);
+-
+-        /// <inheritdoc cref="Input.GetKeyDown(string)"/>
+-        bool GetKeyDown(string name);
+-        /// <inheritdoc cref="Input.GetKeyDown(KeyCode)"/>
+-        bool GetKeyDown(KeyCode key);
+-
+-        /// <inheritdoc cref="Input.GetKeyUp(string)"/>
+-        bool GetKeyUp(string name);
+-        /// <inheritdoc cref="Input.GetKeyUp(KeyCode)"/>
+-        bool GetKeyUp(KeyCode key);
+-
+-
+-        /// <inheritdoc cref="Input.GetMouseButton(int)"/>
+-        bool GetMouseButton(int button);
+-        /// <inheritdoc cref="Input.GetMouseButtonDown(int)"/>
+-        bool GetMouseButtonDown(int button);
+-        /// <inheritdoc cref="Input.GetMouseButtonUp(int)"/>
+-        bool GetMouseButtonUp(int button);
+-
+-        /// <inheritdoc cref="Input.ResetInputAxes()"/>
+-        void ResetInputAxes();
+-
+-        /// <inheritdoc cref="Input.mousePosition"/>
+-        Vector3 mousePosition { get; }
+-        /// <inheritdoc cref="Input.mouseScrollDelta"/>
+-        Vector2 mouseScrollDelta { get; }
+-
+-        /// <inheritdoc cref="Input.mousePresent"/>
+-        bool mousePresent { get; }
+-
+-        /// <inheritdoc cref="Input.anyKey"/>
+-        bool anyKey { get; }
+-        /// <inheritdoc cref="Input.anyKeyDown"/>
+-        bool anyKeyDown { get; }
+-
+-        /// <summary>
+-        /// All KeyCodes supported by the current input system.
+-        /// </summary>
+-        IEnumerable<KeyCode> SupportedKeyCodes { get; }
+-    }
+-
+-    internal class NullInputSystem : IInputSystem
+-    {
+-        public bool GetKey(string name) => false;
+-
+-        public bool GetKey(KeyCode key) => false;
+-
+-        public bool GetKeyDown(string name) => false;
+-
+-        public bool GetKeyDown(KeyCode key) => false;
+-
+-        public bool GetKeyUp(string name) => false;
+-
+-        public bool GetKeyUp(KeyCode key) => false;
+-
+-        public bool GetMouseButton(int button) => false;
+-
+-        public bool GetMouseButtonDown(int button) => false;
+-
+-        public bool GetMouseButtonUp(int button) => false;
+-
+-        public void ResetInputAxes() { }
+-
+-        public Vector3 mousePosition => Vector3.zero;
+-        public Vector2 mouseScrollDelta => Vector2.zero;
+-        public bool mousePresent => false;
+-
+-        public bool anyKey => false;
+-
+-        public bool anyKeyDown => false;
+-
+-        public IEnumerable<KeyCode> SupportedKeyCodes { get; } = Enumerable.Empty<KeyCode>();
+-    }
+-
+-    internal class NewInputSystem : IInputSystem
+-    {
+-        [MethodImpl(MethodImplOptions.NoInlining)]
+-        public NewInputSystem() => GetKeyDown(KeyCode.A);
+-
+-        public bool GetKey(string name) => GetControl(name)?.isPressed ?? false;
+-
+-        public bool GetKey(KeyCode key) => GetControl(key)?.isPressed ?? false;
+-
+-        public bool GetKeyDown(string name) => GetControl(name)?.wasPressedThisFrame ?? false;
+-
+-        public bool GetKeyDown(KeyCode key) => GetControl(key)?.wasPressedThisFrame ?? false;
+-
+-        public bool GetKeyUp(string name) => GetControl(name)?.wasReleasedThisFrame ?? false;
+-
+-        public bool GetKeyUp(KeyCode key) => GetControl(key)?.wasReleasedThisFrame ?? false;
+-
+-        public bool GetMouseButton(int button) => GetControl(KeyCode.Mouse0 + button)?.isPressed ?? false;
+-
+-        public bool GetMouseButtonDown(int button) => GetControl(KeyCode.Mouse0 + button)?.wasPressedThisFrame ?? false;
+-
+-        public bool GetMouseButtonUp(int button) => GetControl(KeyCode.Mouse0 + button)?.wasReleasedThisFrame ?? false;
+-
+-        public void ResetInputAxes() { /*Not supported*/ }
+-
+-        public Vector3 mousePosition => Mouse.current.position.ReadValue();
+-        public Vector2 mouseScrollDelta => Mouse.current.scroll.ReadValue();
+-        public bool mousePresent => Mouse.current.enabled;
+-
+-        public bool anyKey
+-        {
+-            get
+-            {
+-                if (Keyboard.current.anyKey.isPressed)
+-                    return true;
+-                var current = Mouse.current;
+-                return current.leftButton.isPressed ||
+-                       current.rightButton.isPressed ||
+-                       current.forwardButton.isPressed ||
+-                       current.backButton.isPressed ||
+-                       current.middleButton.isPressed;
+-            }
+-        }
+-
+-        public bool anyKeyDown
+-        {
+-            get
+-            {
+-                if (Keyboard.current.anyKey.wasPressedThisFrame)
+-                    return true;
+-                var current = Mouse.current;
+-                return current.leftButton.wasPressedThisFrame ||
+-                       current.rightButton.wasPressedThisFrame ||
+-                       current.forwardButton.wasPressedThisFrame ||
+-                       current.backButton.wasPressedThisFrame ||
+-                       current.middleButton.wasPressedThisFrame;
+-            }
+-        }
+-
+-        public IEnumerable<KeyCode> SupportedKeyCodes { get; } = Enum.GetValues(typeof(KeyCode)).Cast<KeyCode>().Where(x => GetControl(x, true) != null).ToList();
+-
+-        private static ButtonControl GetControl(string name) => GetControl((KeyCode)Enum.Parse(typeof(KeyCode), name, true));
+-
+-        private static ButtonControl GetControl(KeyCode key, bool silent = false)
+-        {
+-            switch (key)
+-            {
+-                case KeyCode.None:
+-                    break;
+-                case KeyCode.Backspace:
+-                    return Keyboard.current.backspaceKey;
+-                case KeyCode.Delete:
+-                    return Keyboard.current.deleteKey;
+-                case KeyCode.Tab:
+-                    return Keyboard.current.tabKey;
+-                case KeyCode.Clear:
+-                    break;
+-                case KeyCode.Return:
+-                    return Keyboard.current.enterKey;
+-                case KeyCode.Pause:
+-                    return Keyboard.current.pauseKey;
+-                case KeyCode.Escape:
+-                    return Keyboard.current.escapeKey;
+-                case KeyCode.Space:
+-                    return Keyboard.current.spaceKey;
+-                case KeyCode.Keypad0:
+-                    return Keyboard.current.numpad0Key;
+-                case KeyCode.Keypad1:
+-                    return Keyboard.current.numpad1Key;
+-                case KeyCode.Keypad2:
+-                    return Keyboard.current.numpad2Key;
+-                case KeyCode.Keypad3:
+-                    return Keyboard.current.numpad3Key;
+-                case KeyCode.Keypad4:
+-                    return Keyboard.current.numpad4Key;
+-                case KeyCode.Keypad5:
+-                    return Keyboard.current.numpad5Key;
+-                case KeyCode.Keypad6:
+-                    return Keyboard.current.numpad6Key;
+-                case KeyCode.Keypad7:
+-                    return Keyboard.current.numpad7Key;
+-                case KeyCode.Keypad8:
+-                    return Keyboard.current.numpad8Key;
+-                case KeyCode.Keypad9:
+-                    return Keyboard.current.numpad9Key;
+-                case KeyCode.KeypadPeriod:
+-                    return Keyboard.current.numpadPeriodKey;
+-                case KeyCode.KeypadDivide:
+-                    return Keyboard.current.numpadDivideKey;
+-                case KeyCode.KeypadMultiply:
+-                    return Keyboard.current.numpadMultiplyKey;
+-                case KeyCode.KeypadMinus:
+-                    return Keyboard.current.numpadMinusKey;
+-                case KeyCode.KeypadPlus:
+-                    return Keyboard.current.numpadPlusKey;
+-                case KeyCode.KeypadEnter:
+-                    return Keyboard.current.numpadEnterKey;
+-                case KeyCode.KeypadEquals:
+-                    return Keyboard.current.numpadEqualsKey;
+-                case KeyCode.UpArrow:
+-                    return Keyboard.current.upArrowKey;
+-                case KeyCode.DownArrow:
+-                    return Keyboard.current.downArrowKey;
+-                case KeyCode.RightArrow:
+-                    return Keyboard.current.rightArrowKey;
+-                case KeyCode.LeftArrow:
+-                    return Keyboard.current.leftArrowKey;
+-                case KeyCode.Insert:
+-                    return Keyboard.current.insertKey;
+-                case KeyCode.Home:
+-                    return Keyboard.current.homeKey;
+-                case KeyCode.End:
+-                    return Keyboard.current.endKey;
+-                case KeyCode.PageUp:
+-                    return Keyboard.current.pageUpKey;
+-                case KeyCode.PageDown:
+-                    return Keyboard.current.pageDownKey;
+-                case KeyCode.F1:
+-                    return Keyboard.current.f1Key;
+-                case KeyCode.F2:
+-                    return Keyboard.current.f2Key;
+-                case KeyCode.F3:
+-                    return Keyboard.current.f3Key;
+-                case KeyCode.F4:
+-                    return Keyboard.current.f4Key;
+-                case KeyCode.F5:
+-                    return Keyboard.current.f5Key;
+-                case KeyCode.F6:
+-                    return Keyboard.current.f6Key;
+-                case KeyCode.F7:
+-                    return Keyboard.current.f7Key;
+-                case KeyCode.F8:
+-                    return Keyboard.current.f8Key;
+-                case KeyCode.F9:
+-                    return Keyboard.current.f9Key;
+-                case KeyCode.F10:
+-                    return Keyboard.current.f10Key;
+-                case KeyCode.F11:
+-                    return Keyboard.current.f11Key;
+-                case KeyCode.F12:
+-                    return Keyboard.current.f12Key;
+-                case KeyCode.F13:
+-                    break;
+-                case KeyCode.F14:
+-                    break;
+-                case KeyCode.F15:
+-                    break;
+-                case KeyCode.Alpha0:
+-                    return Keyboard.current.digit0Key;
+-                case KeyCode.Alpha1:
+-                    return Keyboard.current.digit1Key;
+-                case KeyCode.Alpha2:
+-                    return Keyboard.current.digit2Key;
+-                case KeyCode.Alpha3:
+-                    return Keyboard.current.digit3Key;
+-                case KeyCode.Alpha4:
+-                    return Keyboard.current.digit4Key;
+-                case KeyCode.Alpha5:
+-                    return Keyboard.current.digit5Key;
+-                case KeyCode.Alpha6:
+-                    return Keyboard.current.digit6Key;
+-                case KeyCode.Alpha7:
+-                    return Keyboard.current.digit7Key;
+-                case KeyCode.Alpha8:
+-                    return Keyboard.current.digit8Key;
+-                case KeyCode.Alpha9:
+-                    return Keyboard.current.digit9Key;
+-                case KeyCode.Exclaim:
+-                    break;
+-                case KeyCode.DoubleQuote:
+-                    break;
+-                case KeyCode.Hash:
+-                    break;
+-                case KeyCode.Dollar:
+-                    break;
+-                case KeyCode.Ampersand:
+-                    break;
+-                case KeyCode.Quote:
+-                    return Keyboard.current.quoteKey;
+-                case KeyCode.LeftParen:
+-                    break;
+-                case KeyCode.RightParen:
+-                    break;
+-                case KeyCode.Asterisk:
+-                    break;
+-                case KeyCode.Plus:
+-                    return Keyboard.current.numpadPlusKey;
+-                case KeyCode.Comma:
+-                    return Keyboard.current.commaKey;
+-                case KeyCode.Minus:
+-                    return Keyboard.current.minusKey;
+-                case KeyCode.Period:
+-                    return Keyboard.current.periodKey;
+-                case KeyCode.Slash:
+-                    return Keyboard.current.slashKey;
+-                case KeyCode.Colon:
+-                    break;
+-                case KeyCode.Semicolon:
+-                    return Keyboard.current.semicolonKey;
+-                case KeyCode.Less:
+-                    break;
+-                case KeyCode.Equals:
+-                    return Keyboard.current.equalsKey;
+-                case KeyCode.Greater:
+-                    break;
+-                case KeyCode.Question:
+-                    break;
+-                case KeyCode.At:
+-                    break;
+-                case KeyCode.LeftBracket:
+-                    return Keyboard.current.leftBracketKey;
+-                case KeyCode.Backslash:
+-                    return Keyboard.current.backslashKey;
+-                case KeyCode.RightBracket:
+-                    return Keyboard.current.rightBracketKey;
+-                case KeyCode.Caret:
+-                    break;
+-                case KeyCode.Underscore:
+-                    break;
+-                case KeyCode.BackQuote:
+-                    return Keyboard.current.backquoteKey;
+-                case KeyCode.A:
+-                    return Keyboard.current.aKey;
+-                case KeyCode.B:
+-                    return Keyboard.current.bKey;
+-                case KeyCode.C:
+-                    return Keyboard.current.cKey;
+-                case KeyCode.D:
+-                    return Keyboard.current.dKey;
+-                case KeyCode.E:
+-                    return Keyboard.current.eKey;
+-                case KeyCode.F:
+-                    return Keyboard.current.fKey;
+-                case KeyCode.G:
+-                    return Keyboard.current.gKey;
+-                case KeyCode.H:
+-                    return Keyboard.current.hKey;
+-                case KeyCode.I:
+-                    return Keyboard.current.iKey;
+-                case KeyCode.J:
+-                    return Keyboard.current.jKey;
+-                case KeyCode.K:
+-                    return Keyboard.current.kKey;
+-                case KeyCode.L:
+-                    return Keyboard.current.lKey;
+-                case KeyCode.M:
+-                    return Keyboard.current.mKey;
+-                case KeyCode.N:
+-                    return Keyboard.current.nKey;
+-                case KeyCode.O:
+-                    return Keyboard.current.oKey;
+-                case KeyCode.P:
+-                    return Keyboard.current.pKey;
+-                case KeyCode.Q:
+-                    return Keyboard.current.qKey;
+-                case KeyCode.R:
+-                    return Keyboard.current.rKey;
+-                case KeyCode.S:
+-                    return Keyboard.current.sKey;
+-                case KeyCode.T:
+-                    return Keyboard.current.tKey;
+-                case KeyCode.U:
+-                    return Keyboard.current.uKey;
+-                case KeyCode.V:
+-                    return Keyboard.current.vKey;
+-                case KeyCode.W:
+-                    return Keyboard.current.wKey;
+-                case KeyCode.X:
+-                    return Keyboard.current.xKey;
+-                case KeyCode.Y:
+-                    return Keyboard.current.yKey;
+-                case KeyCode.Z:
+-                    return Keyboard.current.zKey;
+-                case KeyCode.Numlock:
+-                    return Keyboard.current.numLockKey;
+-                case KeyCode.CapsLock:
+-                    return Keyboard.current.capsLockKey;
+-                case KeyCode.ScrollLock:
+-                    return Keyboard.current.scrollLockKey;
+-                case KeyCode.RightShift:
+-                    return Keyboard.current.rightShiftKey;
+-                case KeyCode.LeftShift:
+-                    return Keyboard.current.leftShiftKey;
+-                case KeyCode.RightControl:
+-                    return Keyboard.current.rightCtrlKey;
+-                case KeyCode.LeftControl:
+-                    return Keyboard.current.leftCtrlKey;
+-                case KeyCode.RightAlt:
+-                    return Keyboard.current.rightAltKey;
+-                case KeyCode.LeftAlt:
+-                    return Keyboard.current.leftAltKey;
+-                case KeyCode.LeftCommand:
+-                    return Keyboard.current.leftCommandKey;
+-                case KeyCode.LeftWindows:
+-                    return Keyboard.current.leftWindowsKey;
+-                case KeyCode.RightCommand:
+-                    return Keyboard.current.rightCommandKey;
+-                case KeyCode.RightWindows:
+-                    return Keyboard.current.rightWindowsKey;
+-                case KeyCode.AltGr:
+-                    break;
+-                case KeyCode.Help:
+-                    break;
+-                case KeyCode.Print:
+-                    return Keyboard.current.printScreenKey;
+-                case KeyCode.SysReq:
+-                    break;
+-                case KeyCode.Break:
+-                    break;
+-                case KeyCode.Menu:
+-                    return Keyboard.current.contextMenuKey;
+-                case KeyCode.Mouse0:
+-                    return Mouse.current.leftButton;
+-                case KeyCode.Mouse1:
+-                    return Mouse.current.rightButton;
+-                case KeyCode.Mouse2:
+-                    return Mouse.current.middleButton;
+-                case KeyCode.Mouse3:
+-                    return Mouse.current.backButton;
+-                case KeyCode.Mouse4:
+-                    return Mouse.current.forwardButton;
+-                case KeyCode.Mouse5:
+-                    break;
+-                case KeyCode.Mouse6:
+-                    break;
+-                case KeyCode.JoystickButton0:
+-                    break;
+-                case KeyCode.JoystickButton1:
+-                    break;
+-                case KeyCode.JoystickButton2:
+-                    break;
+-                case KeyCode.JoystickButton3:
+-                    break;
+-                case KeyCode.JoystickButton4:
+-                    break;
+-                case KeyCode.JoystickButton5:
+-                    break;
+-                case KeyCode.JoystickButton6:
+-                    break;
+-                case KeyCode.JoystickButton7:
+-                    break;
+-                case KeyCode.JoystickButton8:
+-                    break;
+-                case KeyCode.JoystickButton9:
+-                    break;
+-                case KeyCode.JoystickButton10:
+-                    break;
+-                case KeyCode.JoystickButton11:
+-                    break;
+-                case KeyCode.JoystickButton12:
+-                    break;
+-                case KeyCode.JoystickButton13:
+-                    break;
+-                case KeyCode.JoystickButton14:
+-                    break;
+-                case KeyCode.JoystickButton15:
+-                    break;
+-                case KeyCode.JoystickButton16:
+-                    break;
+-                case KeyCode.JoystickButton17:
+-                    break;
+-                case KeyCode.JoystickButton18:
+-                    break;
+-                case KeyCode.JoystickButton19:
+-                    break;
+-                case KeyCode.Joystick1Button0:
+-                    break;
+-                case KeyCode.Joystick1Button1:
+-                    break;
+-                case KeyCode.Joystick1Button2:
+-                    break;
+-                case KeyCode.Joystick1Button3:
+-                    break;
+-                case KeyCode.Joystick1Button4:
+-                    break;
+-                case KeyCode.Joystick1Button5:
+-                    break;
+-                case KeyCode.Joystick1Button6:
+-                    break;
+-                case KeyCode.Joystick1Button7:
+-                    break;
+-                case KeyCode.Joystick1Button8:
+-                    break;
+-                case KeyCode.Joystick1Button9:
+-                    break;
+-                case KeyCode.Joystick1Button10:
+-                    break;
+-                case KeyCode.Joystick1Button11:
+-                    break;
+-                case KeyCode.Joystick1Button12:
+-                    break;
+-                case KeyCode.Joystick1Button13:
+-                    break;
+-                case KeyCode.Joystick1Button14:
+-                    break;
+-                case KeyCode.Joystick1Button15:
+-                    break;
+-                case KeyCode.Joystick1Button16:
+-                    break;
+-                case KeyCode.Joystick1Button17:
+-                    break;
+-                case KeyCode.Joystick1Button18:
+-                    break;
+-                case KeyCode.Joystick1Button19:
+-                    break;
+-                case KeyCode.Joystick2Button0:
+-                    break;
+-                case KeyCode.Joystick2Button1:
+-                    break;
+-                case KeyCode.Joystick2Button2:
+-                    break;
+-                case KeyCode.Joystick2Button3:
+-                    break;
+-                case KeyCode.Joystick2Button4:
+-                    break;
+-                case KeyCode.Joystick2Button5:
+-                    break;
+-                case KeyCode.Joystick2Button6:
+-                    break;
+-                case KeyCode.Joystick2Button7:
+-                    break;
+-                case KeyCode.Joystick2Button8:
+-                    break;
+-                case KeyCode.Joystick2Button9:
+-                    break;
+-                case KeyCode.Joystick2Button10:
+-                    break;
+-                case KeyCode.Joystick2Button11:
+-                    break;
+-                case KeyCode.Joystick2Button12:
+-                    break;
+-                case KeyCode.Joystick2Button13:
+-                    break;
+-                case KeyCode.Joystick2Button14:
+-                    break;
+-                case KeyCode.Joystick2Button15:
+-                    break;
+-                case KeyCode.Joystick2Button16:
+-                    break;
+-                case KeyCode.Joystick2Button17:
+-                    break;
+-                case KeyCode.Joystick2Button18:
+-                    break;
+-                case KeyCode.Joystick2Button19:
+-                    break;
+-                case KeyCode.Joystick3Button0:
+-                    break;
+-                case KeyCode.Joystick3Button1:
+-                    break;
+-                case KeyCode.Joystick3Button2:
+-                    break;
+-                case KeyCode.Joystick3Button3:
+-                    break;
+-                case KeyCode.Joystick3Button4:
+-                    break;
+-                case KeyCode.Joystick3Button5:
+-                    break;
+-                case KeyCode.Joystick3Button6:
+-                    break;
+-                case KeyCode.Joystick3Button7:
+-                    break;
+-                case KeyCode.Joystick3Button8:
+-                    break;
+-                case KeyCode.Joystick3Button9:
+-                    break;
+-                case KeyCode.Joystick3Button10:
+-                    break;
+-                case KeyCode.Joystick3Button11:
+-                    break;
+-                case KeyCode.Joystick3Button12:
+-                    break;
+-                case KeyCode.Joystick3Button13:
+-                    break;
+-                case KeyCode.Joystick3Button14:
+-                    break;
+-                case KeyCode.Joystick3Button15:
+-                    break;
+-                case KeyCode.Joystick3Button16:
+-                    break;
+-                case KeyCode.Joystick3Button17:
+-                    break;
+-                case KeyCode.Joystick3Button18:
+-                    break;
+-                case KeyCode.Joystick3Button19:
+-                    break;
+-                case KeyCode.Joystick4Button0:
+-                    break;
+-                case KeyCode.Joystick4Button1:
+-                    break;
+-                case KeyCode.Joystick4Button2:
+-                    break;
+-                case KeyCode.Joystick4Button3:
+-                    break;
+-                case KeyCode.Joystick4Button4:
+-                    break;
+-                case KeyCode.Joystick4Button5:
+-                    break;
+-                case KeyCode.Joystick4Button6:
+-                    break;
+-                case KeyCode.Joystick4Button7:
+-                    break;
+-                case KeyCode.Joystick4Button8:
+-                    break;
+-                case KeyCode.Joystick4Button9:
+-                    break;
+-                case KeyCode.Joystick4Button10:
+-                    break;
+-                case KeyCode.Joystick4Button11:
+-                    break;
+-                case KeyCode.Joystick4Button12:
+-                    break;
+-                case KeyCode.Joystick4Button13:
+-                    break;
+-                case KeyCode.Joystick4Button14:
+-                    break;
+-                case KeyCode.Joystick4Button15:
+-                    break;
+-                case KeyCode.Joystick4Button16:
+-                    break;
+-                case KeyCode.Joystick4Button17:
+-                    break;
+-                case KeyCode.Joystick4Button18:
+-                    break;
+-                case KeyCode.Joystick4Button19:
+-                    break;
+-                case KeyCode.Joystick5Button0:
+-                    break;
+-                case KeyCode.Joystick5Button1:
+-                    break;
+-                case KeyCode.Joystick5Button2:
+-                    break;
+-                case KeyCode.Joystick5Button3:
+-                    break;
+-                case KeyCode.Joystick5Button4:
+-                    break;
+-                case KeyCode.Joystick5Button5:
+-                    break;
+-                case KeyCode.Joystick5Button6:
+-                    break;
+-                case KeyCode.Joystick5Button7:
+-                    break;
+-                case KeyCode.Joystick5Button8:
+-                    break;
+-                case KeyCode.Joystick5Button9:
+-                    break;
+-                case KeyCode.Joystick5Button10:
+-                    break;
+-                case KeyCode.Joystick5Button11:
+-                    break;
+-                case KeyCode.Joystick5Button12:
+-                    break;
+-                case KeyCode.Joystick5Button13:
+-                    break;
+-                case KeyCode.Joystick5Button14:
+-                    break;
+-                case KeyCode.Joystick5Button15:
+-                    break;
+-                case KeyCode.Joystick5Button16:
+-                    break;
+-                case KeyCode.Joystick5Button17:
+-                    break;
+-                case KeyCode.Joystick5Button18:
+-                    break;
+-                case KeyCode.Joystick5Button19:
+-                    break;
+-                case KeyCode.Joystick6Button0:
+-                    break;
+-                case KeyCode.Joystick6Button1:
+-                    break;
+-                case KeyCode.Joystick6Button2:
+-                    break;
+-                case KeyCode.Joystick6Button3:
+-                    break;
+-                case KeyCode.Joystick6Button4:
+-                    break;
+-                case KeyCode.Joystick6Button5:
+-                    break;
+-                case KeyCode.Joystick6Button6:
+-                    break;
+-                case KeyCode.Joystick6Button7:
+-                    break;
+-                case KeyCode.Joystick6Button8:
+-                    break;
+-                case KeyCode.Joystick6Button9:
+-                    break;
+-                case KeyCode.Joystick6Button10:
+-                    break;
+-                case KeyCode.Joystick6Button11:
+-                    break;
+-                case KeyCode.Joystick6Button12:
+-                    break;
+-                case KeyCode.Joystick6Button13:
+-                    break;
+-                case KeyCode.Joystick6Button14:
+-                    break;
+-                case KeyCode.Joystick6Button15:
+-                    break;
+-                case KeyCode.Joystick6Button16:
+-                    break;
+-                case KeyCode.Joystick6Button17:
+-                    break;
+-                case KeyCode.Joystick6Button18:
+-                    break;
+-                case KeyCode.Joystick6Button19:
+-                    break;
+-                case KeyCode.Joystick7Button0:
+-                    break;
+-                case KeyCode.Joystick7Button1:
+-                    break;
+-                case KeyCode.Joystick7Button2:
+-                    break;
+-                case KeyCode.Joystick7Button3:
+-                    break;
+-                case KeyCode.Joystick7Button4:
+-                    break;
+-                case KeyCode.Joystick7Button5:
+-                    break;
+-                case KeyCode.Joystick7Button6:
+-                    break;
+-                case KeyCode.Joystick7Button7:
+-                    break;
+-                case KeyCode.Joystick7Button8:
+-                    break;
+-                case KeyCode.Joystick7Button9:
+-                    break;
+-                case KeyCode.Joystick7Button10:
+-                    break;
+-                case KeyCode.Joystick7Button11:
+-                    break;
+-                case KeyCode.Joystick7Button12:
+-                    break;
+-                case KeyCode.Joystick7Button13:
+-                    break;
+-                case KeyCode.Joystick7Button14:
+-                    break;
+-                case KeyCode.Joystick7Button15:
+-                    break;
+-                case KeyCode.Joystick7Button16:
+-                    break;
+-                case KeyCode.Joystick7Button17:
+-                    break;
+-                case KeyCode.Joystick7Button18:
+-                    break;
+-                case KeyCode.Joystick7Button19:
+-                    break;
+-                case KeyCode.Joystick8Button0:
+-                    break;
+-                case KeyCode.Joystick8Button1:
+-                    break;
+-                case KeyCode.Joystick8Button2:
+-                    break;
+-                case KeyCode.Joystick8Button3:
+-                    break;
+-                case KeyCode.Joystick8Button4:
+-                    break;
+-                case KeyCode.Joystick8Button5:
+-                    break;
+-                case KeyCode.Joystick8Button6:
+-                    break;
+-                case KeyCode.Joystick8Button7:
+-                    break;
+-                case KeyCode.Joystick8Button8:
+-                    break;
+-                case KeyCode.Joystick8Button9:
+-                    break;
+-                case KeyCode.Joystick8Button10:
+-                    break;
+-                case KeyCode.Joystick8Button11:
+-                    break;
+-                case KeyCode.Joystick8Button12:
+-                    break;
+-                case KeyCode.Joystick8Button13:
+-                    break;
+-                case KeyCode.Joystick8Button14:
+-                    break;
+-                case KeyCode.Joystick8Button15:
+-                    break;
+-                case KeyCode.Joystick8Button16:
+-                    break;
+-                case KeyCode.Joystick8Button17:
+-                    break;
+-                case KeyCode.Joystick8Button18:
+-                    break;
+-                case KeyCode.Joystick8Button19:
+-                    break;
+-                    //default:
+-                    //    throw new ArgumentOutOfRangeException(nameof(key), key, null);
+-            }
+-
+-            if (!silent)
+-                BepInEx.Logging.Logger.Log(LogLevel.Debug, $"[{nameof(NewInputSystem)}] Unsupported key: {key}");
+-
+-            return null;
+-        }
+-    }
+-
+-    internal class LegacyInputSystem : IInputSystem
+-    {
+-        [MethodImpl(MethodImplOptions.NoInlining)]
+-        public LegacyInputSystem() => Input.GetKeyDown(KeyCode.A);
+-
+-        public bool GetKey(string name) => Input.GetKey(name);
+-
+-        public bool GetKey(KeyCode key) => Input.GetKey(key);
+-
+-        public bool GetKeyDown(string name) => Input.GetKeyDown(name);
+-
+-        public bool GetKeyDown(KeyCode key) => Input.GetKeyDown(key);
+-
+-        public bool GetKeyUp(string name) => Input.GetKeyUp(name);
+-
+-        public bool GetKeyUp(KeyCode key) => Input.GetKeyUp(key);
+-
+-        public bool GetMouseButton(int button) => Input.GetMouseButton(button);
+-
+-        public bool GetMouseButtonDown(int button) => Input.GetMouseButtonDown(button);
+-
+-        public bool GetMouseButtonUp(int button) => Input.GetMouseButtonUp(button);
+-
+-        public void ResetInputAxes() => Input.ResetInputAxes();
+-
+-        public Vector3 mousePosition => Input.mousePosition;
+-        public Vector2 mouseScrollDelta => Input.mouseScrollDelta;
+-        public bool mousePresent => Input.mousePresent;
+-        public bool anyKey => Input.anyKey;
+-        public bool anyKeyDown => Input.anyKeyDown;
+-
+-        public IEnumerable<KeyCode> SupportedKeyCodes { get; } = (KeyCode[])Enum.GetValues(typeof(KeyCode));
+-    }
+-}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityPreloadRunner.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityPreloadRunner.cs
+index 4281a32..097280f 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityPreloadRunner.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityPreloadRunner.cs
+@@ -10,13 +10,11 @@ internal static class UnityPreloaderRunner
+ {
+     public static void PreloaderMain()
+     {
+-        var bepinPath =
+-            Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(EnvVars.DOORSTOP_INVOKE_DLL_PATH)));
+-
+         PlatformUtils.SetPlatform();
+ 
+-        Paths.SetExecutablePath(EnvVars.DOORSTOP_PROCESS_PATH, bepinPath, EnvVars.DOORSTOP_MANAGED_FOLDER_DIR, false,
+-                                EnvVars.DOORSTOP_DLL_SEARCH_DIRS);
++        Paths.SetExecutablePath(EnvVars.NEXT_GAME_BINARY,
++                                EnvVars.NEXT_BEPINEX_PATH,
++                                EnvVars.NEXT_GAME_DATA_DIR);
+ 
+         // Cecil 0.11 requires one to manually set up list of trusted assemblies for assembly resolving
+         // The main BCL path
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Utils/MessageBox.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Utils/MessageBox.cs
+index 094eda0..ef37405 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Utils/MessageBox.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Utils/MessageBox.cs
+@@ -12,7 +12,7 @@ internal static class MessageBox
+ 
+     public static void Show(string text, string caption)
+     {
+-        if (!PlatformHelper.Is(Platform.Windows)) throw new PlatformNotSupportedException();
++        if (PlatformDetection.OS is not OSKind.Windows) throw new PlatformNotSupportedException();
+         if (MessageBoxA(IntPtr.Zero, text, caption, 0) == 0)
+             throw new Win32Exception();
+     }

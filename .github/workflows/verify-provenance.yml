@@ -1,0 +1,361 @@
+name: verify-provenance
+on:
+  workflow_dispatch:
+  push:
+    # Every path here is an input to one of the two jobs below, and nothing else.
+    # The previous list omitted the patch queue's own inputs, so `patches/**` -
+    # the one thing this repository exists to keep honest - was only verified on
+    # pull_request, and this repository works by pushing to a branch. `global.json`
+    # and `.github/workflows/**` were omitted too, so pinning the SDK or editing
+    # the gate did not re-run the gate.
+    paths:
+      # job `provenance`: committed artifacts and this workflow's own checks
+      - 'provenance/**'
+      - 'launcher/app/src/main/jniLibs/**'
+      - 'launcher/app/src/main/assets/**'
+      - 'launcher/scripts/verify_*.sh'
+      - 'launcher/app/src/main/java/net/dot/android/**'
+      - 'scripts/verify_*.sh'
+      - 'scripts/check_*.sh'
+      - 'scripts/generate_sbom.py'
+      - 'scripts/verify_apk_entries.sh'
+      - 'scripts/zip_deterministic.py'
+      - 'scripts/build_packages_parallel.sh'
+      - 'scripts/package_bepinex_android.sh'
+      - 'scripts/fetch_dotnet_runtime.sh'
+      - 'launcher/gradle/libs.versions.toml'
+      - 'launcher/app/build.gradle.kts'
+      - 'scripts/mark_verified.sh'
+      - 'scripts/ci_failure_notice.sh'
+      - 'scripts/test_*.sh'
+      - 'scripts/check_elf_alignment.sh'
+      - 'global.json'
+      - '.github/workflows/**'
+      # The composite action the three producers attest through. It lives beside
+      # the workflows rather than inside them, so `.github/workflows/**` does not
+      # cover it, and a change to it would otherwise re-run nothing.
+      - '.github/actions/**'
+      # job `patch-queue`: replay the queue from pristine upstream and build it
+      - 'patches/**'
+      - 'references/**'
+      - 'scripts/apply_patches.sh'
+      - 'scripts/build_monomod.sh'
+      - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/report_patch_conflict.sh'
+      - 'provenance/bepinex.env'
+      - 'scripts/bepinex_paths.sh'
+  pull_request:
+    paths:
+      - 'provenance/**'
+      - 'launcher/app/src/main/jniLibs/**'
+      - 'launcher/app/src/main/assets/**'
+      - 'launcher/scripts/verify_*.sh'
+      - 'launcher/app/src/main/java/net/dot/android/**'
+      - 'scripts/verify_*.sh'
+      - 'scripts/check_*.sh'
+      - 'scripts/generate_sbom.py'
+      - 'scripts/verify_apk_entries.sh'
+      - 'scripts/zip_deterministic.py'
+      - 'scripts/build_packages_parallel.sh'
+      - 'scripts/package_bepinex_android.sh'
+      - 'scripts/fetch_dotnet_runtime.sh'
+      - 'launcher/gradle/libs.versions.toml'
+      - 'launcher/app/build.gradle.kts'
+      - 'scripts/mark_verified.sh'
+      - 'scripts/ci_failure_notice.sh'
+      - 'scripts/test_*.sh'
+      - 'scripts/check_elf_alignment.sh'
+      - 'global.json'
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - 'patches/**'
+      - 'references/**'
+      - 'scripts/apply_patches.sh'
+      - 'scripts/build_monomod.sh'
+      - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/report_patch_conflict.sh'
+      - 'provenance/bepinex.env'
+      - 'scripts/bepinex_paths.sh'
+
+# Gate: nothing reaches the APK unless every shipped binary matches the CI
+# manifest, the crypto PAL is the platform one, and the runtime pack is a
+# framework pack. This is the job that makes the trust claim checkable.
+jobs:
+  provenance:
+    # Pinned, not ubuntu-latest: the label migrates to Ubuntu 26 on 2026-10-19,
+    # and this job's trust assertions should not move when the image does.
+    runs-on: ubuntu-24.04
+    # contents: write exists for exactly one step: moving the `verified` tag. The
+    # repository default is read, so without it the marker cannot be written.
+    # Nothing else in this job writes anything.
+    permissions:
+      contents: write
+    steps:
+      # Egress pilot: this job BLOCKS with an explicit allow-list; every other
+      # job in every workflow stays on audit. This job was chosen as the pilot
+      # because it has the narrowest egress (checkout, setup-python, gh API —
+      # no clones, no restores, no SDK downloads) and runs on every push, so a
+      # missing endpoint fails here first, loudly, naming the endpoint. A red
+      # pilot only withholds the `verified` tag; it cannot ship anything.
+      # Rollback is one line: egress-policy back to audit.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      # Runs before the checks it protects, because a gate that has silently
+      # stopped failing is worse than no gate. verify_ci_artifacts.sh shipped
+      # with three defects that all passed, because nothing exercised them: a
+      # missing producer manifest was reported but not counted, so it passed
+      # (fail-open - the exact shape this gate exists to remove); the parse
+      # error's reason went to stdout and was swallowed by the command
+      # substitution, so it failed without saying why; and the coverage check
+      # compared whole manifest lines against bare file names, so it fired on
+      # every entry. A two-second bash fixture has no excuse for not running
+      # here.
+      - name: The CI artifact gate still detects substitution
+        run: ./scripts/test_verify_ci_artifacts.sh
+
+      # The 16KB alignment step in fetch-runtime.yml used `[ ... ] && echo` inside
+      # a command substitution. Under `bash -e` that is a non-zero status on
+      # every correctly aligned library, so it failed the ones it was written to
+      # pass and printed nothing - indistinguishable, in the run log, from the
+      # misaligned case it was written to catch. fetch-runtime runs weekly, so
+      # nothing noticed. scripts/test_alignment_check.sh runs both forms under a
+      # real `bash -e` with a scripted readelf, which is the only way to observe
+      # a failure direction no committed binary provides.
+      - name: The 16KB alignment check decides correctly
+        run: ./scripts/test_alignment_check.sh
+
+      # scripts/package_bepinex_android.sh picked its build output with
+      # `find | sort -rn | head -1` under `set -euo pipefail`. `head` closes the
+      # pipe after one line, so `sort` can take SIGPIPE, print "write error" and
+      # exit 2 - intermittently, since it depends on how much `sort` had buffered.
+      # That failed build-bepinex at "Package BepInEx.Android.zip" on a commit
+      # whose packaging code had not changed. Reproduced at 40/40 over 20k lines.
+      - name: sort | head does not decide the build
+        run: ./scripts/test_sort_head_sigpipe.sh
+
+      # scripts/check_runtime_pin.sh shipped with a fail-open on its first run: the
+      # status token from the metadata parser was emitted in the first column but
+      # read out of the second, so a malformed index was reported as "a newer
+      # runtime exists". Caught by scripts/test_runtime_pin.sh on its first run,
+      # which is the argument for having written it before wiring it in.
+      - name: The runtime pin check claims nothing it cannot support
+        run: ./scripts/test_runtime_pin.sh
+
+      # scripts/check_upstream_pins.sh has the same contract - an upstream it
+      # cannot ask must read as unknown, never as current - and its derivation
+      # path (.gitmodules parse, gitlink ls-tree, env sourcing) is exactly what
+      # a stub would not exercise.
+      - name: The upstream pin check claims nothing it cannot support
+        run: ./scripts/test_upstream_pins.sh
+
+      # This workflow lists its push and pull_request paths twice, because GitHub
+      # Actions cannot share one list between them. The copies are identical
+      # today; a path added to one and not the other means the gate runs for one
+      # kind of change and not the other, and the only symptom is a check that
+      # quietly stopped running. The two lists look fine side by side, so this
+      # asserts they still agree.
+      - name: Both triggers watch the same paths
+        run: ./scripts/test_workflow_triggers.sh
+
+      # The attestation gate decides whether an artifact came from this
+      # repository at this commit. Its whole value is in what it refuses, so the
+      # fixture is mostly about refusals: one unsigned file among signed ones, an
+      # attestation from another repository, an attestation for another commit, a
+      # tree with none at all, and a missing gh. Verified in the fail-open
+      # direction too - rigging the gate to always pass fails five of these.
+      - name: The attestation gate refuses what it cannot vouch for
+        run: ./scripts/test_attestation_gate.sh
+
+      # The SBOM names every pinned upstream that went into the APK. Its value
+      # is completeness, so the fixture is about silent omissions: a pin file
+      # removed, a key deleted, an unwired package. A scanner cannot assert
+      # that; only a generator with a fixture over the real pin files can.
+      - name: The SBOM names every pinned upstream
+        run: ./scripts/test_generate_sbom.sh
+
+      # The shippable zips were built with `zip -qr` (mtimes, filesystem
+      # order, directory entries), so identical inputs produced different
+      # bytes. The fixture pins the deterministic replacement byte for byte.
+      - name: The shippable zips are deterministic
+        run: ./scripts/test_deterministic_zip.sh
+
+      # The harden block is copied per job with no shared include — the shape
+      # that rotted the trigger lists once already. A job added without it
+      # still greens and simply stops recording egress, so it is asserted.
+      - name: Every job audits egress
+        run: ./scripts/test_harden_runner.sh
+
+      # The two package builds run concurrently in CI. The fixture proves the
+      # overlap with stubs and that one failure cannot mask the other.
+      - name: The parallel package build is actually parallel
+        run: ./scripts/test_build_parallel.sh
+
+      # Incremental Gradle builds packaged duplicate zip entries twice. The
+      # fixture crafts the doubled shape and proves the gate refuses it.
+      - name: The packaged APK has no duplicate zip entries
+        run: ./scripts/test_apk_entries.sh
+
+      # The three run ids that assemble the APK name runs, not their inputs.
+      # Without the commit gate the APK can mix a runtime from one commit with
+      # hook engines and framework from others and still pass. The fixture
+      # proves one mismatched run fails and is named, and that an API failure
+      # fails closed as <unknown> rather than skipping.
+      - name: The producer runs agree on the commit
+        run: ./scripts/test_producer_commit.sh
+
+      # libc++_shared.so is the one shipped binary with no producing workflow,
+      # so the hash gate reports it [N/A] and the attestation gate skips it by
+      # design. The fixture proves a substituted NDK file fails against the
+      # pinned manifest entry instead of shipping.
+      - name: The NDK-provided libc++ is pinned
+        run: ./scripts/test_ndk_libcxx.sh
+
+      - name: Checksums and 16KB page alignment
+        run: ./launcher/scripts/verify_prebuilts.sh
+
+      - name: Crypto PAL is the platform BoringSSL PAL
+        run: ./launcher/scripts/verify_crypto_pal.sh
+
+      - name: The crypto PAL's Java contract is intact
+        # The PAL resolves net.dot.android.crypto.* by name during its JNI_OnLoad
+        # and aborts the process if a class is missing, which no build step sees.
+        # This pins the package, the class names and the signatures it asks for.
+        run: ./launcher/scripts/verify_crypto_java.sh
+
+      - name: dotnet.zip is the android-arm64 framework pack for the pinned runtime
+        run: ./scripts/verify_dotnet_pack.sh launcher/app/src/main/assets/dotnet.zip
+
+      - name: BepInEx.Android.zip carries the Android entrypoint
+        run: |
+          mkdir -p /tmp/be && unzip -q launcher/app/src/main/assets/BepInEx.Android.zip -d /tmp/be
+          test -f /tmp/be/core/BepInEx.Unity.IL2CPP.dll
+          strings /tmp/be/core/BepInEx.Unity.IL2CPP.dll | grep -q AndroidEntrypoint \
+            || { echo "AndroidEntrypoint missing from the shipped framework"; exit 1; }
+          strings /tmp/be/core/BepInEx.Unity.IL2CPP.dll | grep -q ExportThunkResolver \
+            || { echo "ExportThunkResolver missing from the shipped framework"; exit 1; }
+          test -f /tmp/be/config/BepInEx.cfg
+          echo "framework archive OK"
+
+      # Last, because it means "everything above passed", and last on purpose:
+      # the marker is what a reader trusts when they want to know which commit
+      # was green, so it must not be moved by a run that failed halfway.
+      #
+      # It no-ops off the default branch. A gate that ran on a feature branch and
+      # marked it would be advertising unreviewed work as verified.
+      - name: Mark this commit as the last verified
+        # GH_TOKEN, not GITHUB_TOKEN, and stated here rather than inherited: gh
+        # reads neither automatically, and the token is not exported into a step's
+        # environment unless the step asks for it. Declared per step rather than at
+        # job level so the token is visible to exactly the one script that needs
+        # it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/mark_verified.sh
+
+  patch-queue:
+    # Pinned, not ubuntu-latest: the label migrates to Ubuntu 26 on 2026-10-19.
+    runs-on: ubuntu-24.04
+    steps:
+      # Egress pilot (second job): blocks with an explicit allow-list covering
+      # setup-dotnet (Microsoft install endpoints), upstream git clones
+      # (github.com) and the two restore feeds in nuget.config (api.nuget.org,
+      # nuget.bepinex.dev). Same rollback contract as the provenance pilot:
+      # one line back to audit.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+            builds.dotnet.microsoft.com
+            dotnetcli.azureedge.net
+            dotnetbuilds.blob.core.windows.net
+            api.nuget.org
+            nuget.bepinex.dev
+
+      # No submodules: apply_patches.sh clones the upstream from the pin in
+      # provenance/bepinex.env into build/bepinex, and asserts the clone landed on
+      # that commit before replaying anything.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # No download caches — see build-bepinex.yml for why (323 MB vs the
+      # private 500 MB quota blocked verification the day they were added).
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          # Exact, not '10.0.x' - see build-bepinex.yml for why. This job's job
+          # is to prove the replayed port builds, and which compiler it used is
+          # part of that claim. Same pin as MonoMod's, so both jobs in this file
+          # compile the same queue with the same toolchain.
+          dotnet-version: '10.0.401'
+
+      - name: The patch queue must replay from a pristine upstream
+        run: ./scripts/apply_patches.sh
+
+      # Both package sets must exist before restore, or NuGet substitutes the
+      # official releases - and official MonoMod throws NotImplementedException
+      # on Android, so the build would succeed against assemblies that cannot
+      # patch anything on the device. Built concurrently; the helper waits for
+      # both and fails if either failed.
+      - name: Rebuild the MonoMod and Il2CppInterop packages
+        run: ./scripts/build_packages_parallel.sh
+
+      - name: The replayed port must build
+        run: |
+          # pipefail is required here, not cosmetic. GitHub runs a `run:` block
+          # with `bash -e {0}` and no pipefail, so `dotnet restore | tee` would
+          # report tee's exit status (always 0) and a restore that failed
+          # outright would leave an empty log, pass the grep below, and print
+          # "no version substitution".
+          set -o pipefail
+          . ./scripts/bepinex_paths.sh
+          dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/" -v normal 2>&1 |
+            tee /tmp/restore.log
+          # Scoped to the packages this repository builds and owns. A blanket
+          # NU1602/NU1603 check fails on upstream BepInEx's own pin,
+          # Samboy063.Cpp2IL.Core 2022.1.0-development.1452, which has never
+          # resolved and resolves to ...-pre-release.13 instead. That is a real
+          # upstream condition, it predates the Android port, and every build
+          # here - including the one tested on device - shipped it. Failing the
+          # whole job on it would hide the substitutions that matter: ours.
+          # See docs/progress.md for whether that pin should be corrected.
+          if grep -E 'NU160[23]' /tmp/restore.log | grep -qiE 'MonoMod\.|Il2CppInterop\.'; then
+            echo "::error::a package this repository builds fell back to a different version"
+            grep -E 'NU160[23]' /tmp/restore.log | grep -iE 'MonoMod\.|Il2CppInterop\.'
+            exit 1
+          fi
+          dotnet build "$BEPINEX_SRC/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj" \
+            -c Release --no-restore -p:GeneratePackageOnBuild=false -p:SolutionDir="$BEPINEX_SRC/"
+
+      - name: The port must not reintroduce desktop layers
+        run: |
+          set -e
+          . ./scripts/bepinex_paths.sh
+          SUB="$BEPINEX_SRC"
+          for gone in Runtimes/Unity/BepInEx.Unity.Mono Runtimes/Unity/BepInEx.Unity.Mono.Preloader \
+                     Runtimes/Unity/Doorstop Runtimes/NET build \
+                     BepInEx.Core/Console/Unix BepInEx.Core/Console/Windows \
+                     $SUB/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/INativeDetour.cs; do
+            if [ -e "$SUB/$gone" ]; then
+              echo "reintroduced: $gone"
+              exit 1
+            fi
+          done
+          echo "no desktop layer reintroduced"

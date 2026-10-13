@@ -1,0 +1,100 @@
+From 8ff7d6aa9c23377e8c459dee3824a9881b224906 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Sun, 11 Oct 2026 20:12:38 +0900
+Subject: [PATCH] il2cpp: resolve thunks in NativeDetour and guard ARM64 inline
+ hook bounds
+
+- Route all NativeDetour target pointers through ExportThunkResolver.Resolve
+  to follow branch stubs (B) before installing inline hooks.
+- Guard AArch64 inline hooks against destinations that have RET within 16 bytes.
+- Default UnityLogListening to false to align with Android native logcat.
+---
+ .../Hook/ExportThunkResolver.cs               | 39 +++++++++++++++++++
+ .../BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs |  7 +++-
+ .../BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs |  2 +-
+ 3 files changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+index 34b96b5..ed6cd46 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+@@ -80,6 +80,45 @@ internal static unsafe class ExportThunkResolver
+         return current;
+     }
+ 
++    /// <summary>
++    ///     Checks whether <paramref name="target"/> has sufficient instruction space before a return
++    ///     to host an inline hook without corrupting adjacent functions.
++    /// </summary>
++    public static bool CanSafelyHook(nint target, out string failureReason)
++    {
++        failureReason = null;
++        if (target == 0)
++        {
++            failureReason = "Target address is null";
++            return false;
++        }
++
++        if (GetInstructionArchitecture() == InstructionArchitecture.Arm64)
++        {
++            if ((target.ToInt64() & 3) != 0)
++            {
++                failureReason = $"Target address 0x{target.ToInt64():X} is not 4-byte aligned";
++                return false;
++            }
++
++            // An AArch64 inline hook requires at least 16 bytes (4 instructions).
++            // If any of the first 4 instructions is RET (0xD65F0000 | (Rn << 5)), the function
++            // has fewer than 16 bytes before returning, and installing an inline hook
++            // will overwrite past RET into whatever follows in memory.
++            for (var i = 0; i < 4; i++)
++            {
++                var opcode = *(uint*)(target + i * 4);
++                if ((opcode & 0xFFFFFC1Fu) == 0xD65F0000u)
++                {
++                    failureReason = $"Instruction at offset +{i * 4} is RET (0x{opcode:X8}); function is too small (< 16 bytes) for an inline hook";
++                    return false;
++                }
++            }
++        }
++
++        return true;
++    }
++
+     /// <summary>
+     ///     Decodes the single instruction at <paramref name="address"/> and, if it is a forwarding stub,
+     ///     stores the address it forwards to in <paramref name="target"/>.
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs
+index 90ac126..40989b6 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs
+@@ -13,7 +13,12 @@ public unsafe class NativeDetour : IDetour
+ 
+     public NativeDetour(IntPtr target, Delegate detour, bool specialReturnBuffer = false)
+     {
+-        Target = target;
++        Target = ExportThunkResolver.Resolve(target, "NativeDetour");
++        if (!ExportThunkResolver.CanSafelyHook(Target, out var failureReason))
++        {
++            throw new InvalidOperationException($"Cannot safely hook 0x{Target.ToInt64():X}: {failureReason}");
++        }
++
+         Detour = Marshal.GetFunctionPointerForDelegate(detour);
+         SpecialReturnBuffer = specialReturnBuffer;
+         Apply();
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+index 53aec30..e586940 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+@@ -22,7 +22,7 @@ public class IL2CPPChainloader : BaseChainloader<BasePlugin>
+ 
+     private static readonly ConfigEntry<bool> ConfigUnityLogging = ConfigFile.CoreConfig.Bind(
+      "Logging", "UnityLogListening",
+-     true,
++     false,
+      "Enables showing unity log messages in the BepInEx logging system.");
+ 
+     private static readonly ConfigEntry<bool> ConfigDiskWriteUnityLog = ConfigFile.CoreConfig.Bind(
+-- 
+2.53.0
+

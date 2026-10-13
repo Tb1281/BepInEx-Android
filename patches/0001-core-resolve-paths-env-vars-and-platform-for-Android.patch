@@ -1,0 +1,488 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: port <port@local>
+Date: Sun, 4 Oct 2026 15:43:52 +0900
+Subject: [PATCH 1/8] core: resolve paths, env vars and platform for Android
+
+BepInEx assumes a desktop filesystem layout: config and plugins live next to
+the executable, and EnvVars is a thin wrapper over PATH-like lookups. On
+Android the launcher unpacks the framework into app-specific external storage
+and hands the location over through NEXT_* environment variables, so Paths,
+Utility and EnvVars have to follow that contract instead.
+
+PlatformUtils gains an Android branch so PlatformDetection reports
+OSKind.Android, which is what selects the IL2CPP runtime, the Android console
+driver and the native detour provider.
+---
+ BepInEx.Core/Paths.cs                         | 34 ++++----
+ BepInEx.Core/Utility.cs                       | 37 ++++----
+ BepInEx.Preloader.Core/EnvVars.cs             | 40 ++++-----
+ .../Logging/ChainloaderLogHelper.cs           | 41 +++------
+ BepInEx.Preloader.Core/PlatformUtils.cs       | 87 ++++---------------
+ .../Unity/BepInEx.Unity.Common/UnityInfo.cs   | 16 +++-
+ 6 files changed, 97 insertions(+), 158 deletions(-)
+
+diff --git a/BepInEx.Core/Paths.cs b/BepInEx.Core/Paths.cs
+index a1a44eb..51efe76 100644
+--- a/BepInEx.Core/Paths.cs
++++ b/BepInEx.Core/Paths.cs
+@@ -19,12 +19,6 @@ public static class Paths
+         Version.Parse(MetadataHelper.GetAttributes<AssemblyInformationalVersionAttribute>(typeof(Paths).Assembly)[0]
+                                     .InformationalVersion);
+ 
+-    /// <summary>
+-    ///    BepInEx version without the build suffix.
+-    /// </summary>
+-    public static Version DisplayBepInExVersion { get; } =
+-        new(BepInExVersion.Major, BepInExVersion.Minor, BepInExVersion.Patch, BepInExVersion.PreRelease);
+-
+     /// <summary>
+     ///     The path to the Managed folder that contains the main managed assemblies.
+     /// </summary>
+@@ -108,26 +102,30 @@ public static class Paths
+         ExecutablePath = executablePath;
+         ProcessName = Path.GetFileNameWithoutExtension(executablePath);
+ 
+-        GameRootPath = PlatformHelper.Is(Platform.MacOS)
++        GameRootPath = PlatformDetection.OS is OSKind.OSX
+                            ? Utility.ParentDirectory(executablePath, 4)
+                            : Path.GetDirectoryName(executablePath);
+ 
+-        if (managedPath != null && gameDataRelativeToManaged)
++        if (PlatformDetection.OS is OSKind.Android)
+         {
+-            GameDataPath = Path.GetDirectoryName(managedPath);
++            GameDataPath = managedPath;
+         }
+         else
+         {
+-            // According to some experiments, Unity checks whether globalgamemanagers/data.unity3d exists in the data folder before picking it.
+-            // 'ProcessName_Data' folder is checked first, then if that fails 'Data' folder is checked. If neither is valid, the player crashes.
+-            // A simple Directory.Exists check is accurate enough while being less likely to break in case these conditions change.
+-            GameDataPath = Path.Combine(GameRootPath, $"{ProcessName}_Data");
+-            if (!Directory.Exists(GameDataPath))
+-                GameDataPath = Path.Combine(GameRootPath, "Data");
++            if (managedPath != null && gameDataRelativeToManaged)
++            {
++                GameDataPath = Path.GetDirectoryName(managedPath);
++            }
++            else
++            {
++                // According to some experiments, Unity checks whether globalgamemanagers/data.unity3d exists in the data folder before picking it.
++                // 'ProcessName_Data' folder is checked first, then if that fails 'Data' folder is checked. If neither is valid, the player crashes.
++                // A simple Directory.Exists check is accurate enough while being less likely to break in case these conditions change.
++                GameDataPath = Path.Combine(GameRootPath, $"{ProcessName}_Data");
++                if (!Directory.Exists(GameDataPath))
++                    GameDataPath = Path.Combine(GameRootPath, "Data");
++            }
+         }
+-        
+-        if (string.IsNullOrEmpty(GameDataPath) || !Directory.Exists(GameDataPath))
+-            throw new DirectoryNotFoundException("Failed to extract valid GameDataPath from executablePath: " + executablePath);
+ 
+         ManagedPath = managedPath ?? Path.Combine(GameDataPath, "Managed");
+         BepInExRootPath = bepinRootPath ?? Path.Combine(GameRootPath, "BepInEx");
+diff --git a/BepInEx.Core/Utility.cs b/BepInEx.Core/Utility.cs
+index ed2774b..25d868d 100644
+--- a/BepInEx.Core/Utility.cs
++++ b/BepInEx.Core/Utility.cs
+@@ -4,7 +4,6 @@ using System.IO;
+ using System.Linq;
+ using System.Reflection;
+ using System.Reflection.Emit;
+-using System.Security.Cryptography;
+ using System.Text;
+ using BepInEx.Logging;
+ using Mono.Cecil;
+@@ -303,42 +302,38 @@ public static class Utility
+     }
+ 
+     /// <summary>
+-    ///     Compute a MD5 hash of the given stream.
++    ///     Compute a hash of the given stream (FNV-1a, pure managed — no OpenSSL needed).
+     /// </summary>
+-    /// <param name="stream">Stream to hash</param>
+-    /// <returns>MD5 hash as a hex string</returns>
+     public static string HashStream(Stream stream)
+     {
+-        using var md5 = MD5.Create();
+-
++        // FNV-1a 64-bit — pure managed, no crypto dependency.
++        // Android BoringSSL lacks EVP_MD_CTX_new, so MD5.Create crashes.
++        const ulong FNV_PRIME = 1099511628211UL;
++        const ulong FNV_OFFSET = 14695981039346656037UL;
++        var hash = FNV_OFFSET;
+         var buf = new byte[4096];
+         int read;
+         while ((read = stream.Read(buf, 0, buf.Length)) > 0)
+-            md5.TransformBlock(buf, 0, read, buf, 0);
+-
+-        md5.TransformFinalBlock(new byte[0], 0, 0);
+-
+-        return ByteArrayToString(md5.Hash);
++            for (int i = 0; i < read; i++)
++                hash = (hash ^ buf[i]) * FNV_PRIME;
++        return hash.ToString("x16");
+     }
+ 
+     /// <summary>
+-    /// Hash a list of strings using MD5
++    /// Hash a list of strings using FNV-1a.
+     /// </summary>
+-    /// <param name="strings">Strings to hash</param>
+-    /// <returns>MD5 of the strings</returns>
+     public static string HashStrings(params string[] strings)
+     {
+-        using var md5 = MD5.Create();
+-
++        const ulong FNV_PRIME = 1099511628211UL;
++        const ulong FNV_OFFSET = 14695981039346656037UL;
++        var hash = FNV_OFFSET;
+         foreach (var str in strings)
+         {
+             var bytes = Encoding.UTF8.GetBytes(str);
+-            md5.TransformBlock(bytes, 0, bytes.Length, null, 0);
++            foreach (var b in bytes)
++                hash = (hash ^ b) * FNV_PRIME;
+         }
+-
+-        md5.TransformFinalBlock(new byte[0], 0, 0);
+-
+-        return ByteArrayToString(md5.Hash);
++        return hash.ToString("x16");
+     }
+ 
+     /// <summary>
+diff --git a/BepInEx.Preloader.Core/EnvVars.cs b/BepInEx.Preloader.Core/EnvVars.cs
+index e4162c9..e7afae3 100644
+--- a/BepInEx.Preloader.Core/EnvVars.cs
++++ b/BepInEx.Preloader.Core/EnvVars.cs
+@@ -1,48 +1,46 @@
+-﻿using System;
++using System;
+ using System.IO;
+ 
+ namespace BepInEx.Preloader.Core;
+ 
+ /// <summary>
+-///     Doorstop environment variables, passed into the BepInEx preloader.
+-///     <para>https://github.com/NeighTools/UnityDoorstop/wiki#environment-variables</para>
++///     NextCore environment variables, passed into the BepInEx preloader.
++///     <para>https://github.com/All-Of-Us-Mods/FusionCore</para>
+ /// </summary>
+ public static class EnvVars
+ {
+     /// <summary>
+-    ///     Path to the assembly that was invoked via Doorstop. Contains the same value as in "targetAssembly" configuration
+-    ///     option in the config file.
++    ///     Path to the BepInEx folder, passed in by NextCore.
+     /// </summary>
+-    public static string DOORSTOP_INVOKE_DLL_PATH { get; private set; }
++    public static string NEXT_BEPINEX_PATH { get; private set; }
+ 
+     /// <summary>
+-    ///     Full path to the game's "Managed" folder that contains all the game's managed assemblies
++    ///     Path to the game binary (libil2cpp.so)
+     /// </summary>
+-    public static string DOORSTOP_MANAGED_FOLDER_DIR { get; private set; }
++    public static string NEXT_GAME_BINARY { get; private set; }
+ 
+     /// <summary>
+-    ///     Full path to the game executable currently running.
++    ///     Path to the app's data directory, not safe to write.
+     /// </summary>
+-    public static string DOORSTOP_PROCESS_PATH { get; private set; }
++    public static string NEXT_GAME_DATA_DIR { get; private set; }
+ 
+     /// <summary>
+-    ///     Array of paths where Mono searches DLLs from before assembly resolvers are invoked.
++    ///     Path to NextCore's data directory, safe to write.
+     /// </summary>
+-    public static string[] DOORSTOP_DLL_SEARCH_DIRS { get; private set; }
++    public static string NEXT_APP_DATA_DIR { get; private set; }
++
+ 
+     /// <summary>
+-    ///     Path of the DLL that contains mono imports.
++    ///     Unity version override passed in by NextCore.
+     /// </summary>
+-    public static string DOORSTOP_MONO_LIB_PATH { get; private set; }
++    public static string NEXT_UNITY_VERSION { get; private set; }
+ 
+     internal static void LoadVars()
+     {
+-        DOORSTOP_INVOKE_DLL_PATH = Environment.GetEnvironmentVariable("DOORSTOP_INVOKE_DLL_PATH");
+-        DOORSTOP_MANAGED_FOLDER_DIR = Environment.GetEnvironmentVariable("DOORSTOP_MANAGED_FOLDER_DIR");
+-        DOORSTOP_PROCESS_PATH = Environment.GetEnvironmentVariable("DOORSTOP_PROCESS_PATH");
+-        DOORSTOP_MONO_LIB_PATH = Environment.GetEnvironmentVariable("DOORSTOP_MONO_LIB_PATH");
+-        DOORSTOP_DLL_SEARCH_DIRS =
+-            Environment.GetEnvironmentVariable("DOORSTOP_DLL_SEARCH_DIRS")?.Split(Path.PathSeparator) ??
+-            new string[0];
++        NEXT_BEPINEX_PATH = Environment.GetEnvironmentVariable("NEXT_BEPINEX_PATH");
++        NEXT_GAME_BINARY = Environment.GetEnvironmentVariable("NEXT_GAME_BINARY");
++        NEXT_GAME_DATA_DIR = Environment.GetEnvironmentVariable("NEXT_GAME_DATA_DIR");
++        NEXT_APP_DATA_DIR = Environment.GetEnvironmentVariable("NEXT_APP_DATA_DIR");
++        NEXT_UNITY_VERSION = Environment.GetEnvironmentVariable("NEXT_UNITY_VERSION");
+     }
+ }
+diff --git a/BepInEx.Preloader.Core/Logging/ChainloaderLogHelper.cs b/BepInEx.Preloader.Core/Logging/ChainloaderLogHelper.cs
+index 73bdc9f..fac95f3 100644
+--- a/BepInEx.Preloader.Core/Logging/ChainloaderLogHelper.cs
++++ b/BepInEx.Preloader.Core/Logging/ChainloaderLogHelper.cs
+@@ -35,14 +35,17 @@ public static class ChainloaderLogHelper
+ 
+     public static void PrintLogInfo(ManualLogSource log)
+     {
+-        var consoleTitle = $"BepInEx {Paths.DisplayBepInExVersion} - {Paths.ProcessName}";
++        var bepinVersion = Paths.BepInExVersion;
++        var versionMini = new SemanticVersioning.Version(bepinVersion.Major, bepinVersion.Minor, bepinVersion.Patch,
++                                                         bepinVersion.PreRelease);
++        var consoleTitle = $"BepInEx {versionMini} - {Paths.ProcessName}";
+         log.Log(LogLevel.Message, $"{consoleTitle} ({File.GetLastWriteTime(Paths.ExecutablePath)})");
+ 
+         if (ConsoleManager.ConsoleActive)
+             ConsoleManager.SetConsoleTitle(consoleTitle);
+ 
+-        if (!string.IsNullOrEmpty(Paths.BepInExVersion.Build))
+-            log.Log(LogLevel.Message, $"Built from commit {Paths.BepInExVersion.Build}");
++        if (!string.IsNullOrEmpty(bepinVersion.Build))
++            log.Log(LogLevel.Message, $"Built from commit {bepinVersion.Build}");
+ 
+         Logger.Log(LogLevel.Info, $"System platform: {GetPlatformString()}");
+         Logger.Log(LogLevel.Info,
+@@ -55,28 +58,12 @@ public static class ChainloaderLogHelper
+ 
+         var osVersion = Environment.OSVersion.Version;
+ 
+-        // NOTE: this logic needs to be different for .NET 5.
+-        // We don't use it and I don't think we will for a long time (possibly ever), but upgrading will break Environment.OSVersion
+-        // https://docs.microsoft.com/en-us/dotnet/core/compatibility/core-libraries/5.0/environment-osversion-returns-correct-version#change-description
+-
+-        // Some additional notes
+-        // On .NET Framework and .NET Core platforms before 5, Environment.OSVersion does not work as you would expect.
+-
+-        // On Windows, it returns at maximum 6.3 (Windows 8) if you don't specify that your application is specifically compatible with Windows 10, due to compatibility layer stuff.
+-        // So we have to call RtlGetVersion which bypasses that and gets the values for us. This is done in PlatformUtils
+-
+-        // On macOS it returns the Darwin kernel version. I've included a mapping of most versions, but there's definitely some missing versions
+-
+-        // Not sure what it does on Linux. I think it returns the kernel version there too, but we already get the utsname structure from SetPlatform() regardless
+-
+-        if (PlatformHelper.Is(Platform.Windows))
++        if (PlatformDetection.OS.Has(OSKind.Windows))
+         {
+             osVersion = PlatformUtils.WindowsVersion;
+ 
+             builder.Append("Windows ");
+ 
+-            // https://stackoverflow.com/a/2819962
+-
+             if (osVersion.Major >= 10 && osVersion.Build >= 22000)
+                 builder.Append("11");
+             else if (osVersion.Major >= 10)
+@@ -92,10 +79,10 @@ public static class ChainloaderLogHelper
+             else if (osVersion.Major <= 5)
+                 builder.Append("XP");
+ 
+-            if (PlatformHelper.Is(Platform.Wine))
++            if (PlatformDetection.OS.Has(OSKind.Wine))
+                 builder.AppendFormat(" (Wine {0})", PlatformUtils.WineVersion);
+         }
+-        else if (PlatformHelper.Is(Platform.MacOS))
++        else if (PlatformDetection.OS.Has(OSKind.OSX))
+         {
+             builder.Append("macOS ");
+ 
+@@ -111,7 +98,7 @@ public static class ChainloaderLogHelper
+                 builder.AppendFormat("Unknown (kernel {0})", osVersion);
+             }
+         }
+-        else if (PlatformHelper.Is(Platform.Linux))
++        else if (PlatformDetection.OS.Has(OSKind.Linux))
+         {
+             builder.Append("Linux");
+ 
+@@ -121,18 +108,18 @@ public static class ChainloaderLogHelper
+             }
+         }
+ 
+-        builder.Append(PlatformHelper.Is(Platform.Bits64) ? " 64-bit" : " 32-bit");
++        builder.Append(PlatformDetection.Architecture.Has(ArchitectureKind.Bits64) ? " 64-bit" : " 32-bit");
+ 
+-        if (PlatformHelper.Is(Platform.Android))
++        if (PlatformDetection.OS.Has(OSKind.Android))
+         {
+             builder.Append(" Android");
+         }
+ 
+-        if (PlatformHelper.Is(Platform.ARM))
++        if (PlatformDetection.Architecture.Has(ArchitectureKind.Arm))
+         {
+             builder.Append(" ARM");
+ 
+-            if (PlatformHelper.Is(Platform.Bits64))
++            if (PlatformDetection.Architecture.Has(ArchitectureKind.Arm64))
+                 builder.Append("64");
+         }
+ 
+diff --git a/BepInEx.Preloader.Core/PlatformUtils.cs b/BepInEx.Preloader.Core/PlatformUtils.cs
+index 917a7a8..be0a9e7 100644
+--- a/BepInEx.Preloader.Core/PlatformUtils.cs
++++ b/BepInEx.Preloader.Core/PlatformUtils.cs
+@@ -32,46 +32,19 @@ internal static class PlatformUtils
+     [DllImport("kernel32.dll", SetLastError = true)]
+     private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+ 
+-    private static bool Is(this Platform current, Platform expected) => (current & expected) == expected;
+-
+     /// <summary>
+     ///     Recreation of MonoMod's PlatformHelper.DeterminePlatform method, but with libc calls instead of creating processes.
+     /// </summary>
+     public static void SetPlatform()
+     {
+-        var current = Platform.Unknown;
+-
+-        // For old Mono, get from a private property to accurately get the platform.
+-        // static extern PlatformID Platform
+-        var p_Platform = typeof(Environment).GetProperty("Platform", BindingFlags.NonPublic | BindingFlags.Static);
+-        string platID;
+-        if (p_Platform != null)
+-            platID = p_Platform.GetValue(null, new object[0]).ToString();
+-        else
+-            // For .NET and newer Mono, use the usual value.
+-            platID = Environment.OSVersion.Platform.ToString();
+-        platID = platID.ToLowerInvariant();
+-
+-        if (platID.Contains("win"))
+-            current = Platform.Windows;
+-        else if (platID.Contains("mac") || platID.Contains("osx"))
+-            current = Platform.MacOS;
+-        else if (platID.Contains("lin") || platID.Contains("unix"))
+-            current = Platform.Linux;
+-
+-        if (current.Is(Platform.Linux) && Directory.Exists("/data") && File.Exists("/system/build.prop"))
+-            current = Platform.Android;
+-        else if (current.Is(Platform.Unix) && Directory.Exists("/System/Library/AccessibilityBundles"))
+-            current = Platform.iOS;
+-
+-        if (current.Is(Platform.Windows))
++        if (PlatformDetection.OS is OSKind.Windows)
+         {
+             var windowsVersionInfo = new WindowsOSVersionInfoExW();
+             RtlGetVersion(ref windowsVersionInfo);
+ 
+-            WindowsVersion = new Version((int) windowsVersionInfo.dwMajorVersion,
+-                                         (int) windowsVersionInfo.dwMinorVersion, 0,
+-                                         (int) windowsVersionInfo.dwBuildNumber);
++            WindowsVersion = new Version((int)windowsVersionInfo.dwMajorVersion,
++                                         (int)windowsVersionInfo.dwMinorVersion, 0,
++                                         (int)windowsVersionInfo.dwBuildNumber);
+ 
+             var ntDll = LoadLibrary("ntdll.dll");
+             if (ntDll != IntPtr.Zero)
+@@ -79,60 +52,34 @@ internal static class PlatformUtils
+                 var wineGetVersion = GetProcAddress(ntDll, "wine_get_version");
+                 if (wineGetVersion != IntPtr.Zero)
+                 {
+-                    current |= Platform.Wine;
+                     // It's not safe to use the AsDelegate() extension method here because:
+                     //  - It comes from the MonoMod.Utils.DynDll class, defined in MonoMod.Common.
+                     //  - The DynDll class has a static constructor that reads PlatformHelper.Current.
+                     //  - Reading from that property freezes it: subsequent writes will throw an exception.
+                     //  - This method only sets PlatformHelper.Current at the very end.
+-                    var getVersion = Marshal.GetDelegateForFunctionPointer(wineGetVersion, typeof(GetWineVersionDelegate)) as GetWineVersionDelegate;
++                    var getVersion =
++                        Marshal.GetDelegateForFunctionPointer(wineGetVersion, typeof(GetWineVersionDelegate)) as
++                            GetWineVersionDelegate;
+                     WineVersion = getVersion();
+                 }
+             }
+-        }
+ 
+-        // Is64BitOperatingSystem has been added in .NET Framework 4.0
+-        var m_get_Is64BitOperatingSystem =
+-            typeof(Environment).GetProperty("Is64BitOperatingSystem")?.GetGetMethod();
+-        if (m_get_Is64BitOperatingSystem != null)
+-            current |= (bool) m_get_Is64BitOperatingSystem.Invoke(null, new object[0]) ? Platform.Bits64 : 0;
+-        else
+-            current |= IntPtr.Size >= 8 ? Platform.Bits64 : 0;
++        }
+ 
+-        if ((current.Is(Platform.MacOS) || current.Is(Platform.Linux)) && Type.GetType("Mono.Runtime") != null)
++        if (PlatformDetection.OS is OSKind.Linux)
+         {
+-            string arch;
+-            IntPtr result;
++            var utsname_linux = new utsname_linux();
+ 
+-            if (current.Is(Platform.MacOS))
+-            {
+-                var utsname_osx = new utsname_osx();
+-                result = uname_osx(ref utsname_osx);
+-                arch = utsname_osx.machine;
+-            }
+-            else
+-            {
+-                // Linux
+-                var utsname_linux = new utsname_linux();
+-                result = uname_linux(ref utsname_linux);
+-                arch = utsname_linux.machine;
+-
+-                LinuxArchitecture = utsname_linux.machine;
+-                LinuxKernelVersion = utsname_linux.version;
+-            }
+-
+-            if (result == IntPtr.Zero && (arch.StartsWith("aarch") || arch.StartsWith("arm")))
+-                current |= Platform.ARM;
++            LinuxArchitecture = utsname_linux.machine;
++            LinuxKernelVersion = utsname_linux.version;
+         }
+-        else
++        else if (PlatformDetection.OS is OSKind.OSX)
+         {
+-            // Detect ARM based on PE info or uname.
+-            typeof(object).Module.GetPEKind(out var peKind, out var machine);
+-            if (machine == (ImageFileMachine) 0x01C4 /* ARM, .NET Framework 4.5 */)
+-                current |= Platform.ARM;
+-        }
++            var utsname_osx = new utsname_osx();
+ 
+-        PlatformHelper.Current = current;
++            LinuxArchitecture = utsname_osx.machine;
++            LinuxKernelVersion = utsname_osx.version;
++        }
+     }
+ 
+     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+diff --git a/Runtimes/Unity/BepInEx.Unity.Common/UnityInfo.cs b/Runtimes/Unity/BepInEx.Unity.Common/UnityInfo.cs
+index 663a736..ebcabf0 100644
+--- a/Runtimes/Unity/BepInEx.Unity.Common/UnityInfo.cs
++++ b/Runtimes/Unity/BepInEx.Unity.Common/UnityInfo.cs
+@@ -46,13 +46,27 @@ public static class UnityInfo
+     /// </remarks>
+     public static UnityVersion Version { get; private set; }
+ 
+-    internal static void Initialize(string unityPlayerPath, string gameDataPath)
++    internal static void Initialize(string unityPlayerPath, string gameDataPath, string overrideUnityVersion = null)
+     {
+         if (initialized)
+             return;
+         PlayerPath = Path.GetFullPath(unityPlayerPath ?? throw new ArgumentNullException(nameof(unityPlayerPath)));
+         GameDataPath = Path.GetFullPath(gameDataPath ?? throw new ArgumentNullException(nameof(gameDataPath)));
+ 
++        if (overrideUnityVersion != null)
++        {
++            try
++            {
++                Version = UnityVersion.Parse(overrideUnityVersion);
++                initialized = true;
++                return;
++            }
++            catch
++            {
++                // Ignored
++            }
++        }
++
+         DetermineVersion();
+         initialized = true;
+     }
