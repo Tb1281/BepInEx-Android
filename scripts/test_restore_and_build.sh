@@ -94,6 +94,18 @@ else
     echo "FAIL  build flags changed"
     fails=$((fails + 1))
 fi
+if grep -q "SourceRevisionId=" "$STUB_ARGV_LOG"; then
+    echo "ok    build stamps the pin, not the scratch HEAD"
+else
+    echo "FAIL  SourceRevisionId flag missing"
+    fails=$((fails + 1))
+fi
+if grep -q "RestoreLockedMode=true" "$STUB_ARGV_LOG"; then
+    echo "ok    restore is locked"
+else
+    echo "FAIL  locked restore flag missing"
+    fails=$((fails + 1))
+fi
 
 if [ "$fails" -ne 0 ]; then
     echo ""

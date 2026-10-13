@@ -116,4 +116,16 @@ for p in "${patches[@]}"; do
 done
 
 echo "patch queue applied ($(basename "${patches[0]}") .. $(basename "${patches[-1]}"))"
+
+# Stage the NuGet lock files for the restored solution. They live in
+# references/nuget-locks (mirroring the tree layout) because the scratch
+# clone is gitignored and cannot carry them itself. Absence is fatal: an
+# unlocked restore silently floats transitive versions per restore, which
+# is how identical pins compiled to different assemblies on different
+# machines. Regeneration is deliberate (see docs/operations.md) and lands
+# here as updated files, never as a quiet local rebuild.
+LOCK_SRC="$ROOT/references/nuget-locks/bepinex"
+[ -d "$LOCK_SRC" ] || { echo "missing NuGet lock directory: $LOCK_SRC" >&2; exit 1; }
+cp -r "$LOCK_SRC/." "$BEPINEX_SRC/"
+echo "staged NuGet lock files from $LOCK_SRC"
 echo "BEPINEX_SRC=$BEPINEX_SRC"

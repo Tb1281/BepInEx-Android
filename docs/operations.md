@@ -19,6 +19,24 @@ Il2CppInterop/MonoMod version pins, ARM64 hook guards, and the Cpp2IL
 published-prerelease pin. Never skip a patch: a skip ships an archive
 missing that adaptation.
 
+## 1b. NuGet Lock Files
+
+Transitive versions float per restore (measured: identical pins compiled to
+different assemblies on different machines), so every restored project
+carries a `packages.lock.json` and every restore runs locked
+(`RestoreLockedMode`), which fails loudly instead of substituting quietly:
+
+- BepInEx solution and Il2CppInterop: locks vendored in
+  `references/nuget-locks/<area>/` (mirroring the source layout), staged
+  into the scratch trees by `apply_patches.sh` / `build_il2cppinterop.sh`.
+- MonoMod: upstream ships its own locks in-tree; our build only enforces
+  them. Our patch updates some; enforcement covers the patched state.
+
+Regeneration is deliberate, like a manifest rebaseline: restore once
+unlocked in a scratch tree, inspect the version diff, copy the locks over
+the vendored copies, and commit. Never regenerate silently as part of a
+normal build.
+
 ## 2. Native-to-Managed Contract (`libfusion.so`)
 
 C-linkage exports consumed via P/Invoke by the managed framework:

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "PolySharp": {
+        "type": "Direct",
+        "requested": "[1.14.1, )",
+        "resolved": "1.14.1",
+        "contentHash": "mOOmFYwad3MIOL14VCjj02LljyF1GNw1wP0YVlxtcPvqdxjGGMNdNJJxHptlry3MOd8b40Flm8RPOM8JOlN2sQ=="
+      },
+      "TerraFX.Interop.Windows": {
+        "type": "Direct",
+        "requested": "[10.0.22621.2, )",
+        "resolved": "10.0.22621.2",
+        "contentHash": "lORoYCoURS33Vi7PDvubRugLF2+l5v3rX2oVEqNhpBLjs3aZpqapRvTHPKVwsC+dGrsGuqJ/3yXuxVUb0vl3vg=="
+      },
+      "Disarm": {
+        "type": "Transitive",
+        "resolved": "2022.1.0-master.99",
+        "contentHash": "lNoK8MyhxxgO7PMp5W3sWIqRMU2neqPbDj+aNZTtnwrty4okYLe2/98t9b4E29LoQlarBfOsElV8wZIdxBk7zQ=="
+      },
+      "Microsoft.Extensions.Logging.Abstractions": {
+        "type": "Transitive",
+        "resolved": "6.0.1",
+        "contentHash": "dzB2Cgg+JmrouhjkcQGzSFjjvpwlq353i8oBQO2GWNjCXSzhbtBRUf28HSauWe7eib3wYOdb3tItdjRwAdwCSg=="
+      },
+      "il2cppinterop.common": {
+        "type": "Project",
+        "dependencies": {
+          "Disarm": "[2022.1.0-master.99, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[6.0.1, )"
+        }
+      }
+    }
+  }
+}

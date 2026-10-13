@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "HarmonyX": {
+        "type": "Direct",
+        "requested": "[2.10.0, )",
+        "resolved": "2.10.0",
+        "contentHash": "4ayiy/dlCiW86K2N7Jvbf+VpI5wvP7dncv/6oRmfwRi32UCmCRzCGzsxdMfzJZkp6/26oBW+DrD8vi4UejzVAg==",
+        "dependencies": {
+          "MonoMod.RuntimeDetour": "22.3.23.4"
+        }
+      },
+      "Disarm": {
+        "type": "Transitive",
+        "resolved": "2022.1.0-master.99",
+        "contentHash": "lNoK8MyhxxgO7PMp5W3sWIqRMU2neqPbDj+aNZTtnwrty4okYLe2/98t9b4E29LoQlarBfOsElV8wZIdxBk7zQ=="
+      },
+      "Microsoft.Extensions.Logging.Abstractions": {
+        "type": "Transitive",
+        "resolved": "6.0.1",
+        "contentHash": "dzB2Cgg+JmrouhjkcQGzSFjjvpwlq353i8oBQO2GWNjCXSzhbtBRUf28HSauWe7eib3wYOdb3tItdjRwAdwCSg=="
+      },
+      "Mono.Cecil": {
+        "type": "Transitive",
+        "resolved": "0.11.4",
+        "contentHash": "IC1h5g0NeJGHIUgzM1P82ld57knhP0IcQfrYITDPXlNpMYGUrsG5TxuaWTjaeqDNQMBDNZkB8L0rBnwsY6JHuQ=="
+      },
+      "MonoMod.RuntimeDetour": {
+        "type": "Transitive",
+        "resolved": "22.3.23.4",
+        "contentHash": "2nwwFfwYDSgUzhi+1MutTg1gyUgXoMS4+E04vHOFp84Vxs0oBkkn4mGAfhkr272y0j3vqIBzo2aT9pXRlCd/ZA==",
+        "dependencies": {
+          "Mono.Cecil": "0.11.4",
+          "MonoMod.Utils": "22.3.23.4",
+          "System.Reflection.TypeExtensions": "4.7.0"
+        }
+      },
+      "MonoMod.Utils": {
+        "type": "Transitive",
+        "resolved": "22.3.23.4",
+        "contentHash": "xso1rHFfcsPy3X1kj2uDk115z9tLTMxPEnba/zdNB6WazvrLRWGPuV9d4hHwr1iVz5quTFlZCbLBlE5fS2TqLA==",
+        "dependencies": {
+          "Mono.Cecil": "0.11.4",
+          "System.Reflection.TypeExtensions": "4.7.0"
+        }
+      },
+      "System.Reflection.TypeExtensions": {
+        "type": "Transitive",
+        "resolved": "4.7.0",
+        "contentHash": "VybpaOQQhqE6siHppMktjfGBw1GCwvCqiufqmP8F1nj7fTUNtW35LOEt3UZTEsECfo+ELAl/9o9nJx3U91i7vA=="
+      },
+      "TerraFX.Interop.Windows": {
+        "type": "Transitive",
+        "resolved": "10.0.22621.2",
+        "contentHash": "lORoYCoURS33Vi7PDvubRugLF2+l5v3rX2oVEqNhpBLjs3aZpqapRvTHPKVwsC+dGrsGuqJ/3yXuxVUb0vl3vg=="
+      },
+      "il2cppinterop.common": {
+        "type": "Project",
+        "dependencies": {
+          "Disarm": "[2022.1.0-master.99, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[6.0.1, )"
+        }
+      },
+      "il2cppinterop.runtime": {
+        "type": "Project",
+        "dependencies": {
+          "Il2CppInterop.Common": "[1.5.3-android.1, )",
+          "TerraFX.Interop.Windows": "[10.0.22621.2, )"
+        }
+      }
+    }
+  }
+}

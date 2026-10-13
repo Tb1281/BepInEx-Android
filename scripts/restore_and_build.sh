@@ -18,7 +18,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # exit status (always 0) and a restore that failed outright would leave an
 # empty log, pass the grep below, and print "no version substitution".
 set -o pipefail
-dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/" -v normal 2>&1 |
+# Locked restore: versions come from the packages.lock.json files staged by
+# apply_patches.sh, never from whatever the feeds serve today. An unlocked
+# restore is how identical pins compiled to different assemblies on
+# different machines; in locked mode that failure is loud (NU1004) instead.
+dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/" -p:RestoreLockedMode=true -v normal 2>&1 |
     tee /tmp/restore.log
 # Scoped to the packages this repository builds and owns. A blanket
 # NU1602/NU1603 check fails on upstream BepInEx's own pin,
@@ -36,5 +40,15 @@ echo "no version substitution"
 
 # SolutionDir is pinned so every project writes to one predictable tree
 # regardless of whether it is reached through the solution or directly.
+#
+# SourceRevisionId is pinned to the upstream pin, not the scratch HEAD. The
+# SDK stamps it into AssemblyInformationalVersion (6.0.0+<sha>), and the
+# scratch HEAD is a `git am` product whose committer timestamps - hence
+# SHA - differ on every fresh clone. Without this, identical pins compiled
+# to different assemblies on every rebuild, and no manifest could hold.
+# Read from the pin file, never from the scratch checkout.
+PIN_COMMIT="$(set -a; . "$BEPINEX_PIN_FILE"; set +a; printf '%s' "${UPSTREAM_COMMIT:-}")"
+[ -n "$PIN_COMMIT" ] || { echo "UPSTREAM_COMMIT missing from $BEPINEX_PIN_FILE" >&2; exit 1; }
 dotnet build "$BEPINEX_SRC/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj" \
-    -c Release --no-restore -p:GeneratePackageOnBuild=false -p:SolutionDir="$BEPINEX_SRC/"
+    -c Release --no-restore -p:GeneratePackageOnBuild=false -p:SolutionDir="$BEPINEX_SRC/" \
+    -p:SourceRevisionId="$PIN_COMMIT"
