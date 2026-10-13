@@ -36,7 +36,7 @@ is `net10.0`; the .NET SDK is `10.0.401` via root `global.json`.
 - **Origin.** Each producer attests its output before upload; the launcher
   verifies attestations before packaging. Hashes prove byte identity,
   attestations prove origin; neither replaces the other. Consumer check:
-  `gh attestation verify app-debug-aligned.apk --repo <owner>/<repo>`.
+  `gh attestation verify app-release-aligned.apk --repo <owner>/<repo>`.
   Full policy is in `docs/ci-cd.md`.
 - **Reproducibility bounds — measured, not assumed.**
   - Byte-identical across machines: both shippable archives (canonical
