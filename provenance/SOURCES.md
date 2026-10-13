@@ -38,11 +38,24 @@ is `net10.0`; the .NET SDK is `10.0.401` via root `global.json`.
   attestations prove origin; neither replaces the other. Consumer check:
   `gh attestation verify app-debug-aligned.apk --repo <owner>/<repo>`.
   Full policy is in `docs/ci-cd.md`.
-- **Reproducibility bounds.** Archives are deterministic
-  (`scripts/zip_deterministic.py`, with canonical epochs), native builds map
-  scratch paths out (`-ffile-prefix-map`), and managed builds are byte-stable
-  for identical pins and toolchain (verified by rebuilding twice and
-  comparing). The manifest enforces all of it on every gate run.
+- **Reproducibility bounds — measured, not assumed.**
+  - Byte-identical across machines: both shippable archives (canonical
+    epoch, `scripts/zip_deterministic.py`), the .NET pack (`dotnet.zip`),
+    the native hook engines (`-ffile-prefix-map` plus a debug-info strip),
+    and every third-party package in the framework archive.
+  - Content-identical but not byte-identical: the four assemblies built
+    from the patched BepInEx tree. Two fresh clones with identical
+    sources, pins, lock files, SDK, source revision and compile order
+    produce same-size assemblies with an identical string universe and
+    differing byte layout (~19 KB). Rebuilding in the same tree is
+    byte-stable. Locked restores and a pinned `SourceRevisionId` closed
+    the float sources that were once measurable here; the residual is
+    compiler output layout, cause not isolated.
+  - What that means for the manifest: `provenance/sha256sums.txt`
+    describes the last device-verified build, not a promise that any
+    rebuild reproduces those bytes. The gate enforces that description,
+    so a rebuilt framework requires a deliberate rebaseline (`--update-manifest`)
+    in the same change that validated it on device.
 - **Crypto backend.** CoreCLR binds `AndroidCryptoNative_*` through
   `libSystem.Security.Cryptography.Native.Android.so`. OpenSSL PALs
   (`libcrypto`, `libssl`, `CryptoNative_*`) are rejected by

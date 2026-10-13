@@ -149,8 +149,9 @@ loudly instead of building silently against the wrong tree.
   written by `scripts/zip_deterministic.py` (sorted entries, fixed
   mtime/mode). Epochs are canonical, not wall-clock: the framework zip uses
   the BepInEx pin's commit date, the runtime zip preserves pack entry dates
-  (`cp -p` staging). Managed assemblies still embed build metadata (see
-  `provenance/SOURCES.md`).
+  (`cp -p` staging). Managed assemblies are content-stable but not
+  byte-stable across fresh clones; see `provenance/SOURCES.md` for the
+  measured boundary.
 - **No caches.** No Actions caches are used. Retention is 1 day (the
   minimum); all jobs download fresh. Revisit only with quota headroom.
 - **Producer-consumer verification.** `verify_ci_artifacts.sh` checks hash
