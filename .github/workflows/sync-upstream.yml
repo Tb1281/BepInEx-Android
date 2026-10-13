@@ -51,6 +51,19 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # Same Gradle cache as build-launcher-apk.yml: public repository, 10 GB
+      # quota. Keyed on the dependency inputs (see that workflow for why the
+      # cache is safe here).
+      - name: Cache Gradle dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('launcher/gradle/libs.versions.toml', 'launcher/**/build.gradle.kts', 'launcher/settings.gradle.kts', 'launcher/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
       # Check all upstream pins for drift and report to summary
       - name: Report drift of every other upstream pin
         run: ./scripts/check_upstream_pins.sh
@@ -115,15 +128,18 @@ jobs:
           # covers it (NDK 30.0.16248370 on both paths).
           ./scripts/verify_ndk_libcxx.sh
 
-      - name: Assemble and 16KB-align Debug APK
+      # Release, not debug: the sync release is a distributable artifact, so it
+      # gets the R8 + resource-shrunk build (see build-launcher-apk.yml for
+      # why). Signing still uses the debug keystore.
+      - name: Assemble and 16KB-align release APK
         if: steps.sync.outputs.moved == 'true' || inputs.force
         working-directory: launcher
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          OUT="app/build/outputs/apk/debug/app-debug-aligned.apk"
+          ./gradlew assembleRelease --no-daemon
+          APK="app/build/outputs/apk/release/app-release.apk"
+          OUT="app/build/outputs/apk/release/app-release-aligned.apk"
           ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
           "$ZIPALIGN" -f -P 16 4 "$APK" "$OUT"
 
@@ -133,7 +149,7 @@ jobs:
         if: steps.sync.outputs.moved == 'true' || inputs.force
         working-directory: launcher
         run: |
-          ../scripts/verify_apk_entries.sh app/build/outputs/apk/debug/app-debug-aligned.apk
+          ../scripts/verify_apk_entries.sh app/build/outputs/apk/release/app-release-aligned.apk
 
       # Source SBOM for this release: same generator the shipping path
       # uses, so a sync release and a manual build describe the same pins.
@@ -157,7 +173,7 @@ jobs:
         with:
           bundle-output: sync-apk.attestation.json
           paths: |
-            launcher/app/build/outputs/apk/debug/app-debug-aligned.apk
+            launcher/app/build/outputs/apk/release/app-release-aligned.apk
             sbom.spdx.json
             provenance.json
 
@@ -166,9 +182,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          APK="launcher/app/build/outputs/apk/debug/app-debug-aligned.apk"
+          APK="launcher/app/build/outputs/apk/release/app-release-aligned.apk"
           SHA="$(sha256sum "$APK" | awk '{print $1}')"
-          echo "$SHA  app-debug-aligned.apk" > "$APK.sha256"
+          echo "$SHA  app-release-aligned.apk" > "$APK.sha256"
 
           NEW_COMMIT="${{ steps.sync.outputs.new }}"
           OLD_COMMIT="${{ steps.sync.outputs.old }}"
@@ -178,6 +194,7 @@ jobs:
           ### 🚀 Automated Upstream Sync Build
           - **Upstream Old:** \`${OLD_COMMIT}\`
           - **Upstream New:** \`${NEW_COMMIT}\`
+          - **Build:** release (R8 minification + resource shrinking)
           - **Build Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')
 
           ### 🔒 Checksums (SHA-256)
@@ -190,7 +207,7 @@ jobs:
           \`sbom.spdx.json\` is the SPDX 2.3 source SBOM for this release.
 
           ### 🧾 Build provenance
-          \`provenance.json` records what this release was built from: the
+          \`provenance.json\` records what this release was built from: the
           upstream pin, the patched-tree hash the replay produced, the patch
           files and the SDK version. It is covered by the attestation below.
 
@@ -198,7 +215,7 @@ jobs:
           \`sync-apk.attestation.json\` binds this repository, this workflow
           run and this commit to the APK and SBOM bytes above. Verify with:
           \`\`\`
-          gh attestation verify app-debug-aligned.apk --repo $GITHUB_REPOSITORY
+          gh attestation verify app-release-aligned.apk --repo $GITHUB_REPOSITORY
           \`\`\`
           (On a private repository the bundle is the fallback CI provenance
           statement; it becomes a Sigstore attestation automatically if the
