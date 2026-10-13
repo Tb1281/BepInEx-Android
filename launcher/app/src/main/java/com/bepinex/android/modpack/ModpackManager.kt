@@ -333,31 +333,109 @@ class ModpackManager {
     fun persistRuntimeState(packageName: String, modpackName: String?) {
         val destRoot = stateRoot(packageName, modpackName)
         destRoot.mkdirs()
+        // Only persist configs for plugins actually in this modpack. Without
+        // this, a runtime config dir holding plugins from several modpacks
+        // (overlay mode, or leftovers) would leak every config into every
+        // modpack on every run.
+        val allowedGuids = if (!modpackName.isNullOrEmpty()) {
+            getModpackPluginGuids(packageName, modpackName)
+        } else {
+            // Vanilla: no plugins, so only the core BepInEx config.
+            setOf("BepInEx")
+        }
         // Last-writer-wins: only copy a runtime config back when it is newer than
         // the modpack's copy (or the modpack has no copy). An unconditional copy
         // would silently clobber edits the user made in the launcher UI between
         // runs with stale runtime state.
-        copyNewerDirContents(BepInExPaths.getConfigDir(packageName), File(destRoot, "config"))
+        copyNewerDirContents(
+            BepInExPaths.getConfigDir(packageName),
+            File(destRoot, "config"),
+            allowedGuids
+        )
         copyRuntimeLogs(packageName, File(destRoot, "logs"))
         BepInExLog.i("Persisted runtime cfg/logs -> ${destRoot.absolutePath}")
     }
 
     /**
+     * Collects the BepInEx plugin GUIDs for every DLL in a modpack's plugins
+     * dir, by scanning each DLL for reverse-domain strings (the BepInPlugin
+     * attribute GUID is stored as UTF-16 in the assembly metadata). Also
+     * includes "BepInEx" for the core BepInEx.cfg, which is not plugin-specific.
+     */
+    private fun getModpackPluginGuids(packageName: String, modpackName: String): Set<String> {
+        val guids = mutableSetOf("BepInEx")
+        val pluginsDir = getModpackPluginsDir(packageName, modpackName)
+        if (!pluginsDir.isDirectory) return guids
+        pluginsDir.walkTopDown()
+            .filter { it.isFile && it.extension.equals("dll", ignoreCase = true) }
+            .forEach { dll -> guids.addAll(extractPluginGuids(dll)) }
+        return guids
+    }
+
+    /**
+     * Scans a .NET DLL for UTF-16LE strings in reverse-domain notation
+     * (e.g. com.example.mymod). Plugin GUIDs from [BepInPlugin] live in the
+     * #US heap as UTF-16; matching them against actual .cfg basenames keeps
+     * false positives harmless.
+     */
+    private fun extractPluginGuids(dll: File): Set<String> {
+        val guids = mutableSetOf<String>()
+        try {
+            val bytes = dll.readBytes()
+            var i = 0
+            while (i < bytes.size - 1) {
+                if (bytes[i] in 32..126 && bytes[i + 1] == 0.toByte()) {
+                    val sb = StringBuilder()
+                    var j = i
+                    while (j < bytes.size - 1 &&
+                        bytes[j] in 32..126 && bytes[j + 1] == 0.toByte()
+                    ) {
+                        sb.append(bytes[j].toInt().toChar())
+                        j += 2
+                    }
+                    val s = sb.toString()
+                    if (s.length >= 5 && s.contains('.') &&
+                        s.all { c -> c.isLowerCase() || c.isDigit() || c == '.' || c == '_' || c == '-' }
+                    ) {
+                        val parts = s.split('.')
+                        if (parts.size >= 2 && parts.all { it.isNotEmpty() }) {
+                            guids.add(s)
+                        }
+                    }
+                    i = j
+                } else {
+                    i++
+                }
+            }
+        } catch (e: Exception) {
+            BepInExLog.w("Failed to scan ${dll.name} for plugin GUIDs: ${e.message}")
+        }
+        return guids
+    }
+
+    /**
      * Copies source -> dest, but only for files that do not exist at the
      * destination or are newer than the destination copy. Source timestamps are
-     * preserved so the next comparison stays meaningful.
+     * preserved so the next comparison stays meaningful. When [allowedNames]
+     * is non-null, only files whose basename (without extension) is in the set
+     * are copied.
      */
-    private fun copyNewerDirContents(source: File, dest: File) {
+    private fun copyNewerDirContents(source: File, dest: File, allowedNames: Set<String>? = null) {
         dest.mkdirs()
         if (!source.isDirectory) return
         source.listFiles()?.forEach { child ->
             val target = File(dest, child.name)
             if (child.isDirectory) {
-                copyNewerDirContents(child, target)
-            } else if (!target.exists() || child.lastModified() > target.lastModified()) {
-                child.copyTo(target, overwrite = true)
-                target.setLastModified(child.lastModified())
-                BepInExLog.i("Persisted newer config: ${child.name}")
+                copyNewerDirContents(child, target, allowedNames)
+            } else {
+                if (allowedNames != null && child.nameWithoutExtension !in allowedNames) {
+                    return@forEach
+                }
+                if (!target.exists() || child.lastModified() > target.lastModified()) {
+                    child.copyTo(target, overwrite = true)
+                    target.setLastModified(child.lastModified())
+                    BepInExLog.i("Persisted newer config: ${child.name}")
+                }
             }
         }
     }
