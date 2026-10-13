@@ -23,19 +23,79 @@ missing that adaptation.
 
 Transitive versions float per restore (measured: identical pins compiled to
 different assemblies on different machines), so every restored project
-carries a `packages.lock.json` and every restore runs locked
-(`RestoreLockedMode`), which fails loudly instead of substituting quietly:
+carries a `packages.lock.json` and version drift fails loudly instead of
+substituting quietly:
 
-- BepInEx solution and Il2CppInterop: locks vendored in
-  `references/nuget-locks/<area>/` (mirroring the source layout), staged
-  into the scratch trees by `apply_patches.sh` / `build_il2cppinterop.sh`.
-- MonoMod: upstream ships its own locks in-tree; our build only enforces
-  them. Our patch updates some; enforcement covers the patched state.
+- BepInEx solution: locks vendored in `references/nuget-locks/bepinex/`
+  (mirroring the source layout). They are NOT staged into the scratch tree
+  and NuGet's `RestoreLockedMode` is NOT used: NuGet validates a lock file
+  found on disk even without the flag, and the locally-built
+  MonoMod/Il2CppInterop packages are rebuilt on every run, so their
+  contentHash can never match a vendored file (NU1403 on every restore).
+  Instead, `restore_and_build.sh` runs `scripts/verify_locked_versions.sh`
+  after restore, which compares the restored versions against the vendored
+  locks and fails on drift, ignoring the hashes that cannot be stable.
+- Il2CppInterop: locks vendored in `references/nuget-locks/il2cppinterop/`,
+  staged into the scratch tree by `build_il2cppinterop.sh` and enforced with
+  `RestoreLockedMode`. These are external packages with stable hashes, so
+  the hash validation holds here.
+- MonoMod: upstream ships its own locks in-tree and sets
+  `RestorePackagesWithLockFile=false`; our build passes
+  `RestoreLockedMode` but it is a no-op there. Enforcement covers the
+  patched state via the version pins.
 
 Regeneration is deliberate, like a manifest rebaseline: restore once
 unlocked in a scratch tree, inspect the version diff, copy the locks over
 the vendored copies, and commit. Never regenerate silently as part of a
 normal build.
+
+## 1c. Patched-Tree Hash
+
+`git am` mints commits with committer dates of "now", so the tip SHA of the
+replayed queue can never be compared across runs. The tree object it points
+at is the stable identity instead: a pure content hash of the patched
+sources (modes, names, blob hashes; no timestamps), and replaying the same
+pin plus the same ordered queue always yields the same tree on any machine
+(measured: two fresh replays produced identical tree hashes).
+
+`apply_patches.sh` therefore ends with `scripts/verify_patches.sh`, which
+refuses to continue unless the tree hash matches
+`references/patched-tree.sha256`. The gate also refuses untracked files in
+the scratch tree (the hash cannot see them) and a tree not built on the
+pinned commit. This is the answer to "the output hash differs, so was the
+patch applied correctly?": the patch is verified at the source layer, where
+a hash is stable, and the build is verified by properties (package
+versions, SourceRevisionId, 16KB page alignment) at the artifact layer,
+where it is not. Verifying the patch at the artifact layer is the NU1403
+trap - it fails on every run for reasons that have nothing to do with the
+patch.
+
+Re-recording is deliberate, like a manifest rebaseline:
+
+```bash
+./scripts/apply_patches.sh
+./scripts/record_patched_tree.sh   # writes references/patched-tree.sha256
+```
+
+Commit the updated hash alongside the patch change. The fixture
+`scripts/test_verify_patches.sh` proves the refusals (tampered tree,
+untracked file, wrong pin, missing record). Never re-record as part of a
+normal build.
+
+The one flow that legitimately changes the tree is the daily upstream sync:
+`sync-upstream.yml` advances the pin first, so the replay runs with
+`BEPINEX_SKIP_TREE_GATE=1` and `scripts/record_patched_tree.sh` re-records
+immediately after. The skip is opt-in per invocation, never a default, and
+the re-recorded hash still has to survive the gate on the sync PR's own CI
+run.
+
+As-built provenance (`scripts/emit_provenance.sh`) records what a run
+actually built with - upstream pin, achieved tree hash, patch file hashes,
+SDK version - as JSON next to the artifacts (`build-bepinex.yml` attests it
+with the zip; `sync-upstream.yml` ships it in the release). The pins say
+what was intended; this says what was built. Informational by design: a
+missing tool degrades a field to `"unknown"` instead of failing the build,
+because enforcement lives in the gates.
 
 ## 2. Native-to-Managed Contract (`libfusion.so`)
 

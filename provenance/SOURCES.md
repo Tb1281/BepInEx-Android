@@ -36,26 +36,32 @@ is `net10.0`; the .NET SDK is `10.0.401` via root `global.json`.
 - **Origin.** Each producer attests its output before upload; the launcher
   verifies attestations before packaging. Hashes prove byte identity,
   attestations prove origin; neither replaces the other. Consumer check:
-  `gh attestation verify app-debug-aligned.apk --repo <owner>/<repo>`.
+  `gh attestation verify app-release-aligned.apk --repo <owner>/<repo>`.
   Full policy is in `docs/ci-cd.md`.
 - **Reproducibility bounds — measured, not assumed.**
-  - Byte-identical across machines: both shippable archives (canonical
-    epoch, `scripts/zip_deterministic.py`), the .NET pack (`dotnet.zip`),
-    the native hook engines (`-ffile-prefix-map` plus a debug-info strip),
-    and every third-party package in the framework archive.
-  - Content-identical but not byte-identical: the four assemblies built
-    from the patched BepInEx tree. Two fresh clones with identical
-    sources, pins, lock files, SDK, source revision and compile order
-    produce same-size assemblies with an identical string universe and
-    differing byte layout (~19 KB). Rebuilding in the same tree is
-    byte-stable. Locked restores and a pinned `SourceRevisionId` closed
-    the float sources that were once measurable here; the residual is
-    compiler output layout, cause not isolated.
-  - What that means for the manifest: `provenance/sha256sums.txt`
-    describes the last device-verified build, not a promise that any
-    rebuild reproduces those bytes. The gate enforces that description,
-    so a rebuilt framework requires a deliberate rebaseline (`--update-manifest`)
-    in the same change that validated it on device.
+  - Byte-identical across machines: the .NET pack (`dotnet.zip`,
+    deterministic repack of the pinned pack), the native hook engines
+    (`-ffile-prefix-map` plus a debug-info strip), and the NDK runtime libs.
+    Measured 2026-10-13: two CI runs of the same commit produced identical
+    bytes for all of these.
+  - Content-identical but not byte-identical: the framework archive
+    (`BepInEx.Android.zip`). It is built from the patched BepInEx tree plus
+    freshly rebuilt MonoMod/Il2CppInterop packages, and those upstream
+    builds are not byte-reproducible across machines (measured 2026-10-13:
+    three CI runs of the same commit produced three different zips; the
+    MonoMod.Core.dll alone differed by 77% of its bytes). The BepInEx
+    assemblies themselves are byte-stable when rebuilt in the same tree
+    (same path, same inputs), but the rebuilt dependencies propagate their
+    nondeterminism through MVIDs. The zip's epoch is the upstream pin's
+    commit date and the compiler's `SourceRevisionId` is the upstream pin,
+    so the remaining variance is in the upstream builds, not in this
+    repository's packaging.
+  - What that means for the manifest: `provenance/sha256sums.txt` covers
+    only the byte-reproducible artifacts. `BepInEx.Android.zip` is
+    deliberately not listed (see the manifest header). Its integrity is
+    verified instead by the patch gate (sources), the version gate
+    (dependencies), the feed consistency checks in
+    `scripts/package_bepinex_android.sh`, and the producer attestation.
 - **Crypto backend.** CoreCLR binds `AndroidCryptoNative_*` through
   `libSystem.Security.Cryptography.Native.Android.so`. OpenSSL PALs
   (`libcrypto`, `libssl`, `CryptoNative_*`) are rejected by

@@ -25,6 +25,15 @@
 # while running (no interleaving) and printed serially afterwards in a fixed
 # order, so the console record is complete and reviewable.
 #
+# ISOLATED TMPDIR PER BUILD
+#
+# The two dotnet processes must not share a temp directory. Beyond
+# ~/.nuget/packages, dotnet uses $TMPDIR/.dotnet/shm for cross-process shared
+# memory, and two concurrent processes racing to mkdir the same session
+# directory fail with EEXIST (System.IO.IOException: 'NuGet-Migrations').
+# Each build therefore gets its own TMPDIR under the log dir; the scripts
+# already honor TMPDIR for their scratch clones.
+#
 # Usage: build_packages_parallel.sh [monomod-script] [interop-script]
 #   Defaults are scripts/build_monomod.sh and scripts/build_il2cppinterop.sh
 #   under the repo root. Explicit paths are the fixture seam: the fixture
@@ -47,10 +56,17 @@ trap 'rm -rf "$LOGDIR"' EXIT
 MONO_LOG="$LOGDIR/monomod.log"
 INTEROP_LOG="$LOGDIR/il2cppinterop.log"
 
+# Separate TMPDIRs: dotnet's shm session directory collides when two dotnet
+# processes share $TMPDIR (EEXIST on mkdir). The parent TMPDIR is restored
+# for the wait/print phase below, which does not invoke dotnet.
+MONO_TMP="$LOGDIR/mono-tmp"
+INTEROP_TMP="$LOGDIR/interop-tmp"
+mkdir -p "$MONO_TMP" "$INTEROP_TMP"
+
 echo "building both package sets concurrently..."
-"$MONO" >"$MONO_LOG" 2>&1 &
+TMPDIR="$MONO_TMP" "$MONO" >"$MONO_LOG" 2>&1 &
 MONO_PID=$!
-"$INTEROP" >"$INTEROP_LOG" 2>&1 &
+TMPDIR="$INTEROP_TMP" "$INTEROP" >"$INTEROP_LOG" 2>&1 &
 INTEROP_PID=$!
 
 mono_rc=0; interop_rc=0

@@ -149,6 +149,9 @@ UNLISTED=0
 if [ "$UPDATE_MANIFEST" = 1 ]; then
     # Paths are emitted in the same order the old manifest used (jniLibs first,
     # then assets) so the diff of a regeneration reads as the change it is.
+    # BepInEx.Android.zip is deliberately excluded: it is not byte-reproducible
+    # across machines (see the manifest header), so recording its hash would
+    # reintroduce a check that can never pass.
     {
         sed -n '1,8p' "${MANIFEST}" 2>/dev/null || true
         ( cd "${REPO_DIR}" && for so in "${JNI_DIR}"/*.so; do
@@ -157,6 +160,7 @@ if [ "$UPDATE_MANIFEST" = 1 ]; then
           done )
         ( cd "${REPO_DIR}" && for asset in "${ASSETS_DIR}"/*.zip; do
               [ -f "${asset}" ] || continue
+              [ "$(basename "${asset}")" = "BepInEx.Android.zip" ] && continue
               sha256sum "launcher/app/src/main/assets/$(basename "${asset}")"
           done )
     } > "${MANIFEST}.new"

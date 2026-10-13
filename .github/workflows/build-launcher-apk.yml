@@ -55,6 +55,21 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # Public repository, so the 10 GB cache quota applies: the Gradle cache
+      # is viable again (it was dropped when a single 323 MB NuGet HTTP entry
+      # blocked verification against the private 500 MB quota). Keyed on the
+      # dependency inputs; Gradle verifies content hashes on use, so a stale
+      # cache cannot silently change what is compiled.
+      - name: Cache Gradle dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('launcher/gradle/libs.versions.toml', 'launcher/**/build.gradle.kts', 'launcher/settings.gradle.kts', 'launcher/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
       - name: Prepare Android SDK/NDK
         run: |
           sudo apt-get update -y >/dev/null
@@ -134,7 +149,7 @@ jobs:
 
       - name: The installed artifacts match the hashes their producers recorded
         # Before the Gradle build, not after: a substituted artifact should cost
-        # seconds, not the ten minutes assembleDebug takes.
+        # seconds, not the ten minutes assembleRelease takes.
         #
         # The three producer jobs each wrote a .sha256 next to their output and
         # shipped it inside their artifact. Until this step, this job downloaded
@@ -179,24 +194,32 @@ jobs:
           ./launcher/scripts/verify_crypto_java.sh
           ./scripts/verify_dotnet_pack.sh launcher/app/src/main/assets/dotnet.zip
 
-      - name: Gradle build debug APK
+      # Release, not debug: the release build type runs R8 with the
+      # proguard-rules.pro keep rules (net.dot.android.crypto.** is resolved
+      # by the crypto PAL via JNI name lookup) and shrinks resources. A debug
+      # APK ships every unused compose icon class - classes.dex alone was
+      # 39.6 MB of a 104 MB APK - which is the difference between a
+      # sideloadable APK and a distributable one. Signing still uses the
+      # debug keystore (see build.gradle.kts), so release installs over an
+      # existing install of the same applicationId.
+      - name: Gradle build release APK
         working-directory: launcher
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
 
       - name: zipalign 16k check & fix
         working-directory: launcher
         run: |
-          APK=app/build/outputs/apk/debug/app-debug.apk
+          APK=app/build/outputs/apk/release/app-release.apk
           ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
           "$ZIPALIGN" -v -c -P 16 4 "$APK" > zipalign.log 2>&1 || true
           cat zipalign.log
           if ! "$ZIPALIGN" -c -P 16 4 "$APK"; then
-            "$ZIPALIGN" -f -v -P 16 4 "$APK" app/build/outputs/apk/debug/app-debug-aligned.apk
+            "$ZIPALIGN" -f -v -P 16 4 "$APK" app/build/outputs/apk/release/app-release-aligned.apk
           else
-            cp "$APK" app/build/outputs/apk/debug/app-debug-aligned.apk
+            cp "$APK" app/build/outputs/apk/release/app-release-aligned.apk
           fi
 
       # The zip's local headers and central directory must agree. Incremental
@@ -206,7 +229,7 @@ jobs:
       - name: The packaged APK has no duplicate zip entries
         working-directory: launcher
         run: |
-          ../scripts/verify_apk_entries.sh app/build/outputs/apk/debug/app-debug-aligned.apk
+          ../scripts/verify_apk_entries.sh app/build/outputs/apk/release/app-release-aligned.apk
 
       # The same gate again, now that an APK exists.
       #
@@ -229,7 +252,7 @@ jobs:
         run: |
           ( cd launcher/app/src/main/jniLibs/arm64-v8a && sha256sum *.so ) > apk-native.sha256
           sha256sum launcher/app/src/main/assets/*.zip >> apk-native.sha256
-          sha256sum launcher/app/build/outputs/apk/debug/app-debug-aligned.apk >> apk-native.sha256
+          sha256sum launcher/app/build/outputs/apk/release/app-release-aligned.apk >> apk-native.sha256
           cat apk-native.sha256
 
       # Source SBOM in SPDX 2.3: what upstream went into this APK, not what
@@ -238,7 +261,7 @@ jobs:
       # construction — the file is written here, from this commit, every run.
       # Attested together with the APK below, so the statement covers both the
       # artifact and its dependency list. A consumer that wants a built-artifact
-      # inventory instead can run `syft app-debug-aligned.apk -o spdx-json`;
+      # inventory instead can run `syft app-release-aligned.apk -o spdx-json`;
       # the two documents compose rather than replace each other.
       - name: Generate the source SBOM
         run: |
@@ -267,7 +290,7 @@ jobs:
       # itself in the same run. The value is that the uploaded APK carries a
       # statement naming this repository, this workflow and this commit, so any
       # later gate or a human can run
-      # `gh attestation verify app-debug-aligned.apk --repo ...`.
+      # `gh attestation verify app-release-aligned.apk --repo ...`.
       #
       # attestations: write is needed here for this step; the three producers
       # mint the per-input statements that the earlier gate consumed.
@@ -276,14 +299,14 @@ jobs:
         with:
           bundle-output: launcher-apk.attestation.json
           paths: |
-            launcher/app/build/outputs/apk/debug/app-debug-aligned.apk
+            launcher/app/build/outputs/apk/release/app-release-aligned.apk
             sbom.spdx.json
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: launcher-apk-aligned
           path: |
-            launcher/app/build/outputs/apk/debug/app-debug-aligned.apk
+            launcher/app/build/outputs/apk/release/app-release-aligned.apk
             launcher-apk.attestation.json
             apk-native.sha256
             sbom.spdx.json
