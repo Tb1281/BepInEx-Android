@@ -95,6 +95,31 @@ verify_one() { # verify_one <file> <producing-workflow>
     fi
     local base
     base="$(basename "$file")"
+
+    # 1. Verify against the Sigstore bundle shipped with the producer's
+    #    artifact. The producers upload *.attestation.json alongside the files
+    #    (see .github/actions/attest-inputs), so the consumer does not depend
+    #    on API indexing latency. `gh attestation verify --bundle` checks the
+    #    bundle's signature and that the file is among its subjects.
+    local bundle_ok=0
+    while IFS= read -r bundle; do
+        [ -n "$bundle" ] || continue
+        # Skip the private-repo fallback format; it is handled below.
+        if python3 -c "import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get('type')=='fallback-ci-provenance' else 1)" "$bundle" 2>/dev/null; then
+            continue
+        fi
+        if gh attestation verify "$file" --bundle "$bundle" --repo "$REPO_NAME" >/dev/null 2>&1; then
+            bundle_ok=1
+            break
+        fi
+    done < <(find "$ROOT" -name "*.attestation.json" 2>/dev/null)
+    if [ "$bundle_ok" -eq 1 ]; then
+        printf '  [OK]     %-48s (%s, Sigstore bundle)\n' "$base" "$wf"
+        return 0
+    fi
+
+    # 2. Query the attestation API (covers the case where the bundle was not
+    #    downloaded, e.g. a hand-rolled consumer).
     if gh attestation verify "$file" \
         --repo "$REPO_NAME" \
         --source-ref "$HEAD_SHA" >/dev/null 2>&1; then
@@ -102,7 +127,7 @@ verify_one() { # verify_one <file> <producing-workflow>
         return 0
     fi
 
-    # Fallback: check fallback provenance bundle for private repository
+    # 3. Fallback: check fallback provenance bundle for private repository
     local fallback_ok=0
     while IFS= read -r bundle; do
         [ -n "$bundle" ] || continue

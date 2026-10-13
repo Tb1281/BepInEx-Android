@@ -242,14 +242,22 @@ rm -f "$OUT"
 # Canonical epoch: the BepInEx pin's commit date. Fresh compiles always carry
 # fresh mtimes, so the zipper's newest-mtime fallback would make every
 # packaging run differ; pinning the epoch to the sources makes the archive a
-# function of the pin. Falls back (loudly) for out-of-tree sources with no
-# git date.
-PIN_EPOCH="$(git -C "$SUB" log -1 --format=%ct 2>/dev/null || true)"
+# function of the pin.
+#
+# The date must come from the pin commit, not the tip. The tip is a `git am`
+# product whose committer date is "now" on every fresh clone, so reading the
+# tip (as this once did) made every packaging run produce a different archive
+# from identical inputs - and no checksum manifest could ever hold for it.
+UPSTREAM_PIN="$(set -a; . "$BEPINEX_PIN_FILE"; set +a; printf '%s' "${UPSTREAM_COMMIT:-}")"
+PIN_EPOCH=""
+if [ -n "$UPSTREAM_PIN" ]; then
+    PIN_EPOCH="$(git -C "$SUB" log -1 --format=%ct "$UPSTREAM_PIN" 2>/dev/null || true)"
+fi
 if [ -n "$PIN_EPOCH" ]; then
     echo "archive epoch: $PIN_EPOCH (BepInEx pin commit date)"
     export SOURCE_DATE_EPOCH="$PIN_EPOCH"
 else
-    echo "warning: no git date for $SUB; archive mtime falls back to newest input" >&2
+    echo "warning: no git date for the BepInEx pin; archive mtime falls back to newest input" >&2
 fi
 # `zip -qr` recorded mtimes, walked in filesystem order and wrote explicit
 # directory entries, so two runs over identical inputs produced different

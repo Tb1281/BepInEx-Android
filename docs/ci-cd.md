@@ -77,12 +77,19 @@ Artifacts: `out/runtime/`, `coreclr.sha256`, attestation bundle.
 
 Builds the managed framework from the pin in `provenance/bepinex.env`.
 `apply_patches.sh` clones the pinned commit, asserts it, and replays
-`patches/*.patch` with `git am --3way`. Builds MonoMod
+`patches/*.patch` with `git am --3way`, then refuses to continue unless the
+tree-object hash of the replayed sources matches
+`references/patched-tree.sha256` (`scripts/verify_patches.sh`; the tip SHA
+is never comparable because `git am` mints committer dates of "now"). Builds MonoMod
 (`25.3.7-android.1`) and Il2CppInterop (`1.5.3-android.1`) into a local NuGet
 cache, compiles `BepInEx.Unity.IL2CPP` in Release with .NET SDK `10.0.401`
 (pinned via root `global.json`), asserts the `AndroidEntrypoint.Start` entry
-point is present, and packages `BepInEx.Android.zip`. Artifacts:
-`BepInEx.Android.zip`, `bepinex-managed.sha256`, attestation bundle.
+point is present, and packages `BepInEx.Android.zip`. Emits
+`bepinex-managed.provenance.json` (as-built record: upstream pin, achieved
+patched-tree hash, patch file hashes, SDK version) and attests it alongside
+the zip. Artifacts:
+`BepInEx.Android.zip`, `bepinex-managed.sha256`,
+`bepinex-managed.provenance.json`, attestation bundle.
 
 ### `build-launcher-apk.yml`
 
@@ -93,10 +100,13 @@ Assembles the launcher APK from the three producer artifacts:
   (`verify_producer_commit.sh`; API failure fails closed).
 - Verifies attestations before Gradle (`verify_attestation.sh`, see below).
 - Compiles the JNI bridge (`libmain.so`, `libfusion.so`) and Kotlin UI.
+- Builds the **release** APK: R8 minification with the crypto PAL keep
+  rules plus resource shrinking (a debug APK ships every unused compose
+  icon class; the release build type is what makes the APK distributable).
 - Asserts `zipalign -c -P 16 4` and APK entry consistency
   (`verify_apk_entries.sh`).
 - Generates, checksums, and attests `sbom.spdx.json` alongside the APK.
-- Artifacts: signed/aligned debug APK, checksum manifest, source SBOM.
+- Artifacts: signed/aligned release APK, checksum manifest, source SBOM.
 
 ### `sync-upstream.yml`
 
@@ -105,8 +115,12 @@ Runs daily at 04:00 UTC plus manual dispatch. Reports pin drift
 one-line pin bump in `provenance/bepinex.env` when upstream moved, replays
 the queue, rebuilds, asserts the new pin is on `origin/master`, and opens a
 PR only when upstream actually moved. On conflict publishes diagnostics via
-`report_patch_conflict.sh`. Attests the sync-built APK and SBOM inline and
-publishes both on the release.
+`report_patch_conflict.sh`. Because the pin advanced, the replay runs with
+`BEPINEX_SKIP_TREE_GATE=1` and `scripts/record_patched_tree.sh` re-records
+the tree hash immediately after; the updated
+`references/patched-tree.sha256` rides the sync PR, whose own CI re-applies
+the gate from scratch. Attests the sync-built APK, SBOM and
+`provenance.json` inline and publishes all three on the release.
 
 No Dependabot: the load-bearing pins live in `provenance/*.env`, which
 Dependabot cannot see, and every bump needs human judgment plus
@@ -152,8 +166,15 @@ loudly instead of building silently against the wrong tree.
   (`cp -p` staging). Managed assemblies are content-stable but not
   byte-stable across fresh clones; see `provenance/SOURCES.md` for the
   measured boundary.
-- **No caches.** No Actions caches are used. Retention is 1 day (the
-  minimum); all jobs download fresh. Revisit only with quota headroom.
+- **Caches.** The repository is public, so the 10 GB Actions cache quota
+  applies. The two Gradle jobs (`build-launcher-apk`, `sync-upstream`)
+  cache `~/.gradle/caches` and `~/.gradle/wrapper`, keyed on the
+  dependency inputs (`libs.versions.toml`, Gradle scripts); Gradle verifies
+  content hashes on use. This was revisited after the no-cache era, when a
+  single 323 MB NuGet HTTP entry blocked verification against the private
+  500 MB quota. Retention is 1 day (the minimum); the NDK/SDK installs are
+  deliberately not cached (gigabytes per job for minutes saved, and the
+  exact NDK pin must come from `sdkmanager`, not a cache entry).
 - **Producer-consumer verification.** `verify_ci_artifacts.sh` checks hash
   match against producer manifests, reverse-checks that every produced file
   is cataloged, and rejects unknown native binaries in `jniLibs`.
@@ -163,7 +184,7 @@ loudly instead of building silently against the wrong tree.
   unavailable). `verify_attestation.sh` runs in `build-launcher-apk` before
   Gradle and fails closed on any unsigned input. Producers require
   `attestations: write` and `id-token: write`. Consumer example:
-  `gh attestation verify app-debug-aligned.apk --repo <owner>/<repo>`.
+  `gh attestation verify app-release-aligned.apk --repo <owner>/<repo>`.
   Attestation proves origin; hashes prove byte identity. Neither replaces
   the other, and neither covers bytes inside the packaged APK beyond the
   APK's own attestation.
