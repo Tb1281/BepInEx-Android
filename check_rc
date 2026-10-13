@@ -1,0 +1,36 @@
+============================================================
+ Provenance attestation gate                                
+============================================================
+  repository : BepInEx-Android/BepInEx-Android
+  commit     : abcdef1234567890abcdef1234567890abcdef12
+
+  [FAIL]   libcoreclr.so                                    (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libclrjit.so                                     (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libSystem.Native.so                              (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libSystem.Globalization.Native.so                (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libSystem.IO.Compression.Native.so               (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libSystem.Security.Cryptography.Native.Android.so (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libmscordaccore.so                               (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libmscordbi.so                                   (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   dotnet.zip                                       (fetch-runtime.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libdobby.so                                      (build-native-deps.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   libpine.so                                       (build-native-deps.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+  [FAIL]   BepInEx.Android.zip                              (build-bepinex.yml)
+             no valid attestation from BepInEx-Android/BepInEx-Android at abcdef1234567890abcdef1234567890abcdef12
+
+RESULT: FAILED - 12 artifact(s) have no valid provenance attestation.
+
+A missing attestation stops the shipping path on purpose. Check that the
+producing workflow ran with 'attestations: write' and 'id-token: write', and
+that the artifact is the one that run produced. See docs/ci-cd.md.
