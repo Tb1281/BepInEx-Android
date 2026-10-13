@@ -259,6 +259,13 @@ jobs:
       - name: The parallel package build is actually parallel
         run: ./scripts/test_build_parallel.sh
 
+      # restore_and_build.sh is the single restore/build implementation behind
+      # three callers. The fixture proves the order (restore before build) and
+      # both refusals with a stubbed dotnet: our-package substitution fails,
+      # upstream-only warnings pass, and a failed restore fails the script.
+      - name: Restore refuses substitution and build follows it
+        run: ./scripts/test_restore_and_build.sh
+
       # Incremental Gradle builds packaged duplicate zip entries twice. The
       # fixture crafts the doubled shape and proves the gate refuses it.
       - name: The packaged APK has no duplicate zip entries
