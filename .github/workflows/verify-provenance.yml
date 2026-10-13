@@ -9,10 +9,17 @@ on:
     # and `.github/workflows/**` were omitted too, so pinning the SDK or editing
     # the gate did not re-run the gate.
     paths:
-      # job `provenance`: committed artifacts and this workflow's own checks
+      # job `provenance`: pins, staging scripts, and this workflow's own checks.
+      # Nothing binary is committed; the job rebuilds every staged input from
+      # the pins, so the scripts that do that are trigger inputs here.
       - 'provenance/**'
-      - 'launcher/app/src/main/jniLibs/**'
-      - 'launcher/app/src/main/assets/**'
+      - 'references/**'
+      - 'scripts/apply_patches.sh'
+      - 'scripts/bepinex_paths.sh'
+      - 'scripts/build_native_deps.sh'
+      - 'scripts/build_monomod.sh'
+      - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/stage_launcher_inputs.sh'
       - 'launcher/scripts/verify_*.sh'
       - 'launcher/app/src/main/java/net/dot/android/**'
       - 'scripts/verify_*.sh'
@@ -47,8 +54,13 @@ on:
   pull_request:
     paths:
       - 'provenance/**'
-      - 'launcher/app/src/main/jniLibs/**'
-      - 'launcher/app/src/main/assets/**'
+      - 'references/**'
+      - 'scripts/apply_patches.sh'
+      - 'scripts/bepinex_paths.sh'
+      - 'scripts/build_native_deps.sh'
+      - 'scripts/build_monomod.sh'
+      - 'scripts/build_il2cppinterop.sh'
+      - 'scripts/stage_launcher_inputs.sh'
       - 'launcher/scripts/verify_*.sh'
       - 'launcher/app/src/main/java/net/dot/android/**'
       - 'scripts/verify_*.sh'
@@ -92,11 +104,12 @@ jobs:
       contents: write
     steps:
       # Egress pilot: this job BLOCKS with an explicit allow-list; every other
-      # job in every workflow stays on audit. This job was chosen as the pilot
-      # because it has the narrowest egress (checkout, setup-python, gh API —
-      # no clones, no restores, no SDK downloads) and runs on every push, so a
-      # missing endpoint fails here first, loudly, naming the endpoint. A red
-      # pilot only withholds the `verified` tag; it cannot ship anything.
+      # job in every workflow stays on audit, except the registered pilots.
+      # This job rebuilds every staged input from the pins (runtime pack,
+      # hook engines, managed framework), so its list covers the toolchain
+      # the patch-queue job uses plus the NDK (dl.google.com) and the Java
+      # toolchain (api.adoptium.net). A red pilot only withholds the
+      # `verified` tag; it cannot ship anything.
       # Rollback is one line: egress-policy back to audit.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
         with:
@@ -107,8 +120,45 @@ jobs:
             codeload.github.com
             objects.githubusercontent.com
             *.actions.githubusercontent.com
+            builds.dotnet.microsoft.com
+            dotnetcli.azureedge.net
+            dotnetbuilds.blob.core.windows.net
+            api.nuget.org
+            nuget.bepinex.dev
+            dl.google.com
+            api.adoptium.net
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          # Exact, matching root global.json and the producer jobs.
+          dotnet-version: '10.0.401'
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install NDK
+        run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1"
+
+      # No binaries are committed, so the checks below stage their own inputs
+      # from the pins first. This makes the gate a full rebuild-from-pins
+      # proof: whatever verify_prebuilts.sh compares against the manifest was
+      # compiled or fetched in this job, not read from the repository.
+      - name: Stage the runtime, hook engines, and framework from pins
+        run: |
+          ./scripts/fetch_dotnet_runtime.sh out/runtime
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          ./scripts/build_native_deps.sh
+          ./scripts/apply_patches.sh
+          ./scripts/build_packages_parallel.sh
+          ./scripts/package_bepinex_android.sh
+          ./scripts/stage_launcher_inputs.sh out/runtime out/BepInEx.Android.zip
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -134,7 +184,7 @@ jobs:
       # misaligned case it was written to catch. fetch-runtime runs weekly, so
       # nothing noticed. scripts/test_alignment_check.sh runs both forms under a
       # real `bash -e` with a scripted readelf, which is the only way to observe
-      # a failure direction no committed binary provides.
+      # a failure direction no staged binary provides.
       - name: The 16KB alignment check decides correctly
         run: ./scripts/test_alignment_check.sh
 
@@ -223,6 +273,9 @@ jobs:
       # pinned manifest entry instead of shipping.
       - name: The NDK-provided libc++ is pinned
         run: ./scripts/test_ndk_libcxx.sh
+
+      - name: The staged NDK libc++ matches the pinned hash
+        run: ./scripts/verify_ndk_libcxx.sh
 
       - name: Checksums and 16KB page alignment
         run: ./launcher/scripts/verify_prebuilts.sh

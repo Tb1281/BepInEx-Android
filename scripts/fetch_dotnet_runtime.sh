@@ -81,8 +81,12 @@ SRC_BCL="$WORK/pkg/runtimes/android-arm64/lib/${DOTNET_RUNTIME_TFM}"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR/native" "$OUT_DIR/bcl"
 
-cp "$SRC_NATIVE"/*.so "$OUT_DIR/native/"
-cp "$SRC_BCL"/*.dll "$OUT_DIR/bcl/"
+# -p: the deterministic zipper falls back to the newest input mtime, so plain
+# cp (which stamps the copy with the wall clock) would make every fetch
+# produce a different dotnet.zip. Preserving the pack entry dates keeps the
+# archive a function of the pinned pack, not of when it was fetched.
+cp -p "$SRC_NATIVE"/*.so "$OUT_DIR/native/"
+cp -p "$SRC_BCL"/*.dll "$OUT_DIR/bcl/"
 
 # The pack also carries libSystem.Security.Cryptography.Native.Android.jar, which is
 # the Java contract the crypto PAL looks up at JNI_OnLoad. That contract moves
@@ -125,7 +129,7 @@ fi
 #
 # These are byte-identical copies of the files in jniLibs — one package, so
 # there is no second version to keep in step.
-cp "$SRC_NATIVE"/*.so "$OUT_DIR/bcl/"
+cp -p "$SRC_NATIVE"/*.so "$OUT_DIR/bcl/"
 
 # The launcher points coreclr hosting at TRUSTED_PLATFORM_ASSEMBLIES and
 # SYSTEM_CORELIB_DIRECTORY, so the runtime never resolves the framework through a
@@ -133,7 +137,7 @@ cp "$SRC_NATIVE"/*.so "$OUT_DIR/bcl/"
 # framework identity of exactly these assemblies, and having it in the per-game
 # dotnet directory keeps that directory self-describing.
 for extra in Microsoft.NETCore.App.runtimeconfig.json Microsoft.NETCore.App.deps.json; do
-    [ -f "$SRC_BCL/$extra" ] && cp "$SRC_BCL/$extra" "$OUT_DIR/bcl/"
+    [ -f "$SRC_BCL/$extra" ] && cp -p "$SRC_BCL/$extra" "$OUT_DIR/bcl/"
 done
 
 # Deterministic archive (see scripts/zip_deterministic.py): sorted file-only

@@ -4,7 +4,7 @@
 # The logic under test is "given the p_align values readelf reports for LOAD
 # segments, does the step decide correctly", so readelf is stubbed and the LOAD
 # lines are scripted. That keeps every case deterministic, including the one that
-# cannot be built from the committed binaries: all of them are already 16KB
+# cannot be built from the staged binaries: all of them are already 16KB
 # aligned, so the failure direction has no real example to point at.
 #
 # All cases run under `bash -e`, because that is how a GitHub `run:` block

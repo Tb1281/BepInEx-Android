@@ -11,7 +11,8 @@
 # `echo >>` against the submodule in place, which made a build non-repeatable and
 # impossible to audit.
 #
-# Requires: Android NDK r25+ (r30 LTS recommended), cmake, a Linux x86_64 host,
+# Requires: Android NDK r25+ (r30 LTS recommended), CMake 3.22.1 (pinned by
+# this script; see the CMAKE_BIN selection below), a Linux x86_64 host,
 # and network access to github.com - the sources are cloned from their upstream
 # URLs, not read out of third_party/.
 set -euo pipefail
@@ -32,6 +33,26 @@ CMAKE_POLICY_VERSION_MINIMUM="${CMAKE_POLICY_VERSION_MINIMUM:-3.5}"
     echo "NDK not found at $NDK; set ANDROID_NDK_HOME" >&2
     exit 1
 }
+
+# CMake is pinned like the NDK. Different CMake releases lay out sections
+# differently, so an unpinned `cmake` turns byte-identical sources into
+# different .so files (measured: 3.31.5 output differs from 3.22.1 output from
+# the first section offset on, with an identical compiler). Prefer the
+# SDK-pinned CMake next to the NDK; override with CMAKE_BIN for a deliberate
+# toolchain move, which then rebaselines the manifest like any pin change.
+if [ -z "${CMAKE_BIN:-}" ]; then
+    if [ -x "$NDK/../../cmake/3.22.1/bin/cmake" ]; then
+        CMAKE_BIN="$NDK/../../cmake/3.22.1/bin/cmake"
+    else
+        CMAKE_BIN="$(command -v cmake)"
+    fi
+fi
+CMAKE_VERSION="$("$CMAKE_BIN" --version | head -1)"
+case "$CMAKE_VERSION" in
+    *" 3.22."*) ;;
+    *) echo "refusing: $CMAKE_BIN reports '$CMAKE_VERSION'; need CMake 3.22.x (set CMAKE_BIN to override)" >&2; exit 1 ;;
+esac
+echo "cmake: $CMAKE_BIN ($CMAKE_VERSION)"
 
 mkdir -p "$OUT" "$WORK"
 
@@ -140,7 +161,17 @@ cmake_configure() {
     elif command -v ninja >/dev/null; then
         gen=(-GNinja)
     fi
-    cmake -S "$src" -B "$bdir" \
+    # -ffile-prefix-map through the toolchain's own extension point. The NDK
+    # toolchain resets CMAKE_C/CXX_FLAGS (wiping environment CFLAGS), then
+    # prepends ANDROID_COMPILER_FLAGS(_CXX), so -D is the only channel that
+    # survives. This rewrites the absolute scratch path out of __FILE__
+    # expansions in log strings, which otherwise bake the checkout location
+    # into .rodata and make every build directory produce different bytes.
+    "$CMAKE_BIN" -S "$src" -B "$bdir" \
+        "${gen[@]}" \
+        -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+        -DANDROID_COMPILER_FLAGS="-ffile-prefix-map=$WORK/=" \
+        -DANDROID_COMPILER_FLAGS_CXX="-ffile-prefix-map=$WORK/=" \
         "${gen[@]}" \
         -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
         -DANDROID_ABI=arm64-v8a \
@@ -149,7 +180,7 @@ cmake_configure() {
         -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
         -DCMAKE_MODULE_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
         ${CMAKE_POLICY_VERSION_MINIMUM:+-DCMAKE_POLICY_VERSION_MINIMUM="$CMAKE_POLICY_VERSION_MINIMUM"}
-    cmake --build "$bdir" -j"$JOBS"
+    "$CMAKE_BIN" --build "$bdir" -j"$JOBS"
 }
 
 install_so() {

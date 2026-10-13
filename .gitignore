@@ -10,6 +10,11 @@ launcher/.kotlin/
 TheTower/
 Unlock/
 
+# Staged runtime artifacts. Built from pinned sources by CI producers or
+# scripts/*, never committed. provenance/sha256sums.txt records their hashes.
+launcher/app/src/main/jniLibs/arm64-v8a/*.so
+launcher/app/src/main/assets/*.zip
+
 # Stray runtime log pulled from a device run.
 LogOutput.log
 

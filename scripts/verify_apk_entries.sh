@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 """
 Refuse an APK whose zip local headers and central directory disagree.
 

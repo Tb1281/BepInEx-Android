@@ -164,7 +164,7 @@ jobs:
 
       - name: Re-verify provenance of the installed artifacts
         run: |
-          # The committed manifest describes the committed artifacts, not these.
+          # The manifest records the last rebaselined staging, not these bytes.
           # CI-produced artifacts legitimately differ - the managed assemblies
           # embed the commit they were built from - so provenance/sha256sums.txt
           # cannot be the comparison for this path. scripts/verify_ci_artifacts.sh

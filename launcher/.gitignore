@@ -19,7 +19,6 @@ app/.cxx/
 # Signing
 *.keystore
 *.jks
-!bepinex.keystore
 
 # OS
 .DS_Store

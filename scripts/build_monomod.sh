@@ -154,10 +154,12 @@ fi
 # external/iced is a git submodule and is imported as a project by
 # MonoMod.Core; without it the build fails with MSB4019 on a missing
 # Iced.csproj. This is why a shallow clone of MonoMod alone is not enough.
-if [ ! -f external/iced/src/csharp/Intel/Iced/Iced.csproj ]; then
-    echo "initialising external/iced submodule"
-    git submodule update --init --depth 1 external/iced
-fi
+# Always synced, never guarded by existence: a reused scratch dir from before
+# a base bump would otherwise keep the previous base's iced checkout, and the
+# build would silently mix bases. The update is a no-op when already exact.
+echo "syncing external/iced submodule to the recorded gitlink"
+git submodule update --init --depth 1 external/iced
+echo "iced: $(git -C external/iced rev-parse HEAD)"
 
 # Upstream's global.json pins an exact SDK. The SDK is resolved by the muxer
 # from the *project's* directory upwards, not by MSBuild, so --property does not

@@ -239,6 +239,18 @@ JSON
 
 rm -f "$OUT"
 # Deterministic archive: sorted file-only entries, fixed mtimes and modes.
+# Canonical epoch: the BepInEx pin's commit date. Fresh compiles always carry
+# fresh mtimes, so the zipper's newest-mtime fallback would make every
+# packaging run differ; pinning the epoch to the sources makes the archive a
+# function of the pin. Falls back (loudly) for out-of-tree sources with no
+# git date.
+PIN_EPOCH="$(git -C "$SUB" log -1 --format=%ct 2>/dev/null || true)"
+if [ -n "$PIN_EPOCH" ]; then
+    echo "archive epoch: $PIN_EPOCH (BepInEx pin commit date)"
+    export SOURCE_DATE_EPOCH="$PIN_EPOCH"
+else
+    echo "warning: no git date for $SUB; archive mtime falls back to newest input" >&2
+fi
 # `zip -qr` recorded mtimes, walked in filesystem order and wrote explicit
 # directory entries, so two runs over identical inputs produced different
 # bytes (the 47 vs 49 entry divergence). The helper honours SOURCE_DATE_EPOCH
