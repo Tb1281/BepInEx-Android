@@ -108,6 +108,12 @@ PR only when upstream actually moved. On conflict publishes diagnostics via
 `report_patch_conflict.sh`. Attests the sync-built APK and SBOM inline and
 publishes both on the release.
 
+No Dependabot: the load-bearing pins live in `provenance/*.env`, which
+Dependabot cannot see, and every bump needs human judgment plus
+on-device validation that no green check can provide. Automated bump PRs
+for Actions/Gradle/NuGet would add review noise against that discipline;
+drift reporting above is the detector.
+
 ---
 
 ## 3. Pin Sources
