@@ -287,6 +287,14 @@ jobs:
       - name: The patch gate refuses a tampered tree
         run: ./scripts/test_verify_patches.sh
 
+      # Both APK-assembling workflows used to run assembleDebug, so the
+      # release build type - R8 with the crypto PAL keep rules plus resource
+      # shrinking - never ran in CI, and sync releases shipped debug APKs.
+      # The fixture asserts the build type, the aligned artifact name, the
+      # Gradle config the switch depends on, and the dependency cache.
+      - name: The shipping APK is a release build
+        run: ./scripts/test_release_artifacts.sh
+
       # Incremental Gradle builds packaged duplicate zip entries twice. The
       # fixture crafts the doubled shape and proves the gate refuses it.
       - name: The packaged APK has no duplicate zip entries
