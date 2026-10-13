@@ -77,12 +77,19 @@ Artifacts: `out/runtime/`, `coreclr.sha256`, attestation bundle.
 
 Builds the managed framework from the pin in `provenance/bepinex.env`.
 `apply_patches.sh` clones the pinned commit, asserts it, and replays
-`patches/*.patch` with `git am --3way`. Builds MonoMod
+`patches/*.patch` with `git am --3way`, then refuses to continue unless the
+tree-object hash of the replayed sources matches
+`references/patched-tree.sha256` (`scripts/verify_patches.sh`; the tip SHA
+is never comparable because `git am` mints committer dates of "now"). Builds MonoMod
 (`25.3.7-android.1`) and Il2CppInterop (`1.5.3-android.1`) into a local NuGet
 cache, compiles `BepInEx.Unity.IL2CPP` in Release with .NET SDK `10.0.401`
 (pinned via root `global.json`), asserts the `AndroidEntrypoint.Start` entry
-point is present, and packages `BepInEx.Android.zip`. Artifacts:
-`BepInEx.Android.zip`, `bepinex-managed.sha256`, attestation bundle.
+point is present, and packages `BepInEx.Android.zip`. Emits
+`bepinex-managed.provenance.json` (as-built record: upstream pin, achieved
+patched-tree hash, patch file hashes, SDK version) and attests it alongside
+the zip. Artifacts:
+`BepInEx.Android.zip`, `bepinex-managed.sha256`,
+`bepinex-managed.provenance.json`, attestation bundle.
 
 ### `build-launcher-apk.yml`
 
@@ -105,8 +112,12 @@ Runs daily at 04:00 UTC plus manual dispatch. Reports pin drift
 one-line pin bump in `provenance/bepinex.env` when upstream moved, replays
 the queue, rebuilds, asserts the new pin is on `origin/master`, and opens a
 PR only when upstream actually moved. On conflict publishes diagnostics via
-`report_patch_conflict.sh`. Attests the sync-built APK and SBOM inline and
-publishes both on the release.
+`report_patch_conflict.sh`. Because the pin advanced, the replay runs with
+`BEPINEX_SKIP_TREE_GATE=1` and `scripts/record_patched_tree.sh` re-records
+the tree hash immediately after; the updated
+`references/patched-tree.sha256` rides the sync PR, whose own CI re-applies
+the gate from scratch. Attests the sync-built APK, SBOM and
+`provenance.json` inline and publishes all three on the release.
 
 No Dependabot: the load-bearing pins live in `provenance/*.env`, which
 Dependabot cannot see, and every bump needs human judgment plus
