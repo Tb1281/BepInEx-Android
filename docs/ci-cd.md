@@ -78,7 +78,7 @@ Artifacts: `out/runtime/`, `coreclr.sha256`, attestation bundle.
 Builds the managed framework from the pin in `provenance/bepinex.env`.
 `apply_patches.sh` clones the pinned commit, asserts it, and replays
 `patches/*.patch` with `git am --3way`. Builds MonoMod
-(`25.3.7-android.1`) and Il2CppInterop (`1.5.2-android.3`) into a local NuGet
+(`25.3.7-android.1`) and Il2CppInterop (`1.5.3-android.1`) into a local NuGet
 cache, compiles `BepInEx.Unity.IL2CPP` in Release with .NET SDK `10.0.401`
 (pinned via root `global.json`), asserts the `AndroidEntrypoint.Start` entry
 point is present, and packages `BepInEx.Android.zip`. Artifacts:

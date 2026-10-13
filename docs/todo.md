@@ -18,6 +18,7 @@
 - [x] On-device modpack run: PASS — same device class and game. Harmony patch applied and changed game behaviour; crash signatures zero.
 - [x] Deterministic-zip re-verification: PASS on boot/extraction path. Rebuilt bytes behave identically across runs; post-boot native crashes exonerated as pre-existing by A/B.
 - [x] Public-tree baseline (2026-10-13): rebuilt-from-pins bytes boot vanilla on-device — The Tower, Unity 6000.3.15f1: `Chainloader startup complete`, 29,197 methods restored, export stub resolved (1 hop), crash signatures zero, game process alive past 4 minutes.
+- [x] Cpp2IL closure migration (2026-10-13): unrestorable `development.1452` pin moved to published `pre-release.21`, interop renamed `1.5.3-android.1`. Forced interop regeneration on-device: 29,197 methods, `startup complete`, zero signatures.
 
 ### Phase 2: Upstream Pin Drift Monitoring [COMPLETE]
 

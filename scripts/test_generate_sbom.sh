@@ -69,7 +69,7 @@ for env in bepinex dobby pine monomod il2cppinterop dotnet-runtime; do
 done
 # The commit values above are long SHAs; also assert the short, human-visible
 # package versions appear as versionInfo, not only buried in a comment.
-for needle in "25.3.7-android.1" "1.5.2-android.3" "10.0.12"; do
+for needle in "25.3.7-android.1" "1.5.3-android.1" "10.0.12"; do
     grep -qF -- "$needle" "$OUT" || { echo "        missing version $needle"; pins_ok=0; }
 done
 if [ "$pins_ok" = 1 ]; then ok "all six pins present with exact values"; else fail "a pin value is missing from the SBOM"; fi

@@ -11,12 +11,13 @@ Upstream changes live as serialized patches in `patches/`, replayed with
 ./scripts/report_patch_conflict.sh  # print failing patch, files, markers
 ```
 
-Patches `0001`-`0012` cover: Android paths, logcat logging, the
+Patches `0001`-`0013` cover: Android paths, logcat logging, the
 `AndroidEntrypoint` native entrypoint, libfusion detour routing with export
 thunk resolution, Android solution retargeting, Mono/runtime and console
 driver removal, desktop target stripping, AArch64 export-thunk arithmetic,
-Il2CppInterop/MonoMod version pins, and ARM64 hook guards. Never skip a
-patch: a skip ships an archive missing that adaptation.
+Il2CppInterop/MonoMod version pins, ARM64 hook guards, and the Cpp2IL
+published-prerelease pin. Never skip a patch: a skip ships an archive
+missing that adaptation.
 
 ## 2. Native-to-Managed Contract (`libfusion.so`)
 

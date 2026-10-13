@@ -61,7 +61,7 @@ index 2ffd99d..a05d232 100644
 --- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
 +++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
 @@ -22,7 +22,7 @@
-         <PackageReference Include="Il2CppInterop.Runtime" Version="[1.5.2-android.3]" />
+         <PackageReference Include="Il2CppInterop.Runtime" Version="[1.5.3-android.1]" />
          <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
          <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="6.0.1" />
 -        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.4-star" />
