@@ -12,6 +12,7 @@ on:
       - 'scripts/zip_deterministic.py'
       - 'scripts/build_il2cppinterop.sh'
       - 'scripts/build_monomod.sh'
+      - 'scripts/restore_and_build.sh'
       - 'provenance/monomod.env'
       - 'references/**'
       - 'provenance/il2cppinterop.env'
@@ -96,42 +97,10 @@ jobs:
       - name: Rebuild the MonoMod and Il2CppInterop packages
         run: ./scripts/build_packages_parallel.sh
 
-      - name: Restore dependencies
-        run: |
-          # pipefail is required here, not cosmetic. GitHub runs a `run:` block
-          # with `bash -e {0}` and no pipefail, so `dotnet restore | tee` would
-          # report tee's exit status (always 0) and a restore that failed
-          # outright would leave an empty log, pass the grep below, and print
-          # "no version substitution" - the step that exists to catch exactly
-          # that class of silent substitution.
-          set -o pipefail
-          . ./scripts/bepinex_paths.sh
-          dotnet restore "$BEPINEX_SRC/BepInEx.sln" -p:SolutionDir="$BEPINEX_SRC/" -v normal 2>&1 |
-            tee /tmp/restore.log
-          # A pin that cannot be resolved must fail here, not degrade to a
-          # different package with a warning. NU1602 is that for a stable
-          # version; NU1603 is the same for a prerelease, which is what the
-          # -android package versions are. Missing only NU1602 let this job
-          # pass while official MonoMod - whose CreateCurrentSystem throws
-          # NotImplementedException on Android - was substituted for ours.
-          #
-          # Scoped to the packages this repository builds: upstream BepInEx's
-          # own Samboy063.Cpp2IL.Core pin has never resolved and is not ours to
-          # silently accept either, but failing on it here would mask ours.
-          if grep -E 'NU160[23]' /tmp/restore.log | grep -qiE 'MonoMod\.|Il2CppInterop\.'; then
-            echo "::error::a package this repository builds fell back to a different version"
-            grep -E 'NU160[23]' /tmp/restore.log | grep -iE 'MonoMod\.|Il2CppInterop\.'
-            exit 1
-          fi
-          echo "no version substitution"
-
-      - name: Build the IL2CPP runtime
-        run: |
-          # SolutionDir is pinned so every project writes to one predictable tree
-          # regardless of whether it is reached through the solution or directly.
-          . ./scripts/bepinex_paths.sh
-          dotnet build "$BEPINEX_SRC/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj" \
-            -c Release --no-restore -p:GeneratePackageOnBuild=false -p:SolutionDir="$BEPINEX_SRC/"
+      - name: Restore and build the managed tree
+        # Single implementation in scripts/restore_and_build.sh, shared with
+        # the verify-provenance staging: same queue, same feed, same checks.
+        run: ./scripts/restore_and_build.sh
 
       - name: Package BepInEx.Android.zip
         run: |
