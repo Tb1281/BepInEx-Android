@@ -22,8 +22,8 @@
 # this shell rather than in a subshell whose value would be lost. The pipe form
 # (`... | while read`) runs the body in a subshell: an assignment there is
 # discarded, so the verdict depends entirely on whether the pipeline happens to
-# return non-zero. That is the same construct verify_prebuilts.sh uses for the
-# committed binaries; this is now the third caller of one shared function.
+# return non-zero. That is the same construct verify_prebuilts.sh uses over the
+# staged binaries; this is now the third caller of one shared function.
 set -euo pipefail
 
 [ "$#" -gt 0 ] || {

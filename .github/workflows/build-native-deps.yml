@@ -58,11 +58,11 @@ jobs:
           ./scripts/build_native_deps.sh
 
       - name: Check 16KB page alignment
-        # Only the two libraries this job builds. The other nine .so in jniLibs
-        # are committed binaries this job never writes; they are checked against
-        # the manifest by verify-prebuilts.sh, which also asserts no unlisted
-        # binary is shipped. Re-checking them here cost a readelf per file and
-        # reported nothing this job could act on.
+        # Only the two libraries this job builds. The other nine .so are staged
+        # by other producers and checked against the manifest by
+        # verify-prebuilts.sh, which also asserts no unlisted binary is shipped.
+        # Re-checking them here cost a readelf per file and reported nothing
+        # this job could act on.
         run: |
           ./scripts/check_elf_alignment.sh \
             launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so \
