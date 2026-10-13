@@ -93,6 +93,29 @@ else
     fail "missing script exited $rc"
 fi
 
+# 6. isolated TMPDIR per build: two concurrent dotnet processes sharing
+#    $TMPDIR race on $TMPDIR/.dotnet/shm (EEXIST on mkdir). Each build must
+#    see a distinct TMPDIR.
+cat > "$FIX/tmp-a.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "TMPDIR=$TMPDIR"
+STUB
+cat > "$FIX/tmp-b.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "TMPDIR=$TMPDIR"
+STUB
+chmod +x "$FIX/tmp-a.sh" "$FIX/tmp-b.sh"
+out="$("$HELPER" "$FIX/tmp-a.sh" "$FIX/tmp-b.sh" 2>&1)"; rc=$?
+tmp_a="$(printf '%s\n' "$out" | grep -m1 '^TMPDIR=' | cut -d= -f2-)"
+tmp_b="$(printf '%s\n' "$out" | grep '^TMPDIR=' | tail -1 | cut -d= -f2-)"
+if [ "$rc" -eq 0 ] && [ -n "$tmp_a" ] && [ -n "$tmp_b" ] \
+&& [ "$tmp_a" != "$tmp_b" ] \
+&& [ "$tmp_a" != "${TMPDIR:-/tmp}" ] && [ "$tmp_b" != "${TMPDIR:-/tmp}" ]; then
+    ok "each build gets a distinct TMPDIR ($tmp_a vs $tmp_b)"
+else
+    fail "TMPDIR not isolated: a='$tmp_a' b='$tmp_b' rc=$rc"
+fi
+
 echo ""
 if [ "$fails" -eq 0 ]; then echo "ALL FIXTURE CASES PASSED"; else echo "$fails CASE(S) FAILED"; fi
 exit "$fails"
