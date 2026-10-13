@@ -227,23 +227,18 @@ object FirebaseComponentDiscoveryFix {
                         }
 
                         val appId = readString("google_app_id")
-                            ?: if (gamePackage == "com.TechTreeGames.TheTower") "1:219234862051:android:53efc5501a98c8297c56d6" else null
                             ?: return
 
                         val apiKey = readString("google_api_key")
-                            ?: if (gamePackage == "com.TechTreeGames.TheTower") "AIzaSyBwvC0nhEwiBYHuQz3lX2nfybw0oTDzuu8" else null
                             ?: return
 
                         val dbUrl = readString("firebase_database_url")
                         val gaTrackingId = readString("ga_trackingId")
                         val gcmSenderId = readString("gcm_defaultSenderId")
-                            ?: if (gamePackage == "com.TechTreeGames.TheTower") "219234862051" else null
 
                         val storageBucket = readString("google_storage_bucket")
-                            ?: if (gamePackage == "com.TechTreeGames.TheTower") "the-tower-4f99a.appspot.com" else null
 
                         val projectId = readString("project_id")
-                            ?: if (gamePackage == "com.TechTreeGames.TheTower") "the-tower-4f99a" else null
 
                         // 1. Try 7-arg constructor
                         val constructor = optionsClass.declaredConstructors.firstOrNull { c ->
