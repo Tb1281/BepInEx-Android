@@ -198,6 +198,7 @@ while read -r name tfm; do
     sdk_override
     "$DOTNET" build "$project" -c Release \
         -p:PackageVersion="$MONOMOD_PACKAGE_VERSION" -p:Version="$MONOMOD_PACKAGE_VERSION" \
+        -p:RestoreLockedMode=true \
         -p:GeneratePackageOnBuild=false >/dev/null
 done <<EOF
 $MONOMOD_COMPONENTS

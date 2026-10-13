@@ -82,6 +82,14 @@ else
     git apply --quiet "$PATCH"
 fi
 
+# NuGet lock files, vendored in references/nuget-locks and staged here like
+# apply_patches.sh does for the BepInEx tree. Absence is fatal: an unlocked
+# restore silently floats transitive versions per restore, which is how
+# identical pins compiled to different assemblies on different machines.
+LOCK_SRC="$ROOT/references/nuget-locks/il2cppinterop"
+[ -d "$LOCK_SRC" ] || { echo "missing NuGet lock directory: $LOCK_SRC" >&2; exit 1; }
+cp -r "$LOCK_SRC/." "$WORK/"
+
 # Upstream's global.json pins SDK 8.0.0 with rollForward=latestMajor, so the
 # muxer resolves to the newest installed major — .NET 11 RC on any machine
 # that has one, while CI (10.0.401 only) builds the same tree with 10.0.401.
@@ -115,7 +123,7 @@ JSON
 }
 
 sdk_override
-dotnet restore --verbosity minimal -p:Version="$PACKAGE_VERSION"
+dotnet restore --verbosity minimal -p:Version="$PACKAGE_VERSION" -p:RestoreLockedMode=true
 sdk_override
 dotnet build -c Release --no-restore -p:Version="$PACKAGE_VERSION"
 for proj in Il2CppInterop.Common Il2CppInterop.Runtime Il2CppInterop.HarmonySupport Il2CppInterop.Generator; do
