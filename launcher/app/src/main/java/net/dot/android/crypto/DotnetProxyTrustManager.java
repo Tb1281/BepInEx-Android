@@ -43,11 +43,11 @@
  *   .NET 11.0.0-rc.1        .NET 10.0.12
  *   <init>(J X509TrustManager String)   <init>(J)
  *   verifyRemoteCertificate(J String)Z  verifyRemoteCertificate(J)Z
- *   + platformTrustManager              (없음)
- *   + platformTrustManagerExtensions   (없음)
- *   + targetHost                        (없음)
- *   + getServerTrustValidationError     (없음)
- *   + getClientTrustValidationError     (없음)
+ *   + platformTrustManager              (absent)
+ *   + platformTrustManagerExtensions   (absent)
+ *   + targetHost                        (absent)
+ *   + getServerTrustValidationError     (absent)
+ *   + getClientTrustValidationError     (absent)
  *
  * .NET 10 delegates the whole chain decision to native code and ignores both the
  * chain and the auth type; .NET 11 evaluates the platform trust manager in Java

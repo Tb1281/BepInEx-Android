@@ -6,8 +6,9 @@ The authoritative, detailed table lives in [`provenance/SOURCES.md`](../provenan
 the machine-checked checksums live in [`provenance/sha256sums.txt`](../provenance/sha256sums.txt)
 and are enforced by `scripts/verify_prebuilts.sh` before any APK is produced.
 
-There is no default remote for downloading prebuilts. `scripts/download_prebuilts.sh`
-requires `RELEASE_BASE_URL` to point at your own CI output.
+There is no default remote for downloading staged artifacts. CI producers build
+them from the pins in `provenance/*.env`; local builds produce them with
+`scripts/*` (see the root README, Building from Source).
 
 ---
 
@@ -45,7 +46,7 @@ repackager or an unofficial mirror.
 | `libSystem.Native.so` | Platform abstraction layer |
 | `libSystem.IO.Compression.Native.so` | zlib PAL |
 | `libSystem.Globalization.Native.so` | ICU/NLS shim |
-| `libSystem.Security.Cryptography.Native.Android.so` | **Crypto PAL** — exports `AndroidCryptoNative_*`, reaches the platform crypto through `liblog` (BoringSSL) |
+| `libSystem.Security.Cryptography.Native.Android.so` | **Crypto PAL** — exports `AndroidCryptoNative_*`, reaches Android platform crypto (Conscrypt) through JNI |
 | `libmscordaccore.so` | Diagnostics data access component |
 | `libmscordbi.so` | Diagnostics IPC server |
 | `dotnet.zip` (BCL, 172 assemblies) | `runtimes/android-arm64/lib/net10.0/` of the same package |
@@ -59,15 +60,20 @@ BCL references `System.IO.Ports.Native`, so it is no longer shipped.
 The same package id publishes a GA build for every .NET 10 servicing release
 (10.0.0 … 10.0.12), each carrying `libcoreclr.so`, `libclrjit.so`, the platform
 PALs and a `net10.0` BCL. Fetching rather than cross-building was therefore a
-choice available on .NET 10 as well as on .NET 11; see `docs/progress.md` stage 10
-for why .NET 10 is the pinned one.
+choice available on .NET 10 as well as on .NET 11; see `docs/progress.md`
+ADR 2 for why .NET 10 is the pinned one.
 
 ### B. Hooking frameworks
 
 | Binary | Upstream | Built by | License |
 | :--- | :--- | :--- | :--- |
-| `libdobby.so` | `third_party/dobby` → [canyie/dobby](https://github.com/canyie/dobby) | `build-native-deps` | Apache-2.0 |
-| `libpine.so` | `third_party/Pine` → [canyie/Pine](https://github.com/canyie/Pine) | `build-native-deps` | GPL-3.0 |
+| `libdobby.so` | `provenance/dobby.env` → [canyie/dobby](https://github.com/canyie/dobby) | `build-native-deps` | Apache-2.0 |
+| `libpine.so` | `provenance/pine.env` → [canyie/Pine](https://github.com/canyie/Pine) | `build-native-deps` | Anti 996 v1.0 |
+
+> License compatibility is an open review item, not a resolved claim: the
+> GPL-3.0 launcher links the Anti 996-licensed Pine (native `libpine.so` and
+> the Java API). Tracked alongside the Pine R8 vendoring decision in
+> `docs/todo.md`.
 
 Dobby is the inline hook engine behind `libfusion`'s `hook`/`unhook` exports, and
 is what the managed `NativeDetour` drives through Il2CppInterop. Pine hooks the ART
@@ -118,9 +124,8 @@ No proprietary game binary is in this repository.
 ## 5. Verification and automation
 
 ```bash
-./scripts/verify_prebuilts.sh    # checksums + 16KB LOAD alignment + no unlisted binaries
-./scripts/verify_crypto_pal.sh   # platform BoringSSL PAL only
-./scripts/patch_game_unity.sh <official libunity.so>   # optional offline: DT_NEEDED libmain.so injection + 16KB alignment
+./launcher/scripts/verify_prebuilts.sh    # checksums + 16KB LOAD alignment + no unlisted binaries
+./launcher/scripts/verify_crypto_pal.sh   # platform PAL only, no OpenSSL/BoringSSL
 ```
 
 `preparePrebuilts` (see `app/build.gradle.kts`) runs the first two as part of every

@@ -15,7 +15,7 @@
 # artifact it belongs to. The consumer downloaded all three and then never read
 # them. build-launcher-apk's own comment said so plainly:
 #
-#   "The committed manifest describes the committed artifacts. CI-produced
+#   "The manifest describes the last rebaselined staging. CI-produced
 #    artifacts legitimately differ, so the checksum attestation for this build
 #    is recorded below instead."
 #
@@ -29,7 +29,7 @@
 #   - The bytes inside the packaged APK. AGP strips native libraries while
 #     packaging, so for libdobby.so, libpine.so and libc++_shared.so the shipped
 #     bytes are NOT the bytes recorded here - measured, in docs/progress.md
-#     under "AGP가 패키징 때 네이티브 3종을 strip한다": libpine.so goes from
+#     under the AGP native-strip note: libpine.so goes from
 #     926,544 bytes to 71,912. This gate covers the inputs to packaging, not the
 #     package. It is still worth having: it is the last point at which a mismatch
 #     is attributable to a named producing run rather than to packaging, and the
