@@ -57,7 +57,7 @@
         android:allowBackup="false"
         android:largeHeap="true"
         android:requestLegacyExternalStorage="true"
-        android:label="BepInEx Launcher"
+        android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"

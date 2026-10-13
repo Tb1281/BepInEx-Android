@@ -117,7 +117,42 @@ object FirebaseComponentDiscoveryFix {
 
         hookComponentDiscovery(gameClassLoader, gamePackage)
         hookFirebaseOptions(gameClassLoader, gamePackage, gameContext)
+        observeDatabaseGetInstance(gameClassLoader)
         isInstalled = true
+    }
+
+    /**
+     * Observe the Java FirebaseDatabase.getInstance call that the C++ Database
+     * init depends on. Logs whether it returns an instance or throws, without
+     * changing its outcome. Silent unless the game actually reaches it.
+     */
+    private fun observeDatabaseGetInstance(gameClassLoader: ClassLoader) {
+        val dbClass = try {
+            gameClassLoader.loadClass("com.google.firebase.database.FirebaseDatabase")
+        } catch (_: Throwable) {
+            return
+        }
+        for (m in dbClass.declaredMethods) {
+            if (m.name != "getInstance") continue
+            try {
+                m.isAccessible = true
+                Pine.hook(m, object : MethodHook() {
+                    override fun afterCall(callFrame: Pine.CallFrame) {
+                        try {
+                            val t = if (callFrame.hasThrowable()) callFrame.throwable else null
+                            BepInExLog.i(
+                                "FirebaseDatabase.getInstance -> " +
+                                    "result=${if (callFrame.result != null) "OK" else "null"} " +
+                                    "throwable=${t?.javaClass?.simpleName}:${t?.message?.take(160)}"
+                            )
+                        } catch (_: Exception) {
+                        }
+                    }
+                })
+            } catch (e: Exception) {
+                BepInExLog.e("Failed to observe FirebaseDatabase.getInstance", e)
+            }
+        }
     }
 
     private fun hookComponentDiscovery(gameClassLoader: ClassLoader, gamePackage: String) {

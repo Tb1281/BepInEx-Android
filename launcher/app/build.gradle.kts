@@ -8,13 +8,13 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        // Single package, two build types (debug/release). The test-variant
-        // applicationId override (-Pbepinex.applicationId) was removed
-        // 2026-10-12: four install variants caused more confusion than the
-        // isolation was worth, and every device record since Phase 4 was made
-        // against the test package only to protect a production install that
-        // the new build supersedes anyway.
+        // Debug and release install side by side: release carries an
+        // applicationIdSuffix (see buildTypes below), so a release APK never
+        // overwrites the debug install. The test-variant applicationId
+        // override (-Pbepinex.applicationId) was removed 2026-10-12; the
+        // suffix below replaces it.
         applicationId = "com.bepinex.android"
+        manifestPlaceholders["appLabel"] = "BepInEx Launcher"
         minSdk = 28
         targetSdk = 35
         versionCode = 184
@@ -50,9 +50,12 @@ android {
 
     buildTypes {
         release {
-            // Still the debug keystore, so a release build installs over an
-            // existing install of the same applicationId. See the note on
-            // signing below before distributing anything.
+            // Side-by-side with debug: release installs as
+            // com.bepinex.android.release, so it never overwrites the debug
+            // install. Still the debug keystore (see signing note below).
+            applicationIdSuffix = ".release"
+            versionNameSuffix = "-release"
+            manifestPlaceholders["appLabel"] = "BepInEx Release"
             signingConfig = signingConfigs.getByName("debug")
             // The bulk of this APK was androidx.compose.material.icons.extended:
             // 21,320 icon classes (4,264 x 5 variants) of which this app uses 33.
