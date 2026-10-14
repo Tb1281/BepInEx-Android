@@ -22,7 +22,11 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$REPO/scripts/mark_verified.sh"
 
 HEAD_SHA="$(git -C "$REPO" rev-parse HEAD)"
-PREV_SHA="$(git -C "$REPO" rev-parse HEAD~1)"
+# CI checks out shallow (fetch-depth 1), so HEAD~1 does not exist there.
+# EXISTING_SHA is only ever compared as a string by mark_verified.sh (the
+# presence guard applies to the target, not to the stored value), so fall
+# back to a distinct well-formed hex that still exercises the MOVE branch.
+PREV_SHA="$(git -C "$REPO" rev-parse HEAD~1 2>/dev/null || echo 1111111111111111111111111111111111111111)"
 FAKE_SHA="0000000000000000000000000000000000000000"
 
 mkdir -p "$WORK/bin"
