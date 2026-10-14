@@ -321,10 +321,17 @@ jobs:
       # pinned manifest entry instead of shipping.
       - name: The NDK-provided libc++ is pinned
         run: ./scripts/test_ndk_libcxx.sh
-      - run: ./scripts/test_emit_provenance.sh
-      - run: ./scripts/test_mark_verified.sh
-        - run: ./scripts/test_ci_failure_notice.sh
-            - name: The staged NDK libc++ matches the pinned hash
+
+      - name: The provenance record names what was built
+        run: ./scripts/test_emit_provenance.sh
+
+      - name: The verified marker moves only on green main
+        run: ./scripts/test_mark_verified.sh
+
+      - name: Failure notices update one rolling issue
+        run: ./scripts/test_ci_failure_notice.sh
+
+      - name: The staged NDK libc++ matches the pinned hash
         run: ./scripts/verify_ndk_libcxx.sh
 
       - name: Checksums and 16KB page alignment
