@@ -29,15 +29,28 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      # Egress audit on every job. A compromised action or build script
-      # exfiltrating data is otherwise invisible: the log shows green steps and
-      # nothing records where the runner talked to. `audit` only records — it
-      # never blocks — so this cannot break a build. Graduating to `block`
-      # needs a per-job allow-list measured from these logs first; an
-      # unmeasured block list is how a build fails on a mirror it never named.
+      # Egress pilot: blocks with an explicit allow-list measured from three
+      # audit-mode runs (38359991924, 38357879637, 38356171585): checkout and
+      # upstream clones (github.com, codeload on some runs), the NDK install
+      # (dl.google.com via sdkmanager), the artifact blob storage the upload
+      # step writes to (*.blob.core.windows.net), and the Sigstore Public
+      # Good instance the attest step signs through (fulcio/rekor — without
+      # them the attest degrades to the fallback bundle even on a public
+      # repo, see build-bepinex.yml). No dotnet/nuget/gradle hosts: this job
+      # compiles only C++ via the NDK. Rollback is one line back to audit.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+            *.blob.core.windows.net
+            dl.google.com
+            fulcio.sigstore.dev
+            rekor.sigstore.dev
 
       # No submodules: build_native_deps.sh clones dobby and Pine from the pins in
       # provenance/dobby.env and provenance/pine.env, and asserts each clone landed
