@@ -39,6 +39,7 @@ on:
       - 'launcher/app/src/main/**'
       - 'scripts/mark_verified.sh'
       - 'scripts/ci_failure_notice.sh'
+      - 'scripts/pin_drift_notice.sh'
       - 'scripts/test_*.sh'
       - 'scripts/check_elf_alignment.sh'
       - 'global.json'
@@ -86,6 +87,7 @@ on:
       - 'launcher/app/src/main/**'
       - 'scripts/mark_verified.sh'
       - 'scripts/ci_failure_notice.sh'
+      - 'scripts/pin_drift_notice.sh'
       - 'scripts/test_*.sh'
       - 'scripts/check_elf_alignment.sh'
       - 'global.json'
@@ -376,6 +378,13 @@ jobs:
 
       - name: Failure notices update one rolling issue
         run: ./scripts/test_ci_failure_notice.sh
+
+      # Drift reports were summary-only on green runs, which nobody opens on
+      # a green run - so drift was detected and invisible at once. The
+      # fixture proves the rolling pin-drift issue opens, updates, and
+      # closes, and that the report payload reaches the issue body.
+      - name: Drift notices update one rolling issue
+        run: ./scripts/test_pin_drift_notice.sh
 
       # The release page is the one artifact surface no gate above touches:
       # producers attest, the shipping path checks inputs, but nobody ever
