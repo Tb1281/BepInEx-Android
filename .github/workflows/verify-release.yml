@@ -1,0 +1,49 @@
+name: verify-release
+on:
+  # Every published release is consumer-verified automatically: download what
+  # a user would download and check it the way a user should (checksum, then
+  # the Sigstore statement for the APK). An attestation nobody verifies is a
+  # sticker; a release job that uploaded a stale APK would otherwise look
+  # identical to a good one from the releases page.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to consumer-verify (e.g. sync-20261014-5b766a3)'
+        required: true
+        type: string
+
+jobs:
+  consumer-verify:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read      # download the release assets
+      issues: write       # scripts/ci_failure_notice.sh only
+    steps:
+      # Egress audit on every job (see sync-upstream.yml): records, never
+      # blocks. This job talks to the release API, Rekor/TUF (via gh
+      # attestation verify), and the issue API on failure - all measured
+      # here before any block pilot is ever considered for it.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: audit
+
+      - name: Consumer-verify the published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          ./scripts/verify_release_assets.sh "$TAG"
+
+      # Record failure to Issue or close open issue on success
+      - name: Record the failure, or clear the record
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            ./scripts/ci_failure_notice.sh verify-release passed
+          else
+            ./scripts/ci_failure_notice.sh verify-release failed
+          fi
