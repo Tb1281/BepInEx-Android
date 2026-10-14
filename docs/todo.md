@@ -57,8 +57,8 @@
 
 ### Priority 1: Trust
 
-- [ ] Sigstore/Rekor attestation on all release artifacts (requires public repo); publish SBOM alongside APK.
-- [ ] Egress `block` rollout: native-deps, runtime fetch, sync-upstream, then launcher-apk last (widest Gradle egress). Per-job allow-lists measured from `audit` logs; fixture asserts per-job policy fail-closed both ways.
+- [x] Sigstore/Rekor attestation on all release artifacts (2026-10-14): repo is public and every producer attests officially — verified same-day across runtime, hook engines, managed framework, sync APK, and shipping APK (`Attestation signed using certificate from Public Good Sigstore instance`; consumer gate reports `Sigstore bundle` on all 12 inputs, no fallbacks). SBOM published alongside the APK on both release paths.
+- [x] Egress `block` rollout (2026-10-14): all seven jobs block with measured allow-lists — `verify-provenance:provenance`, `:patch-queue`, `build-bepinex:build`, `build-native-deps:build`, `fetch-runtime:fetch-runtime`, `sync-upstream:sync`, `build-launcher-apk:apk` last. Each graduated after a green blocked run; Sigstore (fulcio/rekor, plus TUF hosts on the consumer side) included from measurement so attestations stay official on the public repo. Rollback per job is one line to `audit`.
 - [ ] Formal SLSA 3 level once public.
 
 ### Priority 2: CI/CD
