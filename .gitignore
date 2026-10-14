@@ -26,3 +26,5 @@ LogOutput.log
 # run left a plausible-looking failure record in the tree and it was committed by
 # accident. The script is fixed; this is here so a regression cannot land again.
 /failure.body
+# Test screenshots (not for commit)
+screenshots/
