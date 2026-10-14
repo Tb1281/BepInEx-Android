@@ -43,7 +43,7 @@ bytes read from the repository:
   `test_attestation_gate.sh`, `test_upstream_pins.sh`,
   `test_workflow_triggers.sh`, `test_generate_sbom.sh`,
   `test_emit_provenance.sh`, `test_mark_verified.sh`, `test_ci_failure_notice.sh`,
-  `test_launcher_compile_gate.sh`).
+  `test_launcher_compile_gate.sh`, `test_verify_release_assets.sh`).
 - Asserts push and pull-request path filters agree
   (`test_workflow_triggers.sh`); when adding a path, add it to both triggers.
 - On success moves the `verified` tag to HEAD (`scripts/mark_verified.sh`).
