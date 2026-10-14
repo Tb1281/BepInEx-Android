@@ -1,0 +1,212 @@
+name: release-tag
+# Tag-based general releases: push a `v*` tag and this builds the full
+# release APK from the pinned sources at that tag, then ships it through the
+# shared shipping path (ship-release.yml).
+#
+# Unlike sync-upstream there is no upstream-pin movement detection here — a
+# tag is an explicit human decision to cut a release from exactly this
+# commit, so the build runs unconditionally and the patch-queue tree gate
+# stays enforced (fail-closed: the pin did not move, so the tree must match).
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write        # scripts/ci_failure_notice.sh only
+    steps:
+      # Egress block: the build half of the sync-upstream allow-list. The
+      # release half (uploads.github.com, cafe.github.com) and Sigstore
+      # (fulcio/rekor) live in ship-release.yml, which mints the attestation
+      # and creates the release. Rollback is one line back to audit.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+            *.blob.core.windows.net
+            builds.dotnet.microsoft.com
+            dotnetcli.azureedge.net
+            dotnetbuilds.blob.core.windows.net
+            api.nuget.org
+            nuget.bepinex.dev
+            dl.google.com
+            api.adoptium.net
+            services.gradle.org
+            downloads.gradle.org
+            release-assets.githubusercontent.com
+            plugins.gradle.org
+            repo.maven.apache.org
+            repo1.maven.org
+            maven.google.com
+            maven.aliyun.com
+            jitpack.io
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # No download caches — see build-bepinex.yml for why (323 MB vs the
+      # private 500 MB quota blocked verification the day they were added).
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.401'
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Same Gradle cache as build-launcher-apk.yml: public repository, 10 GB
+      # quota. Keyed on the dependency inputs (see that workflow for why the
+      # cache is safe here).
+      - name: Cache Gradle dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('launcher/gradle/libs.versions.toml', 'launcher/**/build.gradle.kts', 'launcher/settings.gradle.kts', 'launcher/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Prepare Android SDK and NDK
+        run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
+
+      - name: Fetch the pinned .NET runtime pack
+        run: scripts/fetch_dotnet_runtime.sh out/runtime
+
+      # Both package sets before anything that restores against local-nuget.
+      # Built concurrently (waits for both, fails if either failed); the patch
+      # replay below touches only the BepInEx clone, so building Il2CppInterop
+      # before it rather than after changes no dependency, only wall time.
+      - name: Rebuild the MonoMod and Il2CppInterop packages
+        run: ./scripts/build_packages_parallel.sh
+
+      # No BEPINEX_SKIP_TREE_GATE here: unlike the sync path (where the pin
+      # just advanced and the tree is *supposed* to differ from the recorded
+      # hash), a tag release builds the pinned tree as-is, so the gate stays
+      # enforced. On conflict this fails, triggering ci_failure_notice.
+      - name: Replay the Android patch queue
+        run: ./scripts/apply_patches.sh
+
+      - name: Restore and build the managed tree
+        # Single implementation in scripts/restore_and_build.sh, shared with
+        # build-bepinex.yml and verify-provenance. Without it there is no
+        # build output for the packaging step below, which fails with
+        # "build output not found".
+        run: ./scripts/restore_and_build.sh
+
+      - name: Package BepInEx managed framework
+        run: ./scripts/package_bepinex_android.sh
+
+      - name: Build native hook engines
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          ./scripts/build_native_deps.sh
+
+      - name: Stage the runtime, hook engines, and framework for Gradle
+        # Same script the verify-provenance staging uses: asserts the hook
+        # engines, copies the runtime .so set plus both zips into jniLibs
+        # and assets, and copies libc++ from the NDK. Without it jniLibs holds
+        # only dobby/pine and the crypto-PAL gate fails on the missing
+        # libcoreclr.so.
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          ./scripts/stage_launcher_inputs.sh out/runtime out/BepInEx.Android.zip
+
+      - name: Verify 16KB alignment and crypto PAL
+        run: |
+          ./scripts/check_elf_alignment.sh launcher/app/src/main/jniLibs/arm64-v8a
+          ./launcher/scripts/verify_crypto_pal.sh launcher/app/src/main/jniLibs/arm64-v8a
+          # Same boundary as build-launcher-apk: the NDK-copied libc++ has no
+          # producing run, so the producer gates skip it. The manifest entry
+          # covers it (NDK 30.0.16248370 on both paths).
+          ./scripts/verify_ndk_libcxx.sh
+
+      # Release, not debug: a tag release is a distributable artifact, so it
+      # gets the R8 + resource-shrunk build (see build-launcher-apk.yml for
+      # why). Signing still uses the debug keystore.
+      - name: Assemble and 16KB-align release APK
+        working-directory: launcher
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          APK="app/build/outputs/apk/release/app-release.apk"
+          OUT="app/build/outputs/apk/release/app-release-aligned.apk"
+          ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
+          "$ZIPALIGN" -f -P 16 4 "$APK" "$OUT"
+
+      # Local headers and central directory must agree (incremental builds
+      # have shipped duplicates twice); see build-launcher-apk.yml.
+      - name: The packaged APK has no duplicate zip entries
+        working-directory: launcher
+        run: |
+          ../scripts/verify_apk_entries.sh app/build/outputs/apk/release/app-release-aligned.apk
+
+      # Source SBOM for this release: same generator the sync path uses, so a
+      # tag release and a sync release describe the same pins. Its own step
+      # (not inside the ship job) because the attestation there covers both
+      # files — attesting before the SBOM exists would sign the APK next to
+      # nothing.
+      - name: Generate the source SBOM
+        run: python3 scripts/generate_sbom.py --output sbom.spdx.json
+
+      # As-built record for this release: the upstream pin, the patched-tree
+      # hash the replay actually produced, the patch files and the SDK.
+      - name: Emit build provenance
+        run: ./scripts/emit_provenance.sh provenance.json
+
+      # The shipping path (ship-release.yml, the ship job below) runs on a
+      # fresh runner: the APK, SBOM and provenance cross the job boundary as
+      # this artifact.
+      - name: Upload the shipping inputs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: tag-ship-inputs
+          path: |
+            launcher/app/build/outputs/apk/release/app-release-aligned.apk
+            sbom.spdx.json
+            provenance.json
+          retention-days: 1
+
+      # Record failure to Issue or close open issue on success
+      - name: Record the failure, or clear the record
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            ./scripts/ci_failure_notice.sh release-tag passed
+          else
+            ./scripts/ci_failure_notice.sh release-tag failed
+          fi
+
+  # The shared shipping path (attest + checksums + notes + `gh release
+  # create`). The version shown everywhere is the pushed tag itself.
+  ship:
+    needs: build
+    permissions:
+      contents: write      # GitHub Release creation
+      attestations: write  # mint the APK+SBOM+provenance attestation
+      id-token: write
+    uses: ./.github/workflows/ship-release.yml
+    with:
+      tag_name: ${{ github.ref_name }}
+      release_title: 'BepInEx Android ${{ github.ref_name }}'
+      notes_header: '### 🚀 BepInEx Android ${{ github.ref_name }}'
+      notes_extra: |-
+        - **Version:** `${{ github.ref_name }}`
+        - **Build:** release (R8 minification + resource shrinking)
+      artifact_name: tag-ship-inputs
