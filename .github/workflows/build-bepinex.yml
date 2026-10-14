@@ -35,11 +35,15 @@ jobs:
     steps:
       # Egress pilot: blocks with an explicit allow-list covering setup-dotnet
       # (Microsoft install endpoints), upstream git clones (github.com), the
-      # two restore feeds in nuget.config (api.nuget.org, nuget.bepinex.dev)
-      # and the artifact blob storage the upload step writes to
+      # two restore feeds in nuget.config (api.nuget.org, nuget.bepinex.dev),
+      # the artifact blob storage the upload step writes to
       # (*.blob.core.windows.net — named in harden-runner's own GitHub meta
       # domains; the upload path stays unproven until the artifact quota
-      # recalculates, see docs/ci-cd.md).
+      # recalculates, see docs/ci-cd.md), and the Sigstore Public Good
+      # instance the attest step signs through (fulcio/rekor — measured from
+      # the audit-mode egress map; without them the attest fails closed into
+      # the fallback bundle even on a public repo, and the shipping path
+      # silently trusts self-made JSON instead of Sigstore).
       # Same profile as the verify-provenance:patch-queue pilot, confirmed
       # green there first. Rollback is one line back to audit.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
@@ -57,6 +61,8 @@ jobs:
             dotnetbuilds.blob.core.windows.net
             api.nuget.org
             nuget.bepinex.dev
+            fulcio.sigstore.dev
+            rekor.sigstore.dev
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
