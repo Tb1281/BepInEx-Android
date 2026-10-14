@@ -325,7 +325,8 @@ class GameResourceContext(
             // Repointed at our sandbox: the game's own dataDir does not exist inside this
             // app, so anything deriving a writable path from it fails.
             dataDir = storageContext.applicationInfo.dataDir
-                }
+        }
+    }
 
     override fun getApplicationInfo(): ApplicationInfo =
         gameApplicationInfo ?: super.getApplicationInfo()
