@@ -325,15 +325,7 @@ class GameResourceContext(
             // Repointed at our sandbox: the game's own dataDir does not exist inside this
             // app, so anything deriving a writable path from it fails.
             dataDir = storageContext.applicationInfo.dataDir
-            // Report debuggable: the hosted game branches on FLAG_DEBUGGABLE,
-            // and its tested path (Auth-Prod/Firestore, no Firebase C++ RTDB)
-            // is the one that survives hosting. Debuggable launcher builds
-            // take it; production builds must see the same signal. This only
-            // affects Java readers through this wrapper; the system's package
-            // record is untouched.
-            flags = flags or ApplicationInfo.FLAG_DEBUGGABLE
-        }
-    }
+                }
 
     override fun getApplicationInfo(): ApplicationInfo =
         gameApplicationInfo ?: super.getApplicationInfo()
