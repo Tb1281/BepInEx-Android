@@ -131,7 +131,20 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
           ./scripts/build_native_deps.sh
-          cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" launcher/app/src/main/jniLibs/arm64-v8a/
+
+      - name: Stage the runtime, hook engines, and framework for Gradle
+        # Same script the verify-provenance staging uses: asserts the hook
+        # engines, copies the runtime .so set plus both zips into jniLibs
+        # and assets, and copies libc++ from the NDK (replacing the manual
+        # cp that used to live in the step above). Without it jniLibs holds
+        # only dobby/pine and the crypto-PAL gate fails on the missing
+        # libcoreclr.so — found by the second force run to reach this path
+        # (38555599435), same never-exercised shape as the missing
+        # restore_and_build step above.
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          ./scripts/stage_launcher_inputs.sh out/runtime out/BepInEx.Android.zip
 
       - name: Verify 16KB alignment and crypto PAL
         if: steps.sync.outputs.moved == 'true' || inputs.force
