@@ -81,6 +81,11 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
 
+      # Todo...
+      - name: Fetch the pinned .NET runtime pack
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: scripts/fetch_dotnet_runtime.sh out/runtime
+                      
       # Both package sets before anything that restores against local-nuget.
       # Built concurrently (waits for both, fails if either failed); the patch
       # replay below touches only the BepInEx clone, so building Il2CppInterop

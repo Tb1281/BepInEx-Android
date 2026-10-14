@@ -1,1 +1,0 @@
-DEBUG: trying bundle /tmp/attestation-gate.M0hlQn/sigstore.attestation.json for /tmp/attestation-gate.M0hlQn/launcher/app/src/main/assets/BepInEx.Android.zip gh attestation verify /tmp/attestation-gate.M0hlQn/launcher/app/src/main/assets/BepInEx.Android.zip --bundle2
