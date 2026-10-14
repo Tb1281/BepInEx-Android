@@ -103,6 +103,11 @@ runs never enter it.
 2. **Upstream report to Firebase**: `DeleteInternal` null-deref on init
    failure + slashed names to `loadClass` on Android — both are theirs, with
    tombstones + sources attached.
+   Filed 2026-10-14 as
+   [firebase/firebase-cpp-sdk#1936](https://github.com/firebase/firebase-cpp-sdk/issues/1936)
+   (13.12.0, tombstone + `FindClassInFiles` branch comparison + suggested
+   `std::replace` parity fix). When Firebase ships a fix, this becomes a
+   game-side SDK-upgrade tracking item.
 3. **Deeper ART work** (linker-level visibility for hosted game dex) — long,
    version-fragile; deferred unless (1) shows real impact.
 4. Kept-out diagnostics removed; tree builds clean (`assembleRelease`
