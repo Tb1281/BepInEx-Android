@@ -64,8 +64,8 @@ done
 # 3. The provenance pilot allow-list names the Gradle/Maven hosts. Scoped to
 #    the provenance job (patch-queue pilots a smaller list without them).
 prov_block="$(awk '/^  provenance:/{inj=1;next} /^  patch-queue:/{inj=0} inj' "$WF")"
-for host in services.gradle.org plugins.gradle.org maven.google.com \
-            maven.aliyun.com jitpack.io; do
+for host in services.gradle.org downloads.gradle.org plugins.gradle.org \
+            maven.google.com maven.aliyun.com jitpack.io; do
     if printf '%s' "$prov_block" | grep -qF -- "$host"; then
         echo "ok    allow-list names $host"
     else
