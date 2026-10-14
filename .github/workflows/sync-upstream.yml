@@ -24,15 +24,51 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      # Egress audit on every job. A compromised action or build script
-      # exfiltrating data is otherwise invisible: the log shows green steps and
-      # nothing records where the runner talked to. `audit` only records — it
-      # never blocks — so this cannot break a build. Graduating to `block`
-      # needs a per-job allow-list measured from these logs first; an
-      # unmeasured block list is how a build fails on a mirror it never named.
+      # Egress pilot: blocks with an explicit allow-list confirmed against
+      # the audit-mode full-build map from force run 38557286746 (green):
+      # checkout and upstream clones (github.com, codeload), the .NET/Java
+      # toolchains (Microsoft install endpoints, api.adoptium.net for the
+      # temurin JDK on cache miss), the NDK install (dl.google.com), the
+      # restore feeds (api.nuget.org, nuget.bepinex.dev), the Gradle/Maven
+      # hosts (services/downloads/plugins, maven central/google/aliyun,
+      # jitpack — the mirror hit varies per run), the release API and asset
+      # upload (api.github.com, uploads.github.com, cafe.github.com — all
+      # three hit by `gh release create`), the artifact/cache blob storage
+      # (*.blob.core.windows.net), and the Sigstore Public Good instance
+      # the attest step signs through (fulcio/rekor). Telemetry and CRL
+      # hosts (aka.ms, visualstudio, digicert, symantec) are deliberately
+      # excluded: the build-bepinex pilot already proves they are non-fatal.
+      # Rollback is one line back to audit.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+            *.blob.core.windows.net
+            builds.dotnet.microsoft.com
+            dotnetcli.azureedge.net
+            dotnetbuilds.blob.core.windows.net
+            api.nuget.org
+            nuget.bepinex.dev
+            dl.google.com
+            api.adoptium.net
+            services.gradle.org
+            downloads.gradle.org
+            release-assets.githubusercontent.com
+            plugins.gradle.org
+            repo.maven.apache.org
+            repo1.maven.org
+            maven.google.com
+            maven.aliyun.com
+            jitpack.io
+            fulcio.sigstore.dev
+            rekor.sigstore.dev
+            uploads.github.com
+            cafe.github.com
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
