@@ -144,8 +144,15 @@ release notes rather than treating orphaned data as a regression.
 ```bash
 adb logcat -s fusion BepInEx Unity
 adb logcat | grep -E '\[Error:Unity\]|\[Error:Il2CppInterop\]'
-adb pull /sdcard/Android/data/com.bepinex.android/files/BepInEx/LogOutput.log ./
+adb pull /sdcard/Android/data/com.bepinex.android/files/BepInEx_Android/<game-package>/BepInEx/LogOutput.log ./
 ```
+
+The managed log is per game under `BepInEx_Android/<package>/`
+(`files/BepInEx/` without the infix does not exist); the launcher's own
+log is `files/bepinex_launcher.log`. When grepping on-device
+(`adb shell "logcat -d | grep ..."`), exclude `adbd`: the daemon echoes
+the full shell command into logcat, so the pattern matches the monitoring
+command itself (`grep -v adbd`).
 
 CoreCLR stdout may stay silent when Unity intercepts exceptions internally;
 always check logcat.
