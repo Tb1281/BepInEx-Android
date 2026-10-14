@@ -112,6 +112,16 @@ jobs:
         if: steps.sync.outputs.moved == 'true' || inputs.force
         run: ./scripts/record_patched_tree.sh
 
+      - name: Restore and build the managed tree
+        # Single implementation in scripts/restore_and_build.sh, shared with
+        # build-bepinex.yml and verify-provenance. Without it there is no
+        # build output for the packaging step below, which fails with
+        # "build output not found". Found by the first force run that ever
+        # reached this path (38553878664): every scheduled run had
+        # short-circuited on unmoved upstream before getting here.
+        if: steps.sync.outputs.moved == 'true' || inputs.force
+        run: ./scripts/restore_and_build.sh
+
       - name: Package BepInEx managed framework
         if: steps.sync.outputs.moved == 'true' || inputs.force
         run: ./scripts/package_bepinex_android.sh
