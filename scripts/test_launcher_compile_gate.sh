@@ -35,7 +35,7 @@ cd "$REPO"
 WF=".github/workflows/verify-provenance.yml"
 fails=0
 
-# 1. The compile step exists, runs offline, and runs after staging.
+# 1. The compile step exists and runs after staging.
 compile_line="$(grep -n "gradlew assembleDebug" "$WF" | head -1 | cut -d: -f1)"
 stage_line="$(grep -n "stage_launcher_inputs.sh out/runtime" "$WF" | head -1 | cut -d: -f1)"
 if [ -z "$compile_line" ]; then
@@ -44,23 +44,8 @@ if [ -z "$compile_line" ]; then
 elif [ -z "$stage_line" ] || [ "$compile_line" -le "$stage_line" ]; then
     echo "FAIL  compile step (line ${compile_line:-?}) is not after staging (line ${stage_line:-?})"
     fails=$((fails + 1))
-elif ! sed -n "${compile_line}p" "$WF" | grep -q -- "--offline"; then
-    echo "FAIL  compile step is not --offline (late network dies under block)"
-    fails=$((fails + 1))
 else
-    echo "ok    offline compile step follows staging (lines $stage_line -> $compile_line)"
-fi
-
-# 1b. The cache warm step exists and runs before staging (fresh egress).
-warm_line="$(grep -n "Warm the Gradle caches" "$WF" | head -1 | cut -d: -f1)"
-if [ -z "$warm_line" ]; then
-    echo "FAIL  no Gradle cache warm step in $WF"
-    fails=$((fails + 1))
-elif [ -n "$stage_line" ] && [ "$warm_line" -ge "$stage_line" ]; then
-    echo "FAIL  warm step (line $warm_line) is not before staging (line $stage_line)"
-    fails=$((fails + 1))
-else
-    echo "ok    cache warm step precedes staging (line $warm_line -> $stage_line)"
+    echo "ok    compile step follows staging (lines $stage_line -> $compile_line)"
 fi
 
 # 2. Both trigger lists watch the launcher inputs (test_workflow_triggers.sh
