@@ -14,7 +14,7 @@ android {
         // override (-Pbepinex.applicationId) was removed 2026-10-12; the
         // suffix below replaces it.
         applicationId = "com.bepinex.android"
-        manifestPlaceholders["appLabel"] = "BepInEx Launcher"
+        manifestPlaceholders["appLabel"] = "BepInEx Debug"
         minSdk = 28
         targetSdk = 35
         versionCode = 184
