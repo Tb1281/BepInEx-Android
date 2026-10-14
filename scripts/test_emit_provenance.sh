@@ -64,7 +64,23 @@ else
 fi
 
 # 2. A missing dotnet degrades to "unknown" instead of failing the build.
-if PATH="/usr/bin:/bin" "$SCRIPT" "$WORK/prov2.json" >/dev/null 2>&1; then
+# Hermetic by construction: GH runners preinstall dotnet in /usr/bin (and
+# /bin is a symlink to usr/bin on Ubuntu 24.04), so PATH="/usr/bin:/bin"
+# still finds a real dotnet there and records 10.0.401 instead of unknown.
+# Build an isolated dir with only the tools the script needs besides dotnet.
+mkdir -p "$WORK/nodotnet"
+for d in /usr/bin /bin /usr/local/bin; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+        b="${f##*/}"
+        case "$b" in dotnet*) continue;; esac
+        [ -e "$WORK/nodotnet/$b" ] || ln -s "$f" "$WORK/nodotnet/$b" 2>/dev/null || true
+    done
+done
+for t in python3 git bash env dirname; do
+    [ -e "$WORK/nodotnet/$t" ] || ln -sf "$(command -v "$t" 2>/dev/null)" "$WORK/nodotnet/$t" 2>/dev/null || true
+done
+if PATH="$WORK/nodotnet" "$SCRIPT" "$WORK/prov2.json" >/dev/null 2>&1; then
     actual="$(python3 -c "import json; print(json.load(open('$WORK/prov2.json'))['dotnet_sdk']['actual'])")"
     if [ "$actual" = "unknown" ]; then
         echo "ok    missing dotnet degrades to unknown (exit 0)"
