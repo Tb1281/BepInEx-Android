@@ -41,7 +41,7 @@ bytes read from the repository:
 - Runs regression fixtures (`test_verify_ci_artifacts.sh`,
   `test_alignment_check.sh`, `test_runtime_pin.sh`,
   `test_attestation_gate.sh`, `test_upstream_pins.sh`,
-  `test_workflow_triggers.sh`, `test_generate_sbom.sh`).
+  `test_workflow_triggers.sh`, `test_generate_sbom.sh`) `test_emit_provenance.sh`, `test_mark_verified.sh`, `test_ci_failure_notice.sh`).
 - Asserts push and pull-request path filters agree
   (`test_workflow_triggers.sh`); when adding a path, add it to both triggers.
 - On success moves the `verified` tag to HEAD (`scripts/mark_verified.sh`).
@@ -151,8 +151,7 @@ loudly instead of building silently against the wrong tree.
   pinned to SHA. Default policy is `audit` (records, never blocks).
   `scripts/test_harden_runner.sh` asserts every job carries the block first
   and that only the registered pilot set may use `block`.
-- **Block pilot.** `verify-provenance:provenance` and `:patch-queue` use
-  `egress-policy: block` with explicit allow-lists (the former rebuilds from
+- **Block pilot.`verify-provenance:provenance`, `:patch-queue`, and `build-bepinex:build` use `egress-policy: block` with explicit allow-lists (the former rebuilds from
   pins, so its list covers the .NET/Java/NDK toolchains plus upstream clones
   and restore feeds). Further jobs graduate one at a time after a green
   blocked run confirms their allow-list. Rollback is one line back to
