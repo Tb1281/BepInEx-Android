@@ -167,29 +167,6 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
 
-      # Warm the Gradle distribution and dependency caches NOW, not at the
-      # compile step below. The wrapper download is a redirect chain, not one
-      # host: services.gradle.org 307s to github.com/gradle/gradle-distributions
-      # which 302s to a signed release-assets.githubusercontent.com URL (read
-      # off the wire with curl -v; the audit egress map only ever showed the
-      # first hosts). Missing any hop fails every blocked run on network, not
-      # on code - that is what the three identical instant refusals were.
-      # Fetching the dist (via the wrapper itself, so the layout is exact)
-      # and resolving both debug classpaths up front moves every byte Gradle
-      # needs into steps whose failures are still legible; the compile step
-      # then runs `--offline` against that cache so a late CDN wobble cannot
-      # red the gate either. The graph is fully static (no +/SNAPSHOT in
-      # libs.versions.toml) and warm and build run on the same commit, so
-      # --offline cannot fail on correct code - a red offline build means the
-      # cache missed, i.e. the inputs moved, which is itself a signal.
-      - name: Warm the Gradle caches while egress is fresh
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > launcher/local.properties
-          cd launcher && ./gradlew --version --no-daemon >/dev/null
-          ./gradlew :app:dependencies --configuration debugCompileClasspath --no-daemon >/dev/null
-          ./gradlew :app:dependencies --configuration debugRuntimeClasspath --no-daemon >/dev/null
-          echo "gradle caches warm"
-
       # No binaries are committed, so the checks below stage their own inputs
       # from the pins first. This makes the gate a full rebuild-from-pins
       # proof: whatever verify_prebuilts.sh compares against the manifest was
@@ -215,13 +192,14 @@ jobs:
       # commit that breaks the launcher fails the gate that would mark it.
       # Debug, not release: release (R8) is the shipping-path's job; here the
       # property under test is "it compiles", and debug is minutes cheaper.
-      # `--offline` is load-bearing, not an optimization: the wrapper fetch is
-      # a redirect chain (services -> github releases -> release-assets), so
-      # a networked late build depends on every hop staying reachable.
+      # Networked, not --offline: the pilot allow-list names every Gradle
+      # host (measured from the audit egress map plus the wrapper's redirect
+      # chain read off the wire), and a residual missing host fails here
+      # naming its URL - which is exactly how the list stays complete.
       - name: The launcher still compiles against the staged inputs
         run: |
           echo "sdk.dir=$ANDROID_HOME" > launcher/local.properties
-          cd launcher && ./gradlew assembleDebug --offline --no-daemon
+          cd launcher && ./gradlew assembleDebug --no-daemon
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
