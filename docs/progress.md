@@ -105,3 +105,21 @@ Verified on physical hardware, stock firmware:
 | Snapdragon 8 Gen 2, arm64 | Android 15+ | Unity 2022.3 | Revolution Idle | Pass — chainloader complete, plugins loaded; crash signatures zero |
 
 Post-boot game-SDK native crashes (Firebase database, Pine binder path) are pre-existing, timing-variant, and tracked separately; A/B runs exonerated the shipped managed bytes.
+
+## 3. Re-verification on the Current Build (2026-10-14)
+
+Vanilla runs on the `ae250b6` debug build (SM-S931N, Android 17), 6-minute
+foreground survival each, `Chainloader startup complete`, error signatures
+zero (`FATAL`/`SIGSEGV`/`[Error:Unity]`/`[Error:Il2CppInterop]`):
+
+| Game | Unity | Verdict |
+|---|---|---|
+| The Tower 29.0.6 | 6000.3.15f1 | Pass — menu reachable (screencap), export stub 1 hop |
+| Revolution Idle | 2022.3.62f3 | Pass — in-game play UI rendered |
+| Unlock! 19.0 | 6000.0.68f1 | Pass — menu rendered (buttons show unlocalized `??key??` strings; game-side locale data, pre-existing) |
+
+Notes: on-device logcat greps must exclude `adbd` (it echoes the monitoring
+command into the buffer); the managed log is per game at
+`files/BepInEx_Android/<package>/BepInEx/LogOutput.log`. `BootstrapActivity`
+is `singleTop`: relaunching a different game needs a `force-stop` first, or
+the intent is delivered to the running instance.
