@@ -166,6 +166,28 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
 
+      # Warm the Gradle distribution and dependency caches NOW, not at the
+      # compile step below. Observed 3x: under `block`, the wrapper download
+      # to services.gradle.org is refused instantly at t+8min while the same
+      # host succeeds on audit and every early-CDN contact (dotnet, nuget,
+      # dl.google.com) succeeds on block. The pilot's egress view goes stale
+      # over the ~8 minutes staging takes, so anything Gradle fetches late
+      # dies on network rather than on code. Fetching the dist (via the
+      # wrapper itself, so the layout is exact) and resolving both debug
+      # classpaths up front moves every byte Gradle needs into the fresh
+      # window; the compile step then runs `--offline` against that cache.
+      # The graph is fully static (no +/SNAPSHOT in libs.versions.toml) and
+      # warm and build run on the same commit, so --offline cannot fail on
+      # correct code - a red offline build means the cache missed, i.e. the
+      # inputs moved, which is itself a signal.
+      - name: Warm the Gradle caches while egress is fresh
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > launcher/local.properties
+          cd launcher && ./gradlew --version --no-daemon >/dev/null
+          ./gradlew :app:dependencies --configuration debugCompileClasspath --no-daemon >/dev/null
+          ./gradlew :app:dependencies --configuration debugRuntimeClasspath --no-daemon >/dev/null
+          echo "gradle caches warm"
+
       # No binaries are committed, so the checks below stage their own inputs
       # from the pins first. This makes the gate a full rebuild-from-pins
       # proof: whatever verify_prebuilts.sh compares against the manifest was
@@ -191,10 +213,13 @@ jobs:
       # commit that breaks the launcher fails the gate that would mark it.
       # Debug, not release: release (R8) is the shipping-path's job; here the
       # property under test is "it compiles", and debug is minutes cheaper.
+      # `--offline` is load-bearing, not an optimization: the block pilot's
+      # egress view decays over staging (see the warm step above), so a
+      # networked late build fails every run regardless of the code.
       - name: The launcher still compiles against the staged inputs
         run: |
           echo "sdk.dir=$ANDROID_HOME" > launcher/local.properties
-          cd launcher && ./gradlew assembleDebug --no-daemon
+          cd launcher && ./gradlew assembleDebug --offline --no-daemon
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
