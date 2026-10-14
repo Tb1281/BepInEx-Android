@@ -1,0 +1,152 @@
+name: ship-release
+# Shared shipping path for every release kind: attest the APK+SBOM+provenance,
+# write the checksum manifest, compose the release notes, and `gh release
+# create`. Called by sync-upstream (automated upstream-sync releases) and
+# release-tag (tag-based general releases).
+#
+# This is a called workflow — not steps in the caller — because the shipping
+# path is identical for every release kind; the only differences (tag format,
+# title, the header block of the notes) arrive as inputs. A step-level
+# duplication would drift the first time only one caller is updated.
+#
+# A called workflow runs its jobs on a fresh runner, so the caller uploads
+# the APK, SBOM and provenance as one artifact (see artifact_name); this job
+# downloads it, attests the exact bytes it is about to publish, and creates
+# the release. The attestation is minted here — not in the caller — so the
+# statement covers the bytes the release actually ships.
+on:
+  workflow_call:
+    inputs:
+      tag_name:
+        description: 'Release tag to create (e.g. sync-20261015-abc1234 or v1.2.3)'
+        required: true
+        type: string
+      release_title:
+        description: 'GitHub Release title'
+        required: true
+        type: string
+      notes_header:
+        description: 'First line of the release notes (the ### header)'
+        required: true
+        type: string
+      notes_extra:
+        description: >
+          Markdown bullet lines between notes_header and the build-timestamp
+          line (e.g. upstream old/new for sync releases, version for tag
+          releases). Callers pass this with |- so no trailing blank line is
+          added.
+        required: false
+        type: string
+        default: ''
+      artifact_name:
+        description: 'Name of the artifact the caller uploaded holding the APK, SBOM and provenance'
+        required: true
+        type: string
+      apk_path:
+        description: 'Path of the aligned APK inside the downloaded artifact'
+        required: false
+        type: string
+        default: 'app-release-aligned.apk'
+      sbom_path:
+        description: 'Path of the SPDX SBOM inside the downloaded artifact'
+        required: false
+        type: string
+        default: 'sbom.spdx.json'
+      provenance_path:
+        description: 'Path of the build provenance JSON inside the downloaded artifact'
+        required: false
+        type: string
+        default: 'provenance.json'
+      attestation_bundle_name:
+        description: 'File name of the attestation bundle release asset'
+        required: false
+        type: string
+        default: 'apk.attestation.json'
+
+jobs:
+  ship:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write      # GitHub Release creation
+      attestations: write  # mint the APK+SBOM+provenance attestation
+      id-token: write
+    steps:
+      # Block egress; the allow-list is the release half of the
+      # sync-upstream map: checkout (github.com, codeload), artifact download
+      # (actions hosts, blob storage), the release API and asset upload
+      # (api.github.com, uploads.github.com, cafe.github.com — all three hit
+      # by `gh release create`), and the Sigstore Public Good instance the
+      # attest step signs through (fulcio/rekor).
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+            *.blob.core.windows.net
+            uploads.github.com
+            cafe.github.com
+            fulcio.sigstore.dev
+            rekor.sigstore.dev
+
+      # Checked out for ./.github/actions/attest-inputs below.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Download the shipping inputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ship/
+
+      # Attest the shipping APK itself, not just its inputs (see
+      # build-launcher-apk.yml for why the APK gets its own statement), plus
+      # the SBOM and the build provenance, in one statement. Minted here so
+      # the statement covers the exact bytes the release below publishes.
+      - name: Attest the APK, SBOM and provenance
+        uses: ./.github/actions/attest-inputs
+        with:
+          bundle-output: ship/${{ inputs.attestation_bundle_name }}
+          paths: |
+            ship/${{ inputs.apk_path }}
+            ship/${{ inputs.sbom_path }}
+            ship/${{ inputs.provenance_path }}
+
+      - name: Publish Release with Checksums
+        working-directory: ship
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ inputs.tag_name }}
+          RELEASE_TITLE: ${{ inputs.release_title }}
+          NOTES_HEADER: ${{ inputs.notes_header }}
+          NOTES_EXTRA: ${{ inputs.notes_extra }}
+          APK_PATH: ${{ inputs.apk_path }}
+          SBOM_PATH: ${{ inputs.sbom_path }}
+          PROV_PATH: ${{ inputs.provenance_path }}
+          BUNDLE_NAME: ${{ inputs.attestation_bundle_name }}
+        run: |
+          set -euo pipefail
+          SHA="$(sha256sum "$APK_PATH" | awk '{print $1}')"
+          APK_BASENAME="$(basename "$APK_PATH")"
+          echo "$SHA  $APK_BASENAME" > "$APK_PATH.sha256"
+          # Notes are printed with printf (not a heredoc) so the
+          # caller-supplied header/extra lines are reproduced literally —
+          # backticks and all — instead of being reinterpreted by the shell.
+          {
+            printf '%s\n' "$NOTES_HEADER"
+            printf '%s\n' "$NOTES_EXTRA"
+            printf '%s\n' "- **Build Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            printf '\n### 🔒 Checksums (SHA-256)\n```\n'
+            cat "$APK_PATH.sha256"
+            sha256sum "$SBOM_PATH"
+            printf '```\n'
+            printf '\n### 📦 SBOM\n`%s` is the SPDX 2.3 source SBOM for this release.\n' "$(basename "$SBOM_PATH")"
+            printf '\n### 🧾 Build provenance\n`%s` records what this release was built from: the\nupstream pin, the patched-tree hash the replay produced, the patch\nfiles and the SDK version. It is covered by the attestation below.\n' "$(basename "$PROV_PATH")"
+            printf '\n### 🔏 Provenance\n`%s` binds this repository, this workflow\nrun and this commit to the APK and SBOM bytes above. Verify with:\n```\ngh attestation verify %s --repo %s\n```\n' "$BUNDLE_NAME" "$APK_BASENAME" "$GITHUB_REPOSITORY"
+            printf '(On a private repository the bundle is the fallback CI provenance\nstatement; it becomes a Sigstore attestation automatically if the\nrepository is made public.)\n'
+          } > ../release-notes.md
+          gh release create "$TAG_NAME" "$APK_PATH" "$APK_PATH.sha256" "$SBOM_PATH" "$PROV_PATH" "$BUNDLE_NAME" \
+            --title "$RELEASE_TITLE" \
+            --notes-file ../release-notes.md
