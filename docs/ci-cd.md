@@ -153,7 +153,7 @@ loudly instead of building silently against the wrong tree.
   pinned to SHA. Default policy is `audit` (records, never blocks).
   `scripts/test_harden_runner.sh` asserts every job carries the block first
   and that only the registered pilot set may use `block`.
-- **Block pilot.`verify-provenance:provenance`, `:patch-queue`, `build-bepinex:build`, and `build-native-deps:build` use `egress-policy: block` with explicit allow-lists (the former rebuilds from
+- **Block pilot.`verify-provenance:provenance`, `:patch-queue`, `build-bepinex:build`, `build-native-deps:build`, and `fetch-runtime:fetch-runtime` use `egress-policy: block` with explicit allow-lists (the former rebuilds from
   pins, so its list covers the .NET/Java/NDK toolchains plus upstream clones
   and restore feeds). Further jobs graduate one at a time after a green
   blocked run confirms their allow-list. Rollback is one line back to

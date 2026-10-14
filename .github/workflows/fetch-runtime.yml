@@ -45,15 +45,33 @@ jobs:
       id-token: write
     timeout-minutes: 30
     steps:
-      # Egress audit on every job. A compromised action or build script
-      # exfiltrating data is otherwise invisible: the log shows green steps and
-      # nothing records where the runner talked to. `audit` only records — it
-      # never blocks — so this cannot break a build. Graduating to `block`
-      # needs a per-job allow-list measured from these logs first; an
-      # unmeasured block list is how a build fails on a mirror it never named.
+      # Egress pilot: blocks with an explicit allow-list measured from three
+      # audit-mode runs (38357875936, 38356168517, 38355182900): the pinned
+      # NuGet package (api.nuget.org), the releases index check_runtime_pin.sh
+      # reads (builds.dotnet.microsoft.com), the Sigstore Public Good
+      # instance the attest step signs through (fulcio/rekor), and the
+      # artifact blob storage the upload step writes to
+      # (*.blob.core.windows.net). api.adoptium.net covers the temurin JDK
+      # download on a runner-image cache miss (setup-java hit the hosted
+      # toolcache in the measured runs, so it is robustness, not observed —
+      # same entry as the verify-provenance pilot). This job compiles
+      # nothing: no NDK, Gradle, or restore feeds. Rollback is one line back
+      # to audit.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+            *.blob.core.windows.net
+            api.nuget.org
+            builds.dotnet.microsoft.com
+            api.adoptium.net
+            fulcio.sigstore.dev
+            rekor.sigstore.dev
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
