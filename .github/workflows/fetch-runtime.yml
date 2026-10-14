@@ -33,7 +33,7 @@ jobs:
     # has to be restated after it.
     permissions:
       contents: read
-      # For scripts/ci_failure_notice.sh only.
+      # For scripts/ci_failure_notice.sh and pin_drift_notice.sh only.
       issues: write
       # For actions/attest-build-provenance only. Without it this job's runtime
       # emits no statement and build-launcher-apk fails closed on libcoreclr.so,
@@ -112,7 +112,24 @@ jobs:
       # SIGABRTs on the device. See provenance/dotnet-runtime.env for the
       # procedure, and scripts/check_runtime_pin.sh for why none of it is automatic.
       - name: Is the pinned runtime still current
-        run: ./scripts/check_runtime_pin.sh
+        run: |
+          # pipefail: the check exits 1 when the pin file itself is missing,
+          # and a plain `| tee` would swallow that into a green step.
+          set -o pipefail
+          ./scripts/check_runtime_pin.sh 2>&1 | tee runtime-report.txt
+
+      # Drift is news, not a defect: anything but an explicit `RESULT:
+      # current` - a moved channel, a metadata outage - reads as drifted.
+      # The pin itself moves by hand (see provenance/dotnet-runtime.env).
+      - name: Record runtime drift, or clear the record
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if grep -q 'RESULT: current' runtime-report.txt; then
+            ./scripts/pin_drift_notice.sh current runtime-report.txt
+          else
+            ./scripts/pin_drift_notice.sh drifted runtime-report.txt
+          fi
 
       - name: Record which runtime this is
         run: |

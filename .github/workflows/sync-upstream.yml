@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: write      # create-pull-request, GitHub Release creation
       pull-requests: write # opens the sync PR
-      issues: write        # scripts/ci_failure_notice.sh only
+      issues: write        # scripts/ci_failure_notice.sh and pin_drift_notice.sh only
       # Attesting the sync-built APK before release. Without these the release
       # below ships an APK no one can verify (see the attest step).
       attestations: write
@@ -102,7 +102,25 @@ jobs:
 
       # Check all upstream pins for drift and report to summary
       - name: Report drift of every other upstream pin
-        run: ./scripts/check_upstream_pins.sh
+        run: |
+          # pipefail: the check exits 1 on pin defects (malformed pin,
+          # gitlink disagreement), and a plain `| tee` would swallow that
+          # into the notice step's input while reporting green here.
+          set -o pipefail
+          ./scripts/check_upstream_pins.sh 2>&1 | tee drift-report.txt
+
+      # Drift is news, not a defect: a moved pin is a report, and an upstream
+      # that cannot be asked (UNKNOWN) reads as drifted, never as current.
+      # The pins themselves move by hand (docs/todo.md Rule 1).
+      - name: Record pin drift, or clear the record
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if grep -qE '^  (MOVED|UNKNOWN)' drift-report.txt; then
+            ./scripts/pin_drift_notice.sh drifted drift-report.txt
+          else
+            ./scripts/pin_drift_notice.sh current drift-report.txt
+          fi
 
       # Advance pristine upstream pin and detect if moved
       - name: Advance the pristine upstream pin

@@ -196,4 +196,8 @@ loudly instead of building silently against the wrong tree.
   Without it, push access bypasses every check above in a single commit.
 - **Rolling failure notifications.** Scheduled workflows report failures via
   `scripts/ci_failure_notice.sh`, which opens or updates a single rolling
-  `ci-failure` issue and closes it on recovery, always exiting 0.
+  `ci-failure` issue and closes it on recovery, always exiting 0. Pin drift
+  gets the same treatment via `scripts/pin_drift_notice.sh` (rolling
+  `pin-drift` issue): the drift checks report to green-run summaries nobody
+  opens, so without it drift is detected and invisible at once. Drift never
+  moves a pin — pins move by hand.
