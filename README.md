@@ -76,7 +76,7 @@ local builds stage outputs into the gitignored directories above.
 ## Prerequisites
 
 - Host OS: Linux (x86_64 or aarch64)
-- JDK 17, Android SDK (API 35), NDK `30.0.16248370`, CMake 3.22.1+
+- JDK 21, Android SDK (API 35), NDK `30.0.16248370`, CMake 3.22.1+
 - .NET SDK `10.0.401` (pinned via `global.json`)
 - `git`, `zip`, `unzip`, `curl`
 
