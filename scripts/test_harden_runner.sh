@@ -27,7 +27,7 @@ cd "$REPO"
 
 # "workflow-file:job" pairs that block instead of audit. The endpoint list
 # itself lives in the workflow (single source); this only names the pilots.
-PILOTS="verify-provenance.yml:provenance verify-provenance.yml:patch-queue build-bepinex.yml:build build-native-deps.yml:build"
+PILOTS="verify-provenance.yml:provenance verify-provenance.yml:patch-queue build-bepinex.yml:build build-native-deps.yml:build fetch-runtime.yml:fetch-runtime"
 
 is_pilot() { # is_pilot <file:job> -> exit 0 if registered
     local key="$1" p
