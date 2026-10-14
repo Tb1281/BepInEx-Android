@@ -35,15 +35,46 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      # Egress audit on every job. A compromised action or build script
-      # exfiltrating data is otherwise invisible: the log shows green steps and
-      # nothing records where the runner talked to. `audit` only records — it
-      # never blocks — so this cannot break a build. Graduating to `block`
-      # needs a per-job allow-list measured from these logs first; an
-      # unmeasured block list is how a build fails on a mirror it never named.
+      # Egress pilot: blocks with an explicit allow-list confirmed against
+      # the audit-mode full-run map from 38564091185 (green, official
+      # Sigstore attestation on the shipping APK): checkout and artifact
+      # downloads (github.com, codeload, blob storage, actions hosts), the
+      # NDK install (dl.google.com), the temurin JDK (api.adoptium.net, on
+      # cache miss), the Gradle/Maven hosts (same build as the
+      # verify-provenance compile gate — the mirror hit varies per run),
+      # the producer-commit API check (api.github.com), and Sigstore
+      # (fulcio/rekor for minting; tuf-repo-cdn/tuf-repo.github.com for
+      # `gh attestation verify`'s TUF trust-root refresh in the consumer
+      # gate — without them the gate that guards Gradle breaks). The apt
+      # mirror set (azure.archive/esm/motd/packages.microsoft) and
+      # telemetry/CRL hosts are excluded as non-fatal per the sync pilot;
+      # runner-agent infrastructure (*.githubapp.com) is not job egress.
+      # Rollback is one line back to audit.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-endpoints: >
+            github.com
+            api.github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            *.actions.githubusercontent.com
+            *.blob.core.windows.net
+            dl.google.com
+            api.adoptium.net
+            services.gradle.org
+            downloads.gradle.org
+            release-assets.githubusercontent.com
+            plugins.gradle.org
+            repo.maven.apache.org
+            repo1.maven.org
+            maven.google.com
+            maven.aliyun.com
+            jitpack.io
+            fulcio.sigstore.dev
+            rekor.sigstore.dev
+            tuf-repo-cdn.sigstore.dev
+            tuf-repo.github.com
 
       # No submodules: this job consumes artifacts from the three producers and
       # compiles only the launcher's own C++ and Kotlin. It never read third_party/,
