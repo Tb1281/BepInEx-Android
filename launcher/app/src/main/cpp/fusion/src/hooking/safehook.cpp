@@ -155,19 +155,21 @@ void *safehook_create_hook(void *target_function, void *hook_function, bool use_
     }
 
     // Offset within the library
-    uintptr_t rva = reinterpret_cast<uintptr_t>(target_function) - g_library_base;
-    uintptr_t distance = reinterpret_cast<uintptr_t>(hook_function) -
-                         reinterpret_cast<uintptr_t>(target_function);
-
-    bool within_limits = (distance > 0 && distance < 0x7FFFFFFF) ||
-                         (distance < 0 && distance > -0x7FFFFFFF);
-
-    void *actual_hook = hook_function;
-
-    // If function is NOT in the library (rva < 0), use standard Dobby
-    if (rva < 0) {
+    uintptr_t target_addr = reinterpret_cast<uintptr_t>(target_function);
+    uintptr_t hook_addr = reinterpret_cast<uintptr_t>(hook_function);
+    if (target_addr < g_library_base) {
+        uintptr_t distance = (target_addr > hook_addr) ? (target_addr - hook_addr) : (hook_addr - target_addr);
+        bool within_limits = (distance > 0 && distance <= 0x07FFFFFF);
+        void *actual_hook = hook_function;
         return dobby_hook_internal(target_function, actual_hook, within_limits);
     }
+    uintptr_t rva = target_addr - g_library_base;
+    uintptr_t distance = (target_addr > hook_addr) ? (target_addr - hook_addr) : (hook_addr - target_addr);
+    bool within_limits = (distance > 0 && distance <= 0x07FFFFFF);
+    void *actual_hook = hook_function;
+    
+    
+    
 
     if (within_limits) {
         return dobby_hook_internal(target_function, actual_hook, true);
