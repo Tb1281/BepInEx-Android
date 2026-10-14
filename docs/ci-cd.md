@@ -41,7 +41,8 @@ bytes read from the repository:
 - Runs regression fixtures (`test_verify_ci_artifacts.sh`,
   `test_alignment_check.sh`, `test_runtime_pin.sh`,
   `test_attestation_gate.sh`, `test_upstream_pins.sh`,
-  `test_workflow_triggers.sh`, `test_generate_sbom.sh`) `test_emit_provenance.sh`, `test_mark_verified.sh`, `test_ci_failure_notice.sh`).
+  `test_workflow_triggers.sh`, `test_generate_sbom.sh`,
+  `test_emit_provenance.sh`, `test_mark_verified.sh`, `test_ci_failure_notice.sh`).
 - Asserts push and pull-request path filters agree
   (`test_workflow_triggers.sh`); when adding a path, add it to both triggers.
 - On success moves the `verified` tag to HEAD (`scripts/mark_verified.sh`).
