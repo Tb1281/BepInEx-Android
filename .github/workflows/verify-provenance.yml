@@ -33,6 +33,10 @@ on:
       - 'scripts/fetch_dotnet_runtime.sh'
       - 'launcher/gradle/libs.versions.toml'
       - 'launcher/app/build.gradle.kts'
+      - 'launcher/build.gradle.kts'
+      - 'launcher/settings.gradle.kts'
+      - 'launcher/gradle.properties'
+      - 'launcher/app/src/main/**'
       - 'scripts/mark_verified.sh'
       - 'scripts/ci_failure_notice.sh'
       - 'scripts/test_*.sh'
@@ -76,6 +80,10 @@ on:
       - 'scripts/fetch_dotnet_runtime.sh'
       - 'launcher/gradle/libs.versions.toml'
       - 'launcher/app/build.gradle.kts'
+      - 'launcher/build.gradle.kts'
+      - 'launcher/settings.gradle.kts'
+      - 'launcher/gradle.properties'
+      - 'launcher/app/src/main/**'
       - 'scripts/mark_verified.sh'
       - 'scripts/ci_failure_notice.sh'
       - 'scripts/test_*.sh'
@@ -131,6 +139,13 @@ jobs:
             nuget.bepinex.dev
             dl.google.com
             api.adoptium.net
+            services.gradle.org
+            plugins.gradle.org
+            repo.maven.apache.org
+            repo1.maven.org
+            maven.google.com
+            maven.aliyun.com
+            jitpack.io
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -148,7 +163,7 @@ jobs:
         run: |
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1"
+          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
 
       # No binaries are committed, so the checks below stage their own inputs
       # from the pins first. This makes the gate a full rebuild-from-pins
@@ -164,6 +179,21 @@ jobs:
           ./scripts/restore_and_build.sh
           ./scripts/package_bepinex_android.sh
           ./scripts/stage_launcher_inputs.sh out/runtime out/BepInEx.Android.zip
+
+      # The launcher (Kotlin UI plus libmain/libfusion JNI) is compiled by no
+      # other automatic gate: build-launcher-apk.yml is workflow_dispatch only,
+      # so a Kotlin breakage lands green everywhere. 267ec5b deleted two
+      # closing braces with the FLAG_DEBUGGABLE lines in
+      # GameResourceContext.kt and main stayed green until a local
+      # assembleDebug went red. This compiles the debug APK against the inputs
+      # staged above (same NDK/CMake pins, same staged jniLibs/assets), so a
+      # commit that breaks the launcher fails the gate that would mark it.
+      # Debug, not release: release (R8) is the shipping-path's job; here the
+      # property under test is "it compiles", and debug is minutes cheaper.
+      - name: The launcher still compiles against the staged inputs
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > launcher/local.properties
+          cd launcher && ./gradlew assembleDebug --no-daemon
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -294,6 +324,16 @@ jobs:
       # Gradle config the switch depends on, and the dependency cache.
       - name: The shipping APK is a release build
         run: ./scripts/test_release_artifacts.sh
+
+      # The launcher compile gate above is a Gradle invocation, not a script,
+      # so it has no fixture of its own to run here. What can rot instead is
+      # its wiring: the trigger lists dropping the launcher paths (the gate
+      # then never runs for the changes it exists to check), the compile step
+      # drifting away from the staged inputs, or the allow-list losing the
+      # Gradle/Maven hosts (the blocked pilot then fails every run, not just
+      # broken ones). This asserts all three statically.
+      - name: The launcher compile gate is wired to its inputs
+        run: ./scripts/test_launcher_compile_gate.sh
 
       # The framework zip's epoch must be the upstream pin's commit date, not
       # the git-am tip's ("now" on every clone). Reading the tip made every
