@@ -19,14 +19,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
-import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
+import androidx.navigation.toRoute
 import kotlinx.coroutines.flow.first
 import com.bepinex.android.GameDetector
 import com.bepinex.android.BepInExPaths
@@ -196,16 +196,14 @@ fun BepInExNavHost(
             // same way, including the system predictive-back gesture.
             NavHost(
                 navController = navController,
-                startDestination = NavRoutes.GAMES,
+                startDestination = Games,
                 enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
                 exitTransition = { slideOutHorizontally(tween(300)) { -it } + fadeOut(tween(300)) },
                 popEnterTransition = { slideInHorizontally(tween(300)) { -it } + fadeIn(tween(300)) },
                 popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
             ) {
                 // Main game screen
-                composable(
-                    route = NavRoutes.GAMES
-                ) {
+                composable<Games> {
                     GameScreen(
                         detectedGames = detectedGames,
                         selectedGame = selectedGame,
@@ -222,23 +220,21 @@ fun BepInExNavHost(
                         onLaunch = { onLaunch(activeModpackNames) },
                         onNavigateToSettings = {
                             selectedGame?.let {
-                                navController.navigateTab(NavRoutes.settings(it.packageName))
+                                navController.navigateTab(Settings(it.packageName))
                             }
                         },
                         onNavigateToModpacks = {
                             selectedGame?.let {
-                                navController.navigateTab(NavRoutes.modpacks(it.packageName))
+                                navController.navigateTab(Modpacks(it.packageName))
                             }
                         }
                     )
                 }
 
                 // Modpack list
-                composable(
-                    route = NavRoutes.MODPACKS,
-                    arguments = listOf(navArgument("packageName") { type = NavType.StringType })
-                ) { backStackEntry ->
-                    val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
+                composable<Modpacks> { backStackEntry ->
+                    val route = backStackEntry.toRoute<Modpacks>()
+                    val packageName = route.packageName
                     // Refresh modpacks (disk walk: off Main)
                     LaunchedEffect(packageName) {
                         withContext(Dispatchers.IO) {
@@ -279,7 +275,7 @@ fun BepInExNavHost(
                             activeModpackNames = names; coroutineScope.launch(Dispatchers.IO) { AppSettings.setLastLaunchedModpacks(context, packageName, names) }
                         },
                         onOpenModpack = { name ->
-                            navController.navigate(NavRoutes.modpackDetail(packageName, name))
+                            navController.navigate(ModpackDetail(packageName, name))
                         },
                         onExportModpack = { name ->
                             // SAF CreateDocument: the user picks where the archive
@@ -295,15 +291,10 @@ fun BepInExNavHost(
                 }
 
                 // Modpack detail
-                composable(
-                    route = NavRoutes.MODPACK_DETAIL,
-                    arguments = listOf(
-                        navArgument("packageName") { type = NavType.StringType },
-                        navArgument("modpackName") { type = NavType.StringType }
-                    )
-                ) { backStackEntry ->
-                    val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
-                    val modpackName = backStackEntry.arguments?.getString("modpackName") ?: return@composable
+                composable<ModpackDetail> { backStackEntry ->
+                    val route = backStackEntry.toRoute<ModpackDetail>()
+                    val packageName = route.packageName
+                    val modpackName = route.modpackName
 
                     var mods by remember { mutableStateOf<List<File>>(emptyList()) }
                     var configFiles by remember { mutableStateOf<List<File>>(emptyList()) }
@@ -335,7 +326,7 @@ fun BepInExNavHost(
                         onOpenConfig = { configFile ->
                             editingConfig = configFile
                         },
-                        onViewLog = { navController.navigate(NavRoutes.logViewer(packageName, modpackName)) },
+                        onViewLog = { navController.navigate(LogViewer(packageName, modpackName)) },
                         onExportModpack = {
                             // Same SAF path as the list screen: the user picks the
                             // destination, so no storage permission is involved.
@@ -360,11 +351,9 @@ fun BepInExNavHost(
                 }
 
                 // Settings
-                composable(
-                    route = NavRoutes.SETTINGS,
-                    arguments = listOf(navArgument("packageName") { type = NavType.StringType })
-                ) { backStackEntry ->
-                    val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
+                composable<Settings> { backStackEntry ->
+                    val route = backStackEntry.toRoute<Settings>()
+                    val packageName = route.packageName
                     val settingsContext = LocalContext.current
                     SettingsScreen(
                         packageName = packageName,
@@ -373,7 +362,7 @@ fun BepInExNavHost(
                         floatingLogInGame = floatingLogInGame,
                         screenDimInGame = screenDimInGame,
                         onNavigateBack = { navController.popBackStack() },
-                        onNavigateToAbout = { navController.navigate(NavRoutes.ABOUT) },
+                        onNavigateToAbout = { navController.navigate(About) },
                         onThemeChanged = onThemeChanged,
                         onLanguageChanged = onLanguageChanged,
                         onFloatingLogInGameChanged = onFloatingLogInGameChanged,
@@ -384,15 +373,10 @@ fun BepInExNavHost(
                 }
 
                 // Log Viewer
-                composable(
-                    route = NavRoutes.LOG_VIEWER,
-                    arguments = listOf(
-                        navArgument("packageName") { type = NavType.StringType },
-                        navArgument("modpackName") { type = NavType.StringType }
-                    )
-                ) { backStackEntry ->
-                    val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
-                    val modpackName = backStackEntry.arguments?.getString("modpackName") ?: ""
+                composable<LogViewer> { backStackEntry ->
+                    val route = backStackEntry.toRoute<LogViewer>()
+                    val packageName = route.packageName
+                    val modpackName = route.modpackName
                     val logFile = BepInExPaths.getModpackLogFile(packageName, modpackName.ifEmpty { null })
                     com.bepinex.android.ui.screens.LogViewerScreen(
                         logFilePath = logFile.absolutePath,
@@ -401,9 +385,7 @@ fun BepInExNavHost(
                 }
 
                 // About
-                composable(
-                    route = NavRoutes.ABOUT
-                ) {
+                composable<About> {
                     val context = LocalContext.current
                     val versionName = runCatching {
                         val pm = context.packageManager
@@ -438,7 +420,7 @@ fun BepInExNavHost(
  * official bottom-nav pattern: tab switches keep scroll and UI state instead
  * of destroying the back stack and re-triggering each screen's reload effect.
  */
-private fun NavHostController.navigateTab(route: String) {
+private inline fun <reified T : Any> NavHostController.navigateTab(route: T) {
     navigate(route) {
         popUpTo(graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
@@ -457,22 +439,22 @@ private fun BottomNavBar(
     selectedGame: GameDetector.DetectedGame?
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
+    val destination = navBackStackEntry?.destination
 
-    val showBottomBar = currentRoute in listOf(
-        NavRoutes.GAMES, "modpacks/{packageName}", "settings/{packageName}"
-    )
+    val showBottomBar = destination?.hasRoute<Games>() == true ||
+        destination?.hasRoute<Modpacks>() == true ||
+        destination?.hasRoute<Settings>() == true
     if (!showBottomBar) return
 
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 3.dp
     ) {
-        val isGames = currentRoute == NavRoutes.GAMES
+        val isGames = destination?.hasRoute<Games>() == true
         NavigationBarItem(
             selected = isGames,
             // launchSingleTop makes a re-tap a no-op; no explicit guard needed.
-            onClick = { navController.navigateTab(NavRoutes.GAMES) },
+            onClick = { navController.navigateTab(Games) },
             icon = {
                 Icon(
                     if (isGames) Icons.Filled.SportsEsports else Icons.Outlined.SportsEsports,
@@ -486,12 +468,12 @@ private fun BottomNavBar(
                 )
             }
         )
-        val isModpacks = currentRoute == "modpacks/{packageName}"
+        val isModpacks = destination?.hasRoute<Modpacks>() == true
         NavigationBarItem(
             selected = isModpacks,
             onClick = {
                 selectedGame?.let { game ->
-                    navController.navigateTab(NavRoutes.modpacks(game.packageName))
+                    navController.navigateTab(Modpacks(game.packageName))
                 }
             },
             enabled = selectedGame != null,
@@ -508,12 +490,12 @@ private fun BottomNavBar(
                 )
             }
         )
-        val isSettings = currentRoute == "settings/{packageName}"
+        val isSettings = destination?.hasRoute<Settings>() == true
         NavigationBarItem(
             selected = isSettings,
             onClick = {
                 selectedGame?.let { game ->
-                    navController.navigateTab(NavRoutes.settings(game.packageName))
+                    navController.navigateTab(Settings(game.packageName))
                 }
             },
             enabled = selectedGame != null,

@@ -1,19 +1,28 @@
 package com.bepinex.android.ui.navigation
 
-/**
- * Navigation route constants for Compose Navigation.
- */
-object NavRoutes {
-    const val GAMES = "games"
-    const val MODPACKS = "modpacks/{packageName}"
-    const val MODPACK_DETAIL = "modpack_detail/{packageName}/{modpackName}"
-    const val SETTINGS = "settings/{packageName}"
-    const val ABOUT = "about"
-    const val LOG_VIEWER = "log_viewer/{packageName}/{modpackName}"
+import kotlinx.serialization.Serializable
 
-    fun modpacks(packageName: String) = "modpacks/$packageName"
-    fun modpackDetail(packageName: String, modpackName: String) =
-        "modpack_detail/$packageName/$modpackName"
-    fun settings(packageName: String) = "settings/$packageName"
-    fun logViewer(packageName: String, modpackName: String) = "log_viewer/$packageName/$modpackName"
-}
+/**
+ * Type-safe navigation destinations.
+ *
+ * Arguments are encoded by Navigation itself, so modpack names containing `/`,
+ * `%`, or spaces can no longer break route parsing the way manual string
+ * interpolation did.
+ */
+@Serializable
+data object Games
+
+@Serializable
+data class Modpacks(val packageName: String)
+
+@Serializable
+data class ModpackDetail(val packageName: String, val modpackName: String)
+
+@Serializable
+data class Settings(val packageName: String)
+
+@Serializable
+data class LogViewer(val packageName: String, val modpackName: String)
+
+@Serializable
+data object About
