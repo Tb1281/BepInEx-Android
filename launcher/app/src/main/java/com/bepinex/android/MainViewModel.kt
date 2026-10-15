@@ -174,6 +174,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setLanguage(lang: AppSettings.Language) {
         viewModelScope.launch {
             AppSettings.setLanguage(getApplication(), lang)
+            AppSettings.applyLanguage(lang)
         }
     }
 

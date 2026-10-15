@@ -1,55 +1,41 @@
 package com.bepinex.android
 
-import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.os.LocaleListCompat
 import com.bepinex.android.log.BepInExLogReader
 import com.bepinex.android.settings.AppSettings
 import com.bepinex.android.ui.navigation.BepInExNavHost
 import com.bepinex.android.ui.theme.BepInExTheme
 import java.io.File
 
-import androidx.activity.compose.LocalActivityResultRegistryOwner
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.bepinex.android.ui.components.CrashRecoveryDialog
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import java.util.Locale
 /**
  * Main launcher Activity -- Compose UI for multi-game BepInEx mod management.
  *
  * On launch, auto-detects installed Unity IL2CPP games via [GameDetector].
  * User selects a game, manages mods, and launches it through [BootstrapActivity].
+ *
+ * Extends AppCompatActivity (not ComponentActivity) so that per-app locales via
+ * AppCompatDelegate.setApplicationLocales() are applied by the framework,
+ * including Activity recreation on language change.
  */
-class MainActivity : ComponentActivity() {
-
-    override fun attachBaseContext(newBase: Context) {
-        // Keep base context creation lightweight. Locale is applied to Compose
-        // through a localized CompositionLocal below, avoiding a DataStore read
-        // (and potential deadlock) during Activity recreation.
-        super.attachBaseContext(newBase)
-    }
+class MainActivity : AppCompatActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
@@ -85,29 +71,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-            // Preserve the activity-result registry across the context switch;
-            // rememberLauncherForActivityResult (used by BepInExNavHost) needs it.
-            val activityResultRegistryOwner = LocalActivityResultRegistryOwner.current ?: this@MainActivity
-
-            // Apply the selected language to Compose's string resources without
-            // recreating the Activity (which previously could deadlock).
-            val localizedContext = remember(uiState.language) {
-                val locale = AppSettings.toLocale(uiState.language)
-                if (locale == null) {
-                    this@MainActivity
-                } else {
-                    val config = Configuration(resources.configuration)
-                    config.setLocale(locale)
-                    config.setLayoutDirection(locale)
-                    createConfigurationContext(config)
-                }
-            }
-
             BepInExTheme(themeMode = uiState.themeMode, dynamicColor = uiState.dynamicColor) {
-                CompositionLocalProvider(
-                    LocalContext provides localizedContext,
-                    LocalActivityResultRegistryOwner provides activityResultRegistryOwner
-                ) {
                 BepInExNavHost(
                     detectedGames = uiState.detectedGames,
                     selectedGame = uiState.selectedGame,
@@ -124,10 +88,8 @@ class MainActivity : ComponentActivity() {
                     onLaunch = { modpackNames -> launchGame(uiState.selectedGame, modpackNames, uiState.isFrameworkReady, uiState.isExtracting) },
                     onThemeChanged = { viewModel.setTheme(it) },
                     onLanguageChanged = { lang ->
-                        viewModel.setLanguage(lang)
-                        // Hand the write to the ViewModel; the Compose localized
-                        // context above updates when the persisted setting flows back.
-                        // (Avoid runBlocking on the main thread, which can ANR.)
+                        // Persist + apply; AppCompatDelegate recreates the Activity
+                        // to apply the new locale. No manual recreate() needed.
                         viewModel.setLanguage(lang)
                     },
                     onFloatingLogInGameChanged = { enabled ->
@@ -179,7 +141,6 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
-                } // CompositionLocalProvider
             } // BepInExTheme
         } // setContent
     }

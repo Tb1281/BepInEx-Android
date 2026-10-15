@@ -2,7 +2,6 @@ package com.bepinex.android.settings
 
 import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
-import java.util.Locale
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
@@ -205,8 +204,7 @@ object AppSettings {
         runBlocking {
             val prefs = context.dataStore.data.first()
             applyDayNight(ThemeMode.fromString(prefs[KEY_THEME_MODE]))
-            // Language is applied to Compose via a localized CompositionLocal in
-            // MainActivity to avoid AppCompat locale-triggered recreation/freezes.
+            applyLanguage(Language.fromKey(prefs[KEY_LANGUAGE]))
         }
     }
 
@@ -221,19 +219,5 @@ object AppSettings {
         androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(
             androidx.core.os.LocaleListCompat.forLanguageTags(localeTag)
         )
-    }
-
-    /**
-     * Converts a stored language preference to a concrete Locale for contexts that
-     * are not AppCompat activities (e.g. ComponentActivity + Jetpack Compose),
-     * where AppCompatDelegate.setApplicationLocales alone does not reconfigure
-     * the activity's resources.
-     */
-    fun toLocale(language: Language): Locale? = when (language) {
-        Language.ENGLISH -> Locale("en")
-        Language.CHINESE -> Locale("zh", "CN")
-        Language.KOREAN -> Locale("ko")
-        Language.JAPANESE -> Locale("ja")
-        Language.SYSTEM -> null
     }
 }
