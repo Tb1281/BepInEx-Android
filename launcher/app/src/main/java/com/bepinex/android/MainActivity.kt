@@ -23,6 +23,7 @@ import com.bepinex.android.ui.navigation.BepInExNavHost
 import com.bepinex.android.ui.theme.BepInExTheme
 import java.io.File
 
+import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -84,6 +85,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+            // Preserve the activity-result registry across the context switch;
+            // rememberLauncherForActivityResult (used by BepInExNavHost) needs it.
+            val activityResultRegistryOwner = LocalActivityResultRegistryOwner.current ?: this@MainActivity
+
             // Apply the selected language to Compose's string resources without
             // recreating the Activity (which previously could deadlock).
             val localizedContext = remember(uiState.language) {
@@ -99,7 +104,10 @@ class MainActivity : ComponentActivity() {
             }
 
             BepInExTheme(themeMode = uiState.themeMode, dynamicColor = uiState.dynamicColor) {
-                CompositionLocalProvider(LocalContext provides localizedContext) {
+                CompositionLocalProvider(
+                    LocalContext provides localizedContext,
+                    LocalActivityResultRegistryOwner provides activityResultRegistryOwner
+                ) {
                 BepInExNavHost(
                     detectedGames = uiState.detectedGames,
                     selectedGame = uiState.selectedGame,
