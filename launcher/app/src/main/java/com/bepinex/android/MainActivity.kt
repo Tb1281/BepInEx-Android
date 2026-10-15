@@ -2,6 +2,7 @@ package com.bepinex.android
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
@@ -26,9 +27,11 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.bepinex.android.ui.components.CrashRecoveryDialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-
+import java.util.Locale
 /**
  * Main launcher Activity -- Compose UI for multi-game BepInEx mod management.
  *
@@ -36,6 +39,24 @@ import kotlinx.coroutines.withContext
  * User selects a game, manages mods, and launches it through [BootstrapActivity].
  */
 class MainActivity : ComponentActivity() {
+
+    override fun attachBaseContext(newBase: Context) {
+        // Apply the persisted language preference to the activity's resources.
+        // ComponentActivity (Compose) does not go through AppCompat's
+        // configuration update the way AppCompatActivity does, so without this
+        // the UI can stay in the previous language after a selection.
+        val language = runBlocking { AppSettings.getLanguageFlow(newBase).first() }
+        val locale = AppSettings.toLocale(language)
+        val context = if (locale == null) {
+            newBase
+        } else {
+            val config = Configuration(newBase.resources.configuration)
+            config.setLocale(locale)
+            config.setLayoutDirection(locale)
+            newBase.createConfigurationContext(config)
+        }
+        super.attachBaseContext(context)
+    }
 
     private val viewModel: MainViewModel by viewModels()
 
@@ -89,7 +110,11 @@ class MainActivity : ComponentActivity() {
                     onThemeChanged = { viewModel.setTheme(it) },
                     onLanguageChanged = { lang ->
                         viewModel.setLanguage(lang)
+                        // Persist synchronously so attachBaseContext picks up the new
+                        // value when the activity is recreated below.
+                        runBlocking { AppSettings.setLanguage(this@MainActivity, lang) }
                         AppSettings.applyLanguage(lang)
+                        recreate()
                     },
                     onFloatingLogInGameChanged = { enabled ->
                         if (enabled && !Settings.canDrawOverlays(this@MainActivity)) {

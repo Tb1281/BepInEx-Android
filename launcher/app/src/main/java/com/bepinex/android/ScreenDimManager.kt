@@ -166,6 +166,10 @@ class ScreenDimManager : Application.ActivityLifecycleCallbacks {
         if (isPaused) return
 
         val timeout = getScreenTimeout(activity)
+        // A non-positive system timeout means "never turn off the screen". There is
+        // no idle deadline to dim against, so don't schedule (and never post with a
+        // negative delay, which Handler treats as "run immediately").
+        if (timeout <= 0L) return
 
         val runnable = Runnable {
             val act = attachedActivity ?: return@Runnable
@@ -173,6 +177,10 @@ class ScreenDimManager : Application.ActivityLifecycleCallbacks {
 
             if (!isCharging(act)) {
                 dimScreen(act)
+            } else {
+                // Keep the screen on while charging without dimming, but re-arm so
+                // an unplug later still gets an idle deadline.
+                scheduleIdleDim(act)
             }
         }
         dimRunnable = runnable

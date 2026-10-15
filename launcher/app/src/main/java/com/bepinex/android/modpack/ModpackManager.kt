@@ -94,8 +94,14 @@ class ModpackManager {
 
         return dir.listFiles()
             ?.filter { it.isDirectory }
+            // Sort the directory listing first so that readMeta (which may persist a
+            // synthesised manifest for legacy modpacks) is called in a deterministic
+            // order, and so the final tie-break is well-defined.
+            ?.sortedBy { it.name }
             ?.mapNotNull { readMeta(packageName, it.name) }
-            ?.sortedByDescending { it.createdAt }
+            // The modpack list is always ordered by name, deterministically, so the
+            // tab never reshuffles between refreshes.
+            ?.sortedBy { it.name }
             ?: emptyList()
     }
 
@@ -801,21 +807,50 @@ class ModpackManager {
     private fun readMeta(packageName: String, name: String): ModpackMeta? {
         val file = getMetaFile(packageName, name)
         val actualModCount = getModCount(packageName, name)
+        val modpackDir = getModpackDir(packageName, name)
+
         if (!file.exists()) {
-            return ModpackMeta(
+            // Persist a manifest on first encounter so the creation timestamp (and
+            // therefore the list order) stays stable across refreshes instead of being
+            // re-rolled to "now" every time listModpacks() is called. Prefer the
+            // directory's own mtime as a best-effort creation time; fall back to the
+            // current time only when the filesystem reports nothing usable.
+            val createdAt = modpackDir.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+            val meta = ModpackMeta(
                 name = name,
                 packageName = packageName,
+                createdAt = createdAt,
                 modCount = actualModCount
             )
+            try { writeMeta(meta) } catch (e: Exception) {
+                BepInExLog.w("Failed to persist synthesised modpack manifest for $name: ${e.message}")
+            }
+            return meta
         }
+
         return try {
             val json = JSONObject(file.readText())
-            ModpackMeta(
+            val hasCreatedAt = json.has("createdAt")
+            // A manifest written by an older version may lack createdAt; without a
+            // persisted value, optLong would re-roll it to "now" on every read.
+            // Resolve once from the directory mtime (or now) and write it back.
+            val createdAt = if (hasCreatedAt) {
+                json.optLong("createdAt", 0L).takeIf { it > 0L } ?: modpackDir.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+            } else {
+                modpackDir.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+            }
+            val meta = ModpackMeta(
                 name = name,
                 packageName = packageName,
-                createdAt = json.optLong("createdAt", System.currentTimeMillis()),
+                createdAt = createdAt,
                 modCount = actualModCount
             )
+            if (!hasCreatedAt || json.optLong("createdAt", 0L) <= 0L) {
+                try { writeMeta(meta) } catch (e: Exception) {
+                    BepInExLog.w("Failed to persist modpack createdAt for $name: ${e.message}")
+                }
+            }
+            meta
         } catch (e: Exception) {
             ModpackMeta(name = name, packageName = packageName, modCount = actualModCount)
         }
