@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -105,16 +106,17 @@ fun BepInExNavHost(
         }
     }
 
-    // File picker triggers (launcher must be at composable top level)
-    var importModpackTrigger by remember { mutableStateOf(false) }
-    var addModTrigger by remember { mutableStateOf<String?>(null) }
+    // File picker targets (launchers must live at composable top level).
+    // Pickers are fired directly from event handlers below — no Boolean/Int
+    // trigger state, which could re-fire on recomposition or desync the target
+    // across rotation. The pending target is read by the callback, then cleared.
+    var addModTarget by remember { mutableStateOf<String?>(null) }
 
     // Export is a SAF CreateDocument: the user chooses the destination, so the
     // launcher never needs a storage permission to write the archive. The target
     // is remembered because the picker callback only returns a Uri — it does not
     // say which modpack was being exported, and two screens can trigger one.
     var exportTarget by remember { mutableStateOf<ExportTarget?>(null) }
-    var exportTrigger by remember { mutableIntStateOf(0) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
@@ -155,7 +157,8 @@ fun BepInExNavHost(
     val addModLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        val targetModpack = addModTrigger
+        val targetModpack = addModTarget
+        addModTarget = null
         if (uri != null && targetModpack != null) {
             val game = selectedGame
             if (game != null) {
@@ -168,30 +171,6 @@ fun BepInExNavHost(
                 }
             }
         }
-        addModTrigger = null
-    }
-
-    LaunchedEffect(importModpackTrigger) {
-        if (importModpackTrigger) {
-            importModpackLauncher.launch(arrayOf("application/zip", "*/*"))
-            importModpackTrigger = false
-        }
-    }
-
-    // Same shape as import: a trigger counter, because launching the picker is a
-    // side effect and re-launching it on recomposition would reopen it over the
-    // user's own selection.
-    LaunchedEffect(exportTrigger) {
-        val target = exportTarget
-        if (exportTrigger > 0 && target != null) {
-            exportLauncher.launch("${target.modpackName}.zip")
-        }
-    }
-
-    LaunchedEffect(addModTrigger) {
-        if (addModTrigger != null) {
-            addModLauncher.launch(arrayOf("*/*"))
-        }
     }
 
     // Start watching BepInEx log when game is selected
@@ -201,101 +180,11 @@ fun BepInExNavHost(
         }
     }
 
-    // Determine which bottom tabs to show
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
-
-    val showBottomBar = currentRoute in listOf(NavRoutes.GAMES, "modpacks/{packageName}", "settings/{packageName}")
-
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            if (showBottomBar) {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 3.dp
-                ) {
-                    val isGames = currentRoute == NavRoutes.GAMES
-                    NavigationBarItem(
-                        selected = isGames,
-                        onClick = {
-                            if (!isGames) {
-                                navController.navigate(NavRoutes.GAMES) {
-                                    popUpTo(NavRoutes.GAMES) { inclusive = true }
-                                }
-                            }
-                        },
-                        icon = {
-                            Icon(
-                                if (isGames) Icons.Filled.SportsEsports else Icons.Outlined.SportsEsports,
-                                contentDescription = stringResource(R.string.nav_games)
-                            )
-                        },
-                        label = {
-                            Text(
-                                stringResource(R.string.nav_games),
-                                fontWeight = if (isGames) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-                    )
-                    val isModpacks = currentRoute == "modpacks/{packageName}"
-                    NavigationBarItem(
-                        selected = isModpacks,
-                        onClick = {
-                            // Do nothing when already on the modpacks tab; otherwise
-                            // each tap re-navigates and re-runs the screen's
-                            // LaunchedEffect, which reloads the whole list.
-                            if (!isModpacks) {
-                                selectedGame?.let { game ->
-                                    navController.navigate(NavRoutes.modpacks(game.packageName)) {
-                                        popUpTo(NavRoutes.GAMES)
-                                    }
-                                }
-                            }
-                        },
-                        enabled = selectedGame != null,
-                        icon = {
-                            Icon(
-                                if (isModpacks) Icons.Filled.FolderZip else Icons.Outlined.FolderZip,
-                                contentDescription = stringResource(R.string.nav_modpacks)
-                            )
-                        },
-                        label = {
-                            Text(
-                                stringResource(R.string.nav_modpacks),
-                                fontWeight = if (isModpacks) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-                    )
-                    val isSettings = currentRoute == "settings/{packageName}"
-                    NavigationBarItem(
-                        selected = isSettings,
-                        onClick = {
-                            if (!isSettings) {
-                                selectedGame?.let { game ->
-                                    navController.navigate(NavRoutes.settings(game.packageName)) {
-                                        popUpTo(NavRoutes.GAMES)
-                                    }
-                                }
-                            }
-                        },
-                        enabled = selectedGame != null,
-                        icon = {
-                            Icon(
-                                if (isSettings) Icons.Filled.Settings else Icons.Outlined.Settings,
-                                contentDescription = stringResource(R.string.nav_settings)
-                            )
-                        },
-                        label = {
-                            Text(
-                                stringResource(R.string.nav_settings),
-                                fontWeight = if (isSettings) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-                    )
-                }
-            }
+            BottomNavBar(navController = navController, selectedGame = selectedGame)
         }
     ) { innerPadding ->
         Box(
@@ -303,9 +192,15 @@ fun BepInExNavHost(
                 .fillMaxSize()
                 .padding(bottom = innerPadding.calculateBottomPadding())
         ) {
+            // Symmetric transitions defined once: every destination animates the
+            // same way, including the system predictive-back gesture.
             NavHost(
                 navController = navController,
-                startDestination = NavRoutes.GAMES
+                startDestination = NavRoutes.GAMES,
+                enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
+                exitTransition = { slideOutHorizontally(tween(300)) { -it } + fadeOut(tween(300)) },
+                popEnterTransition = { slideInHorizontally(tween(300)) { -it } + fadeIn(tween(300)) },
+                popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
             ) {
                 // Main game screen
                 composable(
@@ -322,18 +217,17 @@ fun BepInExNavHost(
                         activeModpackModCount = modpacks.filter { it.name in activeModpackNames }.sumOf { it.modCount },
                         onSelectGame = onSelectGame,
                         onRescan = onRescan,
-                        onLaunch = { 
-                            selectedGame?.let { game -> coroutineScope.launch { AppSettings.setLastLaunchedModpacks(context, game.packageName, activeModpackNames) } }
-                            onLaunch(activeModpackNames) 
-                        },
+                        // Last-launched modpacks are persisted inside launchGame
+                        // before the game starts, so there is no save/start race.
+                        onLaunch = { onLaunch(activeModpackNames) },
                         onNavigateToSettings = {
                             selectedGame?.let {
-                                navController.navigate(NavRoutes.settings(it.packageName))
+                                navController.navigateTab(NavRoutes.settings(it.packageName))
                             }
                         },
                         onNavigateToModpacks = {
                             selectedGame?.let {
-                                navController.navigate(NavRoutes.modpacks(it.packageName))
+                                navController.navigateTab(NavRoutes.modpacks(it.packageName))
                             }
                         }
                     )
@@ -342,9 +236,7 @@ fun BepInExNavHost(
                 // Modpack list
                 composable(
                     route = NavRoutes.MODPACKS,
-                    arguments = listOf(navArgument("packageName") { type = NavType.StringType }),
-                    enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
-                    popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
+                    arguments = listOf(navArgument("packageName") { type = NavType.StringType })
                 ) { backStackEntry ->
                     val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
                     // Refresh modpacks (disk walk: off Main)
@@ -396,9 +288,9 @@ fun BepInExNavHost(
                             // storage permission and then put the export somewhere
                             // the user had to go looking for.
                             exportTarget = ExportTarget(packageName, name)
-                            exportTrigger++
+                            exportLauncher.launch("$name.zip")
                         },
-                        onImportModpack = { importModpackTrigger = true }
+                        onImportModpack = { importModpackLauncher.launch(arrayOf("application/zip", "*/*")) }
                     )
                 }
 
@@ -408,31 +300,37 @@ fun BepInExNavHost(
                     arguments = listOf(
                         navArgument("packageName") { type = NavType.StringType },
                         navArgument("modpackName") { type = NavType.StringType }
-                    ),
-                    enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
-                    popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
+                    )
                 ) { backStackEntry ->
                     val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
                     val modpackName = backStackEntry.arguments?.getString("modpackName") ?: return@composable
 
-                    var mods by remember(packageName, modpackName, modpackRefreshKey) {
-                        mutableStateOf(modpackManager.listMods(packageName, modpackName))
-                    }
-                    val configFiles = remember(packageName, modpackName, modpackRefreshKey) {
-                        modpackManager.listConfigs(packageName, modpackName)
-                    }
+                    var mods by remember { mutableStateOf<List<File>>(emptyList()) }
+                    var configFiles by remember { mutableStateOf<List<File>>(emptyList()) }
                     var editingConfig by remember { mutableStateOf<File?>(null) }
-                    var showModLog by remember { mutableStateOf(false) }
+
+                    // Disk walks off Main; refresh key re-runs after add/delete.
+                    LaunchedEffect(packageName, modpackName, modpackRefreshKey) {
+                        withContext(Dispatchers.IO) {
+                            mods = modpackManager.listMods(packageName, modpackName)
+                            configFiles = modpackManager.listConfigs(packageName, modpackName)
+                        }
+                    }
 
                     ModpackDetailScreen(
                         modpackName = modpackName,
                         mods = mods,
                         configFiles = configFiles,
                         onNavigateBack = { navController.popBackStack() },
-                        onAddMod = { addModTrigger = modpackName },
+                        onAddMod = {
+                            addModTarget = modpackName
+                            addModLauncher.launch(arrayOf("*/*"))
+                        },
                         onDeleteMod = { file ->
-                            modpackManager.removeMod(file)
-                            mods = modpackManager.listMods(packageName, modpackName)
+                            coroutineScope.launch(Dispatchers.IO) {
+                                modpackManager.removeMod(file)
+                                mods = modpackManager.listMods(packageName, modpackName)
+                            }
                         },
                         onOpenConfig = { configFile ->
                             editingConfig = configFile
@@ -442,18 +340,20 @@ fun BepInExNavHost(
                             // Same SAF path as the list screen: the user picks the
                             // destination, so no storage permission is involved.
                             exportTarget = ExportTarget(packageName, modpackName)
-                            exportTrigger++
+                            exportLauncher.launch("$modpackName.zip")
                         }
                     )
 
-                    // Config editor
+                    // Config editor (disk write off Main)
                     editingConfig?.let { file ->
                         ConfigEditorDialog(
                             configFile = file,
                             onDismiss = { editingConfig = null },
                             onSave = { f, content ->
-                                f.writeText(content)
-                                editingConfig = null
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    f.writeText(content)
+                                    withContext(Dispatchers.Main) { editingConfig = null }
+                                }
                             }
                         )
                     }
@@ -462,9 +362,7 @@ fun BepInExNavHost(
                 // Settings
                 composable(
                     route = NavRoutes.SETTINGS,
-                    arguments = listOf(navArgument("packageName") { type = NavType.StringType }),
-                    enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
-                    popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
+                    arguments = listOf(navArgument("packageName") { type = NavType.StringType })
                 ) { backStackEntry ->
                     val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
                     val settingsContext = LocalContext.current
@@ -491,9 +389,7 @@ fun BepInExNavHost(
                     arguments = listOf(
                         navArgument("packageName") { type = NavType.StringType },
                         navArgument("modpackName") { type = NavType.StringType }
-                    ),
-                    enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
-                    popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
+                    )
                 ) { backStackEntry ->
                     val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
                     val modpackName = backStackEntry.arguments?.getString("modpackName") ?: ""
@@ -506,14 +402,24 @@ fun BepInExNavHost(
 
                 // About
                 composable(
-                    route = NavRoutes.ABOUT,
-                    enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
-                    popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
+                    route = NavRoutes.ABOUT
                 ) {
                     val context = LocalContext.current
                     val versionName = runCatching {
-                        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.170"
-                    }.getOrDefault("0.170")
+                        val pm = context.packageManager
+                        val info = if (android.os.Build.VERSION.SDK_INT >=
+                            android.os.Build.VERSION_CODES.TIRAMISU
+                        ) {
+                            pm.getPackageInfo(
+                                context.packageName,
+                                android.content.pm.PackageManager.PackageInfoFlags.of(0)
+                            )
+                        } else {
+                            @Suppress("DEPRECATION")
+                            pm.getPackageInfo(context.packageName, 0)
+                        }
+                        info.versionName ?: "unknown"
+                    }.getOrDefault("unknown")
                     AboutScreen(
                         versionName = versionName,
                         onNavigateBack = { navController.popBackStack() }
@@ -522,5 +428,107 @@ fun BepInExNavHost(
             }
 
         }
+    }
+}
+
+/**
+ * Top-level tab navigation with back-stack state preservation.
+ *
+ * popUpTo(startDestination) + saveState/restoreState + launchSingleTop is the
+ * official bottom-nav pattern: tab switches keep scroll and UI state instead
+ * of destroying the back stack and re-triggering each screen's reload effect.
+ */
+private fun NavHostController.navigateTab(route: String) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
+/**
+ * Bottom bar scoped to its own back-stack collection: only this composable
+ * recomposes on navigation, not the whole NavHost. Hidden on drill-in screens
+ * (detail, log viewer, about).
+ */
+@Composable
+private fun BottomNavBar(
+    navController: NavHostController,
+    selectedGame: GameDetector.DetectedGame?
+) {
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
+    val showBottomBar = currentRoute in listOf(
+        NavRoutes.GAMES, "modpacks/{packageName}", "settings/{packageName}"
+    )
+    if (!showBottomBar) return
+
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp
+    ) {
+        val isGames = currentRoute == NavRoutes.GAMES
+        NavigationBarItem(
+            selected = isGames,
+            // launchSingleTop makes a re-tap a no-op; no explicit guard needed.
+            onClick = { navController.navigateTab(NavRoutes.GAMES) },
+            icon = {
+                Icon(
+                    if (isGames) Icons.Filled.SportsEsports else Icons.Outlined.SportsEsports,
+                    contentDescription = stringResource(R.string.nav_games)
+                )
+            },
+            label = {
+                Text(
+                    stringResource(R.string.nav_games),
+                    fontWeight = if (isGames) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+        )
+        val isModpacks = currentRoute == "modpacks/{packageName}"
+        NavigationBarItem(
+            selected = isModpacks,
+            onClick = {
+                selectedGame?.let { game ->
+                    navController.navigateTab(NavRoutes.modpacks(game.packageName))
+                }
+            },
+            enabled = selectedGame != null,
+            icon = {
+                Icon(
+                    if (isModpacks) Icons.Filled.FolderZip else Icons.Outlined.FolderZip,
+                    contentDescription = stringResource(R.string.nav_modpacks)
+                )
+            },
+            label = {
+                Text(
+                    stringResource(R.string.nav_modpacks),
+                    fontWeight = if (isModpacks) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+        )
+        val isSettings = currentRoute == "settings/{packageName}"
+        NavigationBarItem(
+            selected = isSettings,
+            onClick = {
+                selectedGame?.let { game ->
+                    navController.navigateTab(NavRoutes.settings(game.packageName))
+                }
+            },
+            enabled = selectedGame != null,
+            icon = {
+                Icon(
+                    if (isSettings) Icons.Filled.Settings else Icons.Outlined.Settings,
+                    contentDescription = stringResource(R.string.nav_settings)
+                )
+            },
+            label = {
+                Text(
+                    stringResource(R.string.nav_settings),
+                    fontWeight = if (isSettings) FontWeight.Bold else FontWeight.Normal
+                )
+            }
+        )
     }
 }

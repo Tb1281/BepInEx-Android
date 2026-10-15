@@ -246,6 +246,11 @@ class MainActivity : AppCompatActivity() {
             val floatingLogEnabled = withContext(Dispatchers.IO) {
                 AppSettings.getFloatingLogInGameEnabledFlow(this@MainActivity).first()
             }
+            // Persist the selection before starting: sequential in this coroutine,
+            // so the game can never start before the save completes.
+            withContext(Dispatchers.IO) {
+                AppSettings.setLastLaunchedModpacks(this@MainActivity, game.packageName, modpackNames)
+            }
             try {
                 CrashDiagnostics.markLaunch(this@MainActivity, game.packageName)
                 val intent = Intent(this@MainActivity, BootstrapActivity::class.java).apply {
