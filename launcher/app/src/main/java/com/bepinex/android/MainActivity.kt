@@ -110,11 +110,12 @@ class MainActivity : ComponentActivity() {
                     onThemeChanged = { viewModel.setTheme(it) },
                     onLanguageChanged = { lang ->
                         viewModel.setLanguage(lang)
-                        // Persist synchronously so attachBaseContext picks up the new
-                        // value when the activity is recreated below.
+                        // Persist synchronously so the persisted locale is up to date.
                         runBlocking { AppSettings.setLanguage(this@MainActivity, lang) }
+                        // AppCompatDelegate.setApplicationLocales triggers the actual
+                        // configuration/locale change (and activity recreation) on its
+                        // own. Calling recreate() here as well can deadlock/freeze.
                         AppSettings.applyLanguage(lang)
-                        recreate()
                     },
                     onFloatingLogInGameChanged = { enabled ->
                         if (enabled && !Settings.canDrawOverlays(this@MainActivity)) {
