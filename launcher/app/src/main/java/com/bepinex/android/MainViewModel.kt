@@ -60,11 +60,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(screenDimInGame = enabled) }
             }
         }
-        _uiState.update {
-            it.copy(
-                dynamicColor = AppSettings.isDynamicColorEnabled(application),
-                animationDisabled = AppSettings.isAnimationDisabled(application)
-            )
+        viewModelScope.launch {
+            AppSettings.getDynamicColorFlow(application).collect { enabled ->
+                _uiState.update { it.copy(dynamicColor = enabled) }
+            }
+        }
+        viewModelScope.launch {
+            AppSettings.getAnimationDisabledFlow(application).collect { disabled ->
+                _uiState.update { it.copy(animationDisabled = disabled) }
+            }
         }
     }
 
@@ -87,7 +91,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 BepInExLog.i("Detected ${games.size} Unity IL2CPP game(s)")
 
                 val currentSelected = _uiState.value.selectedGame
-                val lastLaunchedPkg = AppSettings.getLastLaunchedGameFlow(getApplication()).first()
+                // DataStore read on IO; viewModelScope is Main-bound.
+                val lastLaunchedPkg = withContext(Dispatchers.IO) {
+                    AppSettings.getLastLaunchedGameFlow(getApplication()).first()
+                }
                 val newSelected = currentSelected 
                     ?: games.find { it.packageName == lastLaunchedPkg } 
                     ?: games.firstOrNull()
@@ -191,34 +198,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearBepInEx(packageName: String) {
-        val dir = BepInExPaths.getBepInExDir(packageName)
-        if (dir.exists()) {
-            dir.deleteRecursively()
-            BepInExLog.i("Cleared BepInEx: ${dir.absolutePath}")
-        }
-        _uiState.update {
-            it.copy(isFrameworkReady = fileExtractor.isFrameworkReady(packageName))
+        // Recursive delete of the framework tree can take seconds; keep it off Main.
+        viewModelScope.launch(Dispatchers.IO) {
+            val dir = BepInExPaths.getBepInExDir(packageName)
+            if (dir.exists()) {
+                dir.deleteRecursively()
+                BepInExLog.i("Cleared BepInEx: ${dir.absolutePath}")
+            }
+            _uiState.update {
+                it.copy(isFrameworkReady = fileExtractor.isFrameworkReady(packageName))
+            }
         }
     }
 
     fun clearDotnet(packageName: String) {
-        val dotnetDir = BepInExPaths.getDotnetDir(packageName)
-        val dataDir = BepInExPaths.getCopiedDataDir(packageName)
-        if (dotnetDir.exists()) dotnetDir.deleteRecursively()
-        if (dataDir.exists()) dataDir.deleteRecursively()
-        BepInExLog.i("Cleared .NET data for $packageName")
+        viewModelScope.launch(Dispatchers.IO) {
+            val dotnetDir = BepInExPaths.getDotnetDir(packageName)
+            val dataDir = BepInExPaths.getCopiedDataDir(packageName)
+            if (dotnetDir.exists()) dotnetDir.deleteRecursively()
+            if (dataDir.exists()) dataDir.deleteRecursively()
+            BepInExLog.i("Cleared .NET data for $packageName")
+        }
     }
 
-    fun clearLibUnity(packageName: String): Boolean {
-        val appDataDir = BepInExPaths.getAppDataDir(packageName)
-        val libunityDir = File(appDataDir, "libunity")
-        return if (libunityDir.exists()) {
-            libunityDir.deleteRecursively()
-            BepInExLog.i("Cleared libunity cache: ${libunityDir.absolutePath}")
-            true
-        } else {
-            BepInExLog.i("Clear libunity: nothing to clear at ${libunityDir.absolutePath}")
-            false
+    fun clearLibUnity(packageName: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val appDataDir = BepInExPaths.getAppDataDir(packageName)
+            val libunityDir = File(appDataDir, "libunity")
+            val cleared = if (libunityDir.exists()) {
+                libunityDir.deleteRecursively()
+                BepInExLog.i("Cleared libunity cache: ${libunityDir.absolutePath}")
+                true
+            } else {
+                BepInExLog.i("Clear libunity: nothing to clear at ${libunityDir.absolutePath}")
+                false
+            }
+            withContext(Dispatchers.Main) { onDone(cleared) }
         }
     }
 

@@ -23,6 +23,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.bepinex.android.ui.components.CrashRecoveryDialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 /**
@@ -207,27 +208,30 @@ class MainActivity : AppCompatActivity() {
 
         BepInExLog.i("=== Launching ${game.label} (modpacks: ${if (modpackNames.isEmpty()) "vanilla" else modpackNames.joinToString(", ")}) via BootstrapActivity ===")
 
-        try {
-            CrashDiagnostics.markLaunch(this, game.packageName)
-            val intent = Intent(this, BootstrapActivity::class.java).apply {
-                putExtra(BootstrapActivity.EXTRA_TARGET_PACKAGE, game.packageName)
-                putExtra(
-                    BootstrapActivity.EXTRA_USE_ORIGINAL_LIBUNITY,
-                    !AppSettings.isUseUnstrippedLibUnity(this@MainActivity, game.packageName)
-                )
-                putExtra(
-                    BootstrapActivity.EXTRA_BLOCK_UNITY_KILL,
-                    AppSettings.isUnityKillBlockEnabled(this@MainActivity, game.packageName)
-                )
-                if (modpackNames.isNotEmpty()) {
-                    putStringArrayListExtra(BootstrapActivity.EXTRA_ACTIVE_MODPACKS, ArrayList(modpackNames))
-                    putExtra(BootstrapActivity.EXTRA_ACTIVE_MODPACK, modpackNames.first())
-                }
+        // Per-game DataStore reads do file I/O; resolve them off Main, then start.
+        lifecycleScope.launch {
+            val useOriginalLibUnity = withContext(Dispatchers.IO) {
+                !AppSettings.isUseUnstrippedLibUnityFlow(this@MainActivity, game.packageName).first()
             }
-            startActivity(intent)
-        } catch (e: Exception) {
-            BepInExLog.e("Launch failed", e)
-            Toast.makeText(this, getString(R.string.launch_failed), Toast.LENGTH_LONG).show()
+            val blockUnityKill = withContext(Dispatchers.IO) {
+                AppSettings.isUnityKillBlockEnabledFlow(this@MainActivity, game.packageName).first()
+            }
+            try {
+                CrashDiagnostics.markLaunch(this@MainActivity, game.packageName)
+                val intent = Intent(this@MainActivity, BootstrapActivity::class.java).apply {
+                    putExtra(BootstrapActivity.EXTRA_TARGET_PACKAGE, game.packageName)
+                    putExtra(BootstrapActivity.EXTRA_USE_ORIGINAL_LIBUNITY, useOriginalLibUnity)
+                    putExtra(BootstrapActivity.EXTRA_BLOCK_UNITY_KILL, blockUnityKill)
+                    if (modpackNames.isNotEmpty()) {
+                        putStringArrayListExtra(BootstrapActivity.EXTRA_ACTIVE_MODPACKS, ArrayList(modpackNames))
+                        putExtra(BootstrapActivity.EXTRA_ACTIVE_MODPACK, modpackNames.first())
+                    }
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                BepInExLog.e("Launch failed", e)
+                Toast.makeText(this@MainActivity, getString(R.string.launch_failed), Toast.LENGTH_LONG).show()
+            }
         }
     }
 

@@ -139,9 +139,11 @@ class BootstrapActivity : Activity() {
 
         // 3. Prepare Fusion state (paths, extract zips, copy data, detect version)
         val useOriginalLibUnity = intent.getBooleanExtra(EXTRA_USE_ORIGINAL_LIBUNITY, true)
+        // This runs on the background bootstrap thread, so bridging the suspend
+        // DataStore read with runBlocking here cannot ANR the UI.
         val blockUnityKill = intent.getBooleanExtra(
             EXTRA_BLOCK_UNITY_KILL,
-            AppSettings.isUnityKillBlockEnabled(this, targetPackage)
+            runBlocking { AppSettings.isUnityKillBlockEnabledFlow(this@BootstrapActivity, targetPackage).first() }
         )
         preparedConfig = prepareFusionState(targetPackage, gameContext, useOriginalLibUnity)
 
@@ -349,7 +351,8 @@ class BootstrapActivity : Activity() {
             BepInExLog.i("Fusion config staged: ${stagedFile.absolutePath}")
 
             // Start floating log overlay if enabled in settings
-            if (AppSettings.isFloatingLogInGameEnabled(this@BootstrapActivity)) {
+            // Background bootstrap thread: runBlocking bridge cannot ANR.
+            if (runBlocking { AppSettings.getFloatingLogInGameEnabledFlow(this@BootstrapActivity).first() }) {
                 val pkg = this.targetPackage ?: "unknown"
                 LogOverlayService.start(this@BootstrapActivity, pkg)
                 BepInExLog.i("Started floating log overlay service")
@@ -467,7 +470,8 @@ class BootstrapActivity : Activity() {
         // Apply active modpack (or clear for vanilla mode) with per-modpack state persistence
         updateProgress(getString(R.string.bootstrap_status_preparing), "", 55)
         val modpackManager = com.bepinex.android.modpack.ModpackManager()
-        val previousActive = AppSettings.getActiveModpack(this, targetPackage)
+        // Background bootstrap thread: runBlocking bridges cannot ANR.
+        val previousActive = runBlocking { AppSettings.getActiveModpackFlow(this@BootstrapActivity, targetPackage).first() }
 
         // Save whatever runtime generated from previous run back to its owner
         modpackManager.persistRuntimeState(targetPackage, previousActive)
