@@ -239,9 +239,14 @@ fun BepInExNavHost(
                     NavigationBarItem(
                         selected = isModpacks,
                         onClick = {
-                            selectedGame?.let { game ->
-                                navController.navigate(NavRoutes.modpacks(game.packageName)) {
-                                    popUpTo(NavRoutes.GAMES)
+                            // Do nothing when already on the modpacks tab; otherwise
+                            // each tap re-navigates and re-runs the screen's
+                            // LaunchedEffect, which reloads the whole list.
+                            if (!isModpacks) {
+                                selectedGame?.let { game ->
+                                    navController.navigate(NavRoutes.modpacks(game.packageName)) {
+                                        popUpTo(NavRoutes.GAMES)
+                                    }
                                 }
                             }
                         },
@@ -263,9 +268,11 @@ fun BepInExNavHost(
                     NavigationBarItem(
                         selected = isSettings,
                         onClick = {
-                            selectedGame?.let { game ->
-                                navController.navigate(NavRoutes.settings(game.packageName)) {
-                                    popUpTo(NavRoutes.GAMES)
+                            if (!isSettings) {
+                                selectedGame?.let { game ->
+                                    navController.navigate(NavRoutes.settings(game.packageName)) {
+                                        popUpTo(NavRoutes.GAMES)
+                                    }
                                 }
                             }
                         },
