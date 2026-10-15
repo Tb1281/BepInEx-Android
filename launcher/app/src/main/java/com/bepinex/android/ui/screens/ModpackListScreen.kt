@@ -12,6 +12,7 @@ import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +34,8 @@ fun ModpackListScreen(
     targetGameLabel: String,
     modpacks: List<ModpackMeta>,
     activeModpackNames: Set<String>,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
     onNavigateBack: () -> Unit,
     onCreateModpack: (String) -> Unit,
     onDeleteModpack: (String) -> Unit,
@@ -97,13 +100,18 @@ fun ModpackListScreen(
             )
         }
     ) { padding ->
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp)
+                .padding(padding)
         ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp)
+            ) {
             // Vanilla option card
             item {
                 val isVanillaActive = activeModpackNames.isEmpty()
@@ -365,6 +373,7 @@ fun ModpackListScreen(
                         }
                     }
                 }
+            }
             }
         }
     }

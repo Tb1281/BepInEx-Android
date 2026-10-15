@@ -91,6 +91,7 @@ fun BepInExNavHost(
     var modpacks by remember { mutableStateOf<List<ModpackMeta>>(emptyList()) }
     var activeModpackNames by remember { mutableStateOf<Set<String>>(emptySet()) }
     var modpackRefreshKey by remember { mutableStateOf(0) }
+    var isRefreshing by remember { mutableStateOf(false) }
 
     // Refresh modpack list when game changes or refresh key bumps.
     // listModpacks() walks the filesystem (and may synthesise a manifest), and
@@ -103,6 +104,7 @@ fun BepInExNavHost(
                 AppSettings.setLastLaunchedGame(context, game.packageName)
                 activeModpackNames = AppSettings.getLastLaunchedModpacksFlow(context, game.packageName).first()
             }
+            isRefreshing = false
         }
     }
 
@@ -246,6 +248,11 @@ fun BepInExNavHost(
                         targetGameLabel = selectedGame?.label ?: packageName,
                         modpacks = modpacks,
                         activeModpackNames = activeModpackNames,
+                        isRefreshing = isRefreshing,
+                        onRefresh = {
+                            isRefreshing = true
+                            modpackRefreshKey++
+                        },
                         onNavigateBack = { navController.popBackStack() },
                         onCreateModpack = { name ->
                             coroutineScope.launch(Dispatchers.IO) {
