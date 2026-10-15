@@ -2,8 +2,8 @@ package com.bepinex.android.ui.screens
 
 import android.content.Intent
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Share
@@ -17,7 +17,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.bepinex.android.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
+
+// Upper bound for in-memory log rendering. The full file is still shared via
+// FileProvider; only the on-screen tail is inflated as composables.
+private const val MAX_LOG_LINES = 3000
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,12 +32,29 @@ fun LogViewerScreen(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val logContent = remember(logFilePath) {
-        try {
-            val file = File(logFilePath)
-            if (file.exists()) file.readText() else "Log file not found:\n$logFilePath"
-        } catch (e: Exception) {
-            "Failed to read log: ${e.message}"
+    var logLines by remember { mutableStateOf<List<String>>(emptyList()) }
+    var truncated by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+
+    // Unbounded readText() on the composition thread plus one giant Text layout
+    // ANRs/OOMs on multi-MB logs. Tail the file off Main and recycle rows.
+    LaunchedEffect(logFilePath) {
+        logLines = emptyList()
+        truncated = false
+        loadError = null
+        withContext(Dispatchers.IO) {
+            try {
+                val file = File(logFilePath)
+                if (!file.exists()) {
+                    loadError = "Log file not found:\n$logFilePath"
+                } else {
+                    val all = file.bufferedReader().useLines { it.toList() }
+                    truncated = all.size > MAX_LOG_LINES
+                    logLines = if (truncated) all.takeLast(MAX_LOG_LINES) else all
+                }
+            } catch (e: Exception) {
+                loadError = "Failed to read log: ${e.message}"
+            }
         }
     }
 
@@ -87,16 +110,37 @@ fun LogViewerScreen(
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         ) {
-            Text(
-                text = logContent,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(12.dp),
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Column(Modifier.fillMaxSize().padding(12.dp)) {
+                if (truncated) {
+                    Text(
+                        text = "Showing last $MAX_LOG_LINES lines — share for the full log",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+                val error = loadError
+                if (error != null) {
+                    Text(
+                        text = error,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                } else {
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        items(logLines) { line ->
+                            Text(
+                                text = line,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -1,7 +1,9 @@
 package com.bepinex.android
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
@@ -11,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import com.bepinex.android.log.BepInExLogReader
@@ -46,13 +49,35 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         if (Settings.canDrawOverlays(this)) {
-            viewModel.setFloatingLogInGame(true)
-            val pkg = viewModel.uiState.value.selectedGame?.packageName
-            if (pkg != null) {
-                com.bepinex.android.log.LogOverlayService.start(this, pkg)
-            }
+            enableFloatingLog()
         } else {
             Toast.makeText(this, getString(R.string.permission_denied), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // POST_NOTIFICATIONS (API 33+) for the overlay service's foreground-service
+    // notification. The service runs without it, but its notification is then
+    // silent — request once when the user enables the floating log, never gate.
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> enableFloatingLog() }
+
+    private fun enableFloatingLog() {
+        viewModel.setFloatingLogInGame(true)
+        ensureNotificationPermission()
+        val pkg = viewModel.uiState.value.selectedGame?.packageName
+        if (pkg != null) {
+            com.bepinex.android.log.LogOverlayService.start(this, pkg)
+        }
+    }
+
+    private fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -105,13 +130,10 @@ class MainActivity : AppCompatActivity() {
                                 Toast.makeText(this@MainActivity, "Please grant 'Draw over other apps' in app settings", Toast.LENGTH_LONG).show()
                             }
                         } else {
-                            viewModel.setFloatingLogInGame(enabled)
                             if (enabled) {
-                                val pkg = uiState.selectedGame?.packageName
-                                if (pkg != null) {
-                                    com.bepinex.android.log.LogOverlayService.start(this@MainActivity, pkg)
-                                }
+                                enableFloatingLog()
                             } else {
+                                viewModel.setFloatingLogInGame(false)
                                 com.bepinex.android.log.LogOverlayService.stop(this@MainActivity)
                             }
                         }

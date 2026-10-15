@@ -10,9 +10,12 @@ import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
@@ -70,10 +73,19 @@ class LogOverlayService : Service() {
             val intent = Intent(context, LogOverlayService::class.java).apply {
                 putExtra("packageName", packageName)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            // API 31+ bans background FGS starts: a startForegroundService() from
+            // the background throws ForegroundServiceStartNotAllowedException and
+            // the service never starts. All current callers start from the
+            // foreground (settings toggle, bootstrap, game window), but fail
+            // gracefully instead of crashing if that ever changes.
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "Failed to start overlay service", e)
             }
         }
 
@@ -88,7 +100,18 @@ class LogOverlayService : Service() {
         // without MainActivity having run in this process.
         BepInExPaths.install(this)
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // Target API 34+ requires the FGS type at startForeground time;
+        // ServiceCompat routes the type param only where the platform supports it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -100,6 +123,12 @@ class LogOverlayService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Swiping the launcher away should take the overlay with it instead of
+        // leaving a START_STICKY service (and window) behind with no owner.
+        stopSelf()
+    }
 
     override fun onDestroy() {
         removeOverlay()
@@ -121,32 +150,35 @@ class LogOverlayService : Service() {
     }
 
     private fun buildNotification(): Notification {
+        // getLaunchIntentForPackage() returns null when the game was uninstalled
+        // after selection; PendingIntent.getActivity() with a null Intent throws,
+        // which would kill the service before the overlay ever appears.
+        val launchIntent = currentPackageName?.let { packageManager.getLaunchIntentForPackage(it) }
+            ?: packageManager.getLaunchIntentForPackage(packageName)
+            ?: Intent(this, com.bepinex.android.MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
-            packageManager.getLaunchIntentForPackage(currentPackageName ?: packageName),
+            launchIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("BepInEx Log")
-                .setContentText("Floating log active -- tap to return to game")
-                .setSmallIcon(android.R.drawable.ic_menu_edit)
-                .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .build()
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-                .setContentTitle("BepInEx Log")
-                .setContentText("Floating log active")
-                .setSmallIcon(android.R.drawable.ic_menu_edit)
-                .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .build()
-        }
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("BepInEx Log")
+            .setContentText("Floating log active -- tap to return to game")
+            .setSmallIcon(com.bepinex.android.R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build()
     }
 
     private fun createOverlay() {
+        // Overlay permission can be revoked while START_STICKY keeps restarting
+        // us; addView() would then throw and crash-loop. Gate and bail out.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            android.util.Log.w(TAG, "Overlay permission revoked; stopping service")
+            stopSelf()
+            return
+        }
+
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         val owner = OverlayLifecycleOwner()
@@ -157,7 +189,7 @@ class LogOverlayService : Service() {
             setViewTreeLifecycleOwner(owner)
             setViewTreeSavedStateRegistryOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
-            setContent { overlayContent { removeOverlay() } }
+            setContent { overlayContent { removeOverlay(); stopSelf() } }
         }
 
         val params = WindowManager.LayoutParams(
@@ -178,7 +210,14 @@ class LogOverlayService : Service() {
         }
 
         overlayView = composeView
-        windowManager?.addView(overlayView, params)
+        try {
+            windowManager?.addView(overlayView, params)
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "addView failed; stopping service", e)
+            overlayView = null
+            stopSelf()
+            return
+        }
 
         owner.handleLifecycleEvent(Lifecycle.Event.ON_START)
         owner.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
