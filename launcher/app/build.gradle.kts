@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -131,6 +132,9 @@ dependencies {
 
     // Navigation
     implementation(libs.androidx.navigation.compose)
+
+    // Serialization (type-safe Navigation routes)
+    implementation(libs.kotlinx.serialization.json)
 
     // AppCompat (DayNight theme support)
     implementation(libs.androidx.appcompat)
