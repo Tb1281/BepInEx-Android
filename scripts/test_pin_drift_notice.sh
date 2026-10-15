@@ -59,6 +59,7 @@ run() { # run <state> [report-contents] [open-issues-contents]
     GITHUB_RUN_ID="12345" \
     GITHUB_REF_NAME="main" \
     GITHUB_SHA="abcdef1234567890abcdef1234567890abcdef12" \
+    GITHUB_STEP_SUMMARY= \
     "$SCRIPT" "$1" "$report" 2>&1
     printf '%s' "$?" > "$WORK/rc"
 }
@@ -117,17 +118,17 @@ expect 0 "current with nothing open is a no-op" "no open" \
 
 # 5. exit status is always 0, even with missing/unknown state
 : > "$WORK/gh-calls"
-rc="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_TOKEN=t "$SCRIPT" 2>/dev/null; echo $?)"
+rc="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_TOKEN=t GITHUB_STEP_SUMMARY= "$SCRIPT" 2>/dev/null; echo $?)"
 [ "$rc" = 0 ] && echo "ok    missing arguments still exit 0" \
     || { echo "FAIL  missing arguments exited $rc"; fails=$((fails + 1)); }
-rc="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_TOKEN=t "$SCRIPT" bogus /nonexistent 2>/dev/null; echo $?)"
+rc="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_TOKEN=t GITHUB_STEP_SUMMARY= "$SCRIPT" bogus /nonexistent 2>/dev/null; echo $?)"
 [ "$rc" = 0 ] && echo "ok    an unknown state still exits 0" \
     || { echo "FAIL  unknown state exited $rc"; fails=$((fails + 1)); }
 
 # 5b. missing token warns rather than silently no-ops
 printf '%s' "drift report" > "$WORK/report.txt"
 out="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=1 \
-    GITHUB_TOKEN="" "$SCRIPT" drifted "$WORK/report.txt" 2>&1)"
+    GITHUB_TOKEN="" GITHUB_STEP_SUMMARY= "$SCRIPT" drifted "$WORK/report.txt" 2>&1)"
 if printf '%s' "$out" | grep -qF "no GH_TOKEN"; then
     echo "ok    a missing token is reported rather than silently ignored"
 else

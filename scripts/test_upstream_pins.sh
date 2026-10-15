@@ -26,7 +26,11 @@ fails=0
 check() { # check <want-rc> <label> <needle...>   (PINS_FILE must be set)
     local want="$1" label="$2"; shift 2
     local out rc needle ok=1
-    out="$(PINS_FILE="$WORK/pins.txt" "$SCRIPT" 2>&1)"; rc=$?
+    # GITHUB_STEP_SUMMARY must not leak into the real CI summary: the fixture
+    # runs the script repeatedly with fake pins, and each run would otherwise
+    # append its report to the job summary (the duplicated "upstream pin
+    # drift" sections seen on the Actions page).
+    out="$(GITHUB_STEP_SUMMARY= PINS_FILE="$WORK/pins.txt" "$SCRIPT" 2>&1)"; rc=$?
     [ "$rc" -eq "$want" ] || ok=0
     for needle in "$@"; do
         printf '%s' "$out" | grep -qF -- "$needle" || ok=0
@@ -80,7 +84,7 @@ check 1 "malformed pin line fails" "malformed pin line"
 #    migration (docs/todo.md Phase 3): while check_upstream_pins.sh still read
 #    gitlinks it emitted "BepInEx"/"Pine" and this case failed, which is the
 #    whole reason the fixture runs against the real tree rather than a stub.
-out="$("$SCRIPT" --print-table 2>&1)"; rc=$?
+out="$(GITHUB_STEP_SUMMARY= "$SCRIPT" --print-table 2>&1)"; rc=$?
 ok=1
 [ "$rc" -eq 0 ] || ok=0
 for name in bepinex pine dobby monomod il2cppinterop; do
@@ -129,7 +133,7 @@ done
 #     throwaway local remotes), so the real tree is the only thing that can
 #     exercise it - and it is the thing that catches a gitlink moving without
 #     its pin file following.
-cross="$( "$SCRIPT" 2>&1 )"; cross_rc=$?
+cross="$(GITHUB_STEP_SUMMARY= "$SCRIPT" 2>&1 )"; cross_rc=$?
 if printf '%s' "$cross" | grep -q "gitlink agrees"; then
     echo "ok    gitlink/env cross-check runs and agrees"
 elif printf '%s' "$cross" | grep -q "no gitlinks"; then
@@ -159,7 +163,7 @@ HALF="$(mktemp -d "${TMPDIR:-/tmp}/halfsub.XXXXXX")"
 cp "$REPO/.git/index" "$HALF/index"
 
 run_with_index() { # run_with_index <index-file>
-    ( cd "$REPO" && GIT_INDEX_FILE="$1" "$SCRIPT" 2>&1 )
+    ( cd "$REPO" && GITHUB_STEP_SUMMARY= GIT_INDEX_FILE="$1" "$SCRIPT" 2>&1 )
 }
 
 # Baseline: a pristine copy of the index must report no gitlinks.

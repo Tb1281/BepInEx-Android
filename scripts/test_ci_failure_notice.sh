@@ -80,6 +80,7 @@ run() { # run <workflow> <state> [open-issue-numbers-file-contents]
     GITHUB_RUN_ID="12345" \
     GITHUB_REF_NAME="main" \
     GITHUB_SHA="abcdef1234567890abcdef1234567890abcdef12" \
+    GITHUB_STEP_SUMMARY= \
     "$SCRIPT" "$1" "$2" 2>&1
     printf '%s' "$?" > "$WORK/rc"
 }
@@ -156,7 +157,7 @@ expect 0 "a pass with nothing open is a no-op" "no open" \
 #     a step whose entire job is to make failures visible. It must at least warn.
 : > "$WORK/gh-calls"
 out="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=1 \
-        GITHUB_TOKEN="" "$SCRIPT" sync-upstream failed 2>&1)"
+        GITHUB_TOKEN="" GITHUB_STEP_SUMMARY= "$SCRIPT" sync-upstream failed 2>&1)"
 if printf '%s' "$out" | grep -qF "no GH_TOKEN"; then
     echo "ok    a missing token is reported rather than silently ignored"
 else
@@ -179,7 +180,7 @@ STUB
 chmod +x "$WORK/bin/gh"
 printf '%s' "" > "$WORK/open-issues"
 PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=1 \
-    GITHUB_TOKEN="fixture-token" "$SCRIPT" sync-upstream failed >/dev/null 2>&1
+    GITHUB_TOKEN="fixture-token" GITHUB_STEP_SUMMARY= "$SCRIPT" sync-upstream failed >/dev/null 2>&1
 if [ "$(cat "$WORK/gh-token" 2>/dev/null)" = "GH_TOKEN=fixture-token" ]; then
     echo "ok    GITHUB_TOKEN is exported to gh as GH_TOKEN"
 else
@@ -190,7 +191,7 @@ fi
 # 5. exit status is always 0, even when the gh calls could not work, and even
 #    when the context a caller might reasonably omit is missing
 : > "$WORK/gh-calls"
-rc="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_TOKEN=t "$SCRIPT" 2>/dev/null; echo $?)"
+rc="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_TOKEN=t GITHUB_STEP_SUMMARY= "$SCRIPT" 2>/dev/null; echo $?)"
 if [ "$rc" = 0 ]; then
     echo "ok    missing arguments still exit 0"
 else
@@ -202,7 +203,7 @@ fi
 : > "$WORK/gh-calls"
 rc="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_TOKEN=t \
       env -u GITHUB_RUN_ID -u GITHUB_REF_NAME -u GITHUB_SHA \
-      "$SCRIPT" sync-upstream failed >/dev/null 2>&1; echo $?)"
+      GITHUB_STEP_SUMMARY= "$SCRIPT" sync-upstream failed >/dev/null 2>&1; echo $?)"
 if [ "$rc" = 0 ]; then
     echo "ok    missing optional context still exits 0"
 else
@@ -211,7 +212,7 @@ fi
 
 : > "$WORK/gh-calls"
 rc="$(PATH="$WORK/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_TOKEN=t \
-      "$SCRIPT" wf bogus >/dev/null 2>&1; echo $?)"
+      GITHUB_STEP_SUMMARY= "$SCRIPT" wf bogus >/dev/null 2>&1; echo $?)"
 if [ "$rc" = 0 ]; then
     echo "ok    an unknown state still exits 0"
 else

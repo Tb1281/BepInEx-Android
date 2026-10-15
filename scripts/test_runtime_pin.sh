@@ -28,7 +28,12 @@ fails=0
 expect() { # expect <want-rc> <label> <needle...>
     local want="$1" label="$2"; shift 2
     local out rc needle
-    out="$("$SCRIPT" 2>&1)"; rc=$?
+    # GITHUB_STEP_SUMMARY must not leak into the real CI summary: the fixture
+    # runs the script six times with stubbed indexes, and each run would
+    # otherwise append its table to the job summary (the "duplicated
+    # provenance summary" seen on the Actions page). Empty it here; case 7
+    # below tests the summary path explicitly with its own temp file.
+    out="$(GITHUB_STEP_SUMMARY= "$SCRIPT" 2>&1)"; rc=$?
     local ok=1
     [ "$rc" -eq "$want" ] || ok=0
     for needle in "$@"; do
@@ -85,7 +90,7 @@ RELEASES_INDEX="file://$WORK/nochan.json" expect 0 "absent channel claims nothin
 # 6. it must not pick a different channel's version: the index has 9.0 and 10.0,
 #    and the pin is on 10.0, so 9.0.12 must never appear as the comparison.
 index_with "$PINNED" > "$WORK/multichan.json"
-out="$(RELEASES_INDEX="file://$WORK/multichan.json" "$SCRIPT" 2>&1)"
+out="$(GITHUB_STEP_SUMMARY= RELEASES_INDEX="file://$WORK/multichan.json" "$SCRIPT" 2>&1)"
 if printf '%s' "$out" | grep -qF "latest : $PINNED"; then
     echo "ok    selects the pinned channel, not another one"
 elif printf '%s' "$out" | grep -qF "9.0.12"; then
