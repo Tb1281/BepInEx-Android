@@ -1,5 +1,6 @@
 package com.bepinex.android.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -30,6 +31,10 @@ fun ConfigEditorDialog(
     var content by remember { mutableStateOf(initialContent) }
     var hasChanges by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
+
+    // System back/gesture must honor the same unsaved-changes guard as the
+    // toolbar back button (and opts into predictive back handling).
+    BackHandler(enabled = hasChanges) { showDiscardDialog = true }
 
     Scaffold(
         topBar = {
