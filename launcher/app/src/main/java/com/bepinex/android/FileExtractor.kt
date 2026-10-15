@@ -83,8 +83,7 @@ class FileExtractor(private val context: Context) {
     private fun launcherStamp(): String {
         return try {
             val pi = context.packageManager.getPackageInfo(context.packageName, 0)
-            val vc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pi.longVersionCode else pi.versionCode.toLong()
-            "$vc:${pi.versionName}"
+            "${androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pi)}:${pi.versionName}"
         } catch (e: Exception) {
             "unknown"
         }
