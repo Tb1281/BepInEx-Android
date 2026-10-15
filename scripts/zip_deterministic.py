@@ -98,7 +98,8 @@ def main():
         sys.exit(1)
 
     fixed = epoch()
-    if fixed is None:
+    from_environ = fixed is not None
+    if not from_environ:
         # Newest input mtime: stable for a given tree, unlike time.now().
         latest = 0
         for name in names:
@@ -109,13 +110,23 @@ def main():
                 sys.exit(1)
             latest = max(latest, mtime)
         fixed = latest
-    # Naive local time, not UTC: the input mtimes come from `unzip`, which
-    # interprets pack entry dates in the local timezone, so converting back
-    # in the same timezone round-trips to the pack dates on every machine.
-    # Forcing UTC here shifted every entry by the local UTC offset instead
-    # (measured: same pack produced 05:19:22 next to 14:19:22), which is how
-    # a KST checkout and a UTC runner disagreed about identical inputs.
-    date_time = datetime.datetime.fromtimestamp(fixed).timetuple()[:6]
+    if from_environ:
+        # SOURCE_DATE_EPOCH is an absolute UTC timestamp per
+        # reproducible-builds.org. Converting in UTC keeps the archive
+        # byte-identical on every machine; local time would shift every
+        # entry by the builder's UTC offset (a KST machine wrote
+        # 2023-11-15 where a UTC runner wrote 2023-11-14 for the same
+        # epoch, which is what the fixture caught).
+        date_time = datetime.datetime.fromtimestamp(
+            fixed, tz=datetime.timezone.utc).timetuple()[:6]
+    else:
+        # Naive local time, not UTC: the input mtimes come from `unzip`, which
+        # interprets pack entry dates in the local timezone, so converting back
+        # in the same timezone round-trips to the pack dates on every machine.
+        # Forcing UTC here shifted every entry by the local UTC offset instead
+        # (measured: same pack produced 05:19:22 next to 14:19:22), which is how
+        # a KST checkout and a UTC runner disagreed about identical inputs.
+        date_time = datetime.datetime.fromtimestamp(fixed).timetuple()[:6]
 
     out_dir = os.path.dirname(os.path.abspath(output))
     if out_dir:
