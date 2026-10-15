@@ -205,7 +205,8 @@ object AppSettings {
         runBlocking {
             val prefs = context.dataStore.data.first()
             applyDayNight(ThemeMode.fromString(prefs[KEY_THEME_MODE]))
-            applyLanguage(Language.fromKey(prefs[KEY_LANGUAGE]))
+            // Language is applied to Compose via a localized CompositionLocal in
+            // MainActivity to avoid AppCompat locale-triggered recreation/freezes.
         }
     }
 
