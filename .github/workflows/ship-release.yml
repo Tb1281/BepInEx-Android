@@ -144,7 +144,7 @@ jobs:
             printf '```\n'
             printf '\n### 📦 SBOM\n`%s` is the SPDX 2.3 source SBOM for this release.\n' "$(basename "$SBOM_PATH")"
             printf '\n### 🧾 Build provenance\n`%s` records what this release was built from: the\nupstream pin, the patched-tree hash the replay produced, the patch\nfiles and the SDK version. It is covered by the attestation below.\n' "$(basename "$PROV_PATH")"
-            printf '\n### 🔏 Provenance\n`%s` binds this repository, this workflow\nrun and this commit to the APK and SBOM bytes above. Verify with:\n```\ngh attestation verify %s --repo %s\n```\n' "$BUNDLE_NAME" "$APK_BASENAME" "$GITHUB_REPOSITORY"
+            printf '\n### 🔏 Attestation\n`%s` binds this repository, this workflow\nrun and this commit to the APK and SBOM bytes above. Verify with:\n```\ngh attestation verify %s --repo %s\n```\n' "$BUNDLE_NAME" "$APK_BASENAME" "$GITHUB_REPOSITORY"
             printf '(On a private repository the bundle is the fallback CI provenance\nstatement; it becomes a Sigstore attestation automatically if the\nrepository is made public.)\n'
           } > ../release-notes.md
           gh release create "$TAG_NAME" "$APK_PATH" "$APK_PATH.sha256" "$SBOM_PATH" "$PROV_PATH" "$BUNDLE_NAME" \
