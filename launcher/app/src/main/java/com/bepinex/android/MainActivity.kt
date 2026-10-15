@@ -117,9 +117,10 @@ class MainActivity : ComponentActivity() {
                     onThemeChanged = { viewModel.setTheme(it) },
                     onLanguageChanged = { lang ->
                         viewModel.setLanguage(lang)
-                        // Persist synchronously; the Compose localized context above
-                        // will switch the UI language without an Activity recreation.
-                        runBlocking { AppSettings.setLanguage(this@MainActivity, lang) }
+                        // Hand the write to the ViewModel; the Compose localized
+                        // context above updates when the persisted setting flows back.
+                        // (Avoid runBlocking on the main thread, which can ANR.)
+                        viewModel.setLanguage(lang)
                     },
                     onFloatingLogInGameChanged = { enabled ->
                         if (enabled && !Settings.canDrawOverlays(this@MainActivity)) {
