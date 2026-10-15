@@ -27,7 +27,7 @@ cd "$REPO"
 
 # "workflow-file:job" pairs that block instead of audit. The endpoint list
 # itself lives in the workflow (single source); this only names the pilots.
-PILOTS="verify-provenance.yml:provenance verify-provenance.yml:patch-queue build-bepinex.yml:build build-native-deps.yml:build fetch-runtime.yml:fetch-runtime sync-upstream.yml:sync build-launcher-apk.yml:apk"
+PILOTS="verify-provenance.yml:provenance verify-provenance.yml:patch-queue build-bepinex.yml:build build-native-deps.yml:build fetch-runtime.yml:fetch-runtime sync-upstream.yml:sync build-launcher-apk.yml:apk release-tag.yml:build ship-release.yml:ship"
 
 is_pilot() { # is_pilot <file:job> -> exit 0 if registered
     local key="$1" p
@@ -78,12 +78,27 @@ for wf in .github/workflows/*.yml; do
     njobs="$(printf '%s\n' "$jobs" | grep -c . || true)"
     [ "$njobs" -gt 0 ] || continue
 
+    # Jobs that are reusable-workflow calls (job-level `uses:`): GitHub
+    # forbids `steps:` alongside them, so they cannot carry a harden-runner
+    # step or an egress policy of their own. They are exempt from the
+    # pin/policy/first-step checks below — the egress they trigger happens
+    # in the called workflow's jobs, which this same loop audits (the called
+    # file must pass on its own). Count them so the expectations below use
+    # the auditable job count.
+    usesjobs="$(awk '
+        /^jobs:/ { inj = 1; next }
+        inj && /^  [A-Za-z0-9_-]+:/ { job = $1; sub(/:$/, "", job); next }
+        inj && /^    uses:/ { if (job != "") { print job; job = "" } }
+    ' "$wf")"
+    nuses="$(printf '%s\n' "$usesjobs" | grep -c . || true)"
+    ajobs=$((njobs - nuses))  # jobs with steps, i.e. auditable here
+
     # Pinned uses of harden-runner in this file.
     pinned="$(grep -cE 'uses:[[:space:]]+step-security/harden-runner@[0-9a-f]{40}' "$wf" || true)"
     floating="$(grep -cE 'uses:[[:space:]]+step-security/harden-runner@[^0-9a-f]' "$wf" || true)"
 
     ok=1
-    [ "$pinned" -eq "$njobs" ] || ok=0
+    [ "$pinned" -eq "$ajobs" ] || ok=0
     [ "$floating" -eq 0 ] || ok=0
     if [ "$ok" = 1 ]; then
         echo "ok    $name: $njobs job(s), all pinned"
@@ -93,9 +108,14 @@ for wf in .github/workflows/*.yml; do
     fi
 
     # Per-job policy: audit everywhere except registered pilots (block+allow).
+    # Reusable-workflow call jobs are skipped (see above).
     pol_ok=1
     while read -r _file job pol; do
         [ -n "$job" ] || continue
+        if printf '%s\n' "$usesjobs" | grep -qx "$job"; then
+            echo "ok    $name:$job is a reusable-workflow call (audited via the called workflow)"
+            continue
+        fi
         if is_pilot "$name:$job"; then
             if [ "$pol" = "block+allow" ]; then
                 echo "ok    $name:$job blocks with an allow-list (registered pilot)"
@@ -115,7 +135,8 @@ for wf in .github/workflows/*.yml; do
     [ "$pol_ok" = 1 ] || fails=$((fails + 1))
 
     # First-step ordering: after each `steps:` line, the next non-comment,
-    # non-blank line must be the harden step.
+    # non-blank line must be the harden step. Compared against the auditable
+    # job count (reusable-workflow calls have no `steps:` by design).
     firsts="$(awk '
         /^[[:space:]]*steps:/{want=1;next}
         want&&/^[[:space:]]*#/ {next}
@@ -124,7 +145,7 @@ for wf in .github/workflows/*.yml; do
     ' "$wf")"
     nfirst="$(printf '%s\n' "$firsts" | grep -c . || true)"
     nharden="$(printf '%s\n' "$firsts" | grep -c 'step-security/harden-runner@' || true)"
-    if [ "$nfirst" -eq "$njobs" ] && [ "$nharden" -eq "$njobs" ]; then
+    if [ "$nfirst" -eq "$ajobs" ] && [ "$nharden" -eq "$ajobs" ]; then
         echo "ok    $name: harden-runner is the first step in every job"
     else
         echo "FAIL  $name: harden-runner is not first in every job"
