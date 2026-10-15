@@ -14,6 +14,18 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- Vibration: Unity games vibrate via the host process, so the host must
+         declare it. Normal permission, no runtime request needed. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Location: hosted games run in this process (see Audio & Camera note
+         above), so any game using location needs the host to declare it.
+         Dangerous permissions: Unity requests them at runtime itself once
+         declared here; the launcher does not pre-request them to avoid
+         prompting for games that never use location. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <!--
         Storage: NONE is declared, and none is needed.
 

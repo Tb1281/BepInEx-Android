@@ -91,13 +91,17 @@ fun BepInExNavHost(
     var activeModpackNames by remember { mutableStateOf<Set<String>>(emptySet()) }
     var modpackRefreshKey by remember { mutableStateOf(0) }
 
-    // Refresh modpack list when game changes or refresh key bumps
+    // Refresh modpack list when game changes or refresh key bumps.
+    // listModpacks() walks the filesystem (and may synthesise a manifest), and
+    // the DataStore read/write below does file I/O: keep all of it off Main.
     LaunchedEffect(selectedGame?.packageName, modpackRefreshKey) {
         selectedGame?.let { game ->
-            modpacks = modpackManager.listModpacks(game.packageName)
-            // Save the newly selected game as the default
-            AppSettings.setLastLaunchedGame(context, game.packageName)
-            activeModpackNames = AppSettings.getLastLaunchedModpacksFlow(context, game.packageName).first()
+            withContext(Dispatchers.IO) {
+                modpacks = modpackManager.listModpacks(game.packageName)
+                // Save the newly selected game as the default
+                AppSettings.setLastLaunchedGame(context, game.packageName)
+                activeModpackNames = AppSettings.getLastLaunchedModpacksFlow(context, game.packageName).first()
+            }
         }
     }
 
@@ -343,9 +347,11 @@ fun BepInExNavHost(
                     popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
                 ) { backStackEntry ->
                     val packageName = backStackEntry.arguments?.getString("packageName") ?: return@composable
-                    // Refresh modpacks
+                    // Refresh modpacks (disk walk: off Main)
                     LaunchedEffect(packageName) {
-                        modpacks = modpackManager.listModpacks(packageName)
+                        withContext(Dispatchers.IO) {
+                            modpacks = modpackManager.listModpacks(packageName)
+                        }
                     }
                     ModpackListScreen(
                         packageName = packageName,
@@ -354,25 +360,31 @@ fun BepInExNavHost(
                         activeModpackNames = activeModpackNames,
                         onNavigateBack = { navController.popBackStack() },
                         onCreateModpack = { name ->
-                            modpackManager.createModpack(packageName, name)
-                            modpacks = modpackManager.listModpacks(packageName)
+                            coroutineScope.launch(Dispatchers.IO) {
+                                modpackManager.createModpack(packageName, name)
+                                modpacks = modpackManager.listModpacks(packageName)
+                            }
                         },
                         onDeleteModpack = { name ->
-                            modpackManager.deleteModpack(packageName, name)
                             if (activeModpackNames.contains(name)) {
                                 activeModpackNames = activeModpackNames - name
                             }
-                            modpacks = modpackManager.listModpacks(packageName)
+                            coroutineScope.launch(Dispatchers.IO) {
+                                modpackManager.deleteModpack(packageName, name)
+                                modpacks = modpackManager.listModpacks(packageName)
+                            }
                         },
                         onRenameModpack = { oldName, newName ->
-                            modpackManager.renameModpack(packageName, oldName, newName)
                             if (activeModpackNames.contains(oldName)) {
                                 activeModpackNames = (activeModpackNames - oldName) + newName
                             }
-                            modpacks = modpackManager.listModpacks(packageName)
+                            coroutineScope.launch(Dispatchers.IO) {
+                                modpackManager.renameModpack(packageName, oldName, newName)
+                                modpacks = modpackManager.listModpacks(packageName)
+                            }
                         },
                         onSelectModpack = { names ->
-                            activeModpackNames = names; coroutineScope.launch { AppSettings.setLastLaunchedModpacks(context, packageName, names) }
+                            activeModpackNames = names; coroutineScope.launch(Dispatchers.IO) { AppSettings.setLastLaunchedModpacks(context, packageName, names) }
                         },
                         onOpenModpack = { name ->
                             navController.navigate(NavRoutes.modpackDetail(packageName, name))

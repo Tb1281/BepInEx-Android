@@ -12,6 +12,11 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import com.bepinex.android.BepInExLog
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.canyie.pine.Pine
 import top.canyie.pine.callback.MethodHook
 import java.lang.reflect.Constructor
@@ -158,15 +163,23 @@ object UnityPlayerHooks {
                             BepInExLog.e("Failed to set UnityPlayer.${field.name}", e)
                         }
                     }
-                    // Ensure floating log overlay service is active if enabled in settings
+                    // Ensure floating log overlay service is active if enabled in settings.
+                    // The DataStore read does file I/O: bounce it off the game
+                    // main thread and only touch the service back on Main.
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        try {
-                            if (com.bepinex.android.settings.AppSettings.isFloatingLogInGameEnabled(act)) {
-                                com.bepinex.android.log.LogOverlayService.start(act, gameContext.packageName)
-                                BepInExLog.i("Floating log overlay service verified for game window")
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val enabled = com.bepinex.android.settings.AppSettings
+                                    .getFloatingLogInGameEnabledFlow(act).first()
+                                if (enabled) {
+                                    withContext(Dispatchers.Main) {
+                                        com.bepinex.android.log.LogOverlayService.start(act, gameContext.packageName)
+                                    }
+                                    BepInExLog.i("Floating log overlay service verified for game window")
+                                }
+                            } catch (e: Exception) {
+                                BepInExLog.e("Failed to ensure floating log overlay service", e)
                             }
-                        } catch (e: Exception) {
-                            BepInExLog.e("Failed to ensure floating log overlay service", e)
                         }
                     }, 2000)
                 }

@@ -131,12 +131,8 @@ object AppSettings {
     private fun keyUseUnstrippedLibUnity(packageName: String) = booleanPreferencesKey("use_unstripped_libunity_$packageName")
     private fun keyActiveModpack(packageName: String) = stringPreferencesKey("active_modpack_$packageName")
 
-    fun isFloatingLogInGameEnabled(context: Context): Boolean = runBlocking {
-        context.dataStore.data.first()[KEY_FLOATING_LOG_IN_GAME] ?: false
-    }
-
-    fun isDynamicColorEnabled(context: Context): Boolean = runBlocking {
-        context.dataStore.data.first()[KEY_DYNAMIC_COLOR] ?: false
+    fun getDynamicColorFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_DYNAMIC_COLOR] ?: false
     }
 
     suspend fun setDynamicColorEnabled(context: Context, enabled: Boolean) {
@@ -145,8 +141,8 @@ object AppSettings {
         }
     }
 
-    fun isAnimationDisabled(context: Context): Boolean = runBlocking {
-        context.dataStore.data.first()[KEY_ANIMATION_DISABLED] ?: false
+    fun getAnimationDisabledFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_ANIMATION_DISABLED] ?: false
     }
 
     suspend fun setAnimationDisabled(context: Context, disabled: Boolean) {
@@ -155,9 +151,10 @@ object AppSettings {
         }
     }
 
-    fun isUnityKillBlockEnabled(context: Context, packageName: String): Boolean = runBlocking {
-        context.dataStore.data.first()[keyBlockUnityKill(packageName)] ?: false
-    }
+    fun isUnityKillBlockEnabledFlow(context: Context, packageName: String): Flow<Boolean> =
+        context.dataStore.data.map { prefs ->
+            prefs[keyBlockUnityKill(packageName)] ?: false
+        }
 
     suspend fun setUnityKillBlockEnabled(context: Context, packageName: String, enabled: Boolean) {
         context.dataStore.edit { prefs ->
@@ -165,9 +162,10 @@ object AppSettings {
         }
     }
 
-    fun isUseUnstrippedLibUnity(context: Context, packageName: String): Boolean = runBlocking {
-        context.dataStore.data.first()[keyUseUnstrippedLibUnity(packageName)] ?: false
-    }
+    fun isUseUnstrippedLibUnityFlow(context: Context, packageName: String): Flow<Boolean> =
+        context.dataStore.data.map { prefs ->
+            prefs[keyUseUnstrippedLibUnity(packageName)] ?: false
+        }
 
     suspend fun setUseUnstrippedLibUnity(context: Context, packageName: String, enabled: Boolean) {
         context.dataStore.edit { prefs ->
@@ -175,9 +173,10 @@ object AppSettings {
         }
     }
 
-    fun getActiveModpack(context: Context, packageName: String): String? = runBlocking {
-        context.dataStore.data.first()[keyActiveModpack(packageName)]?.ifEmpty { null }
-    }
+    fun getActiveModpackFlow(context: Context, packageName: String): Flow<String?> =
+        context.dataStore.data.map { prefs ->
+            prefs[keyActiveModpack(packageName)]?.ifEmpty { null }
+        }
 
     suspend fun setActiveModpack(context: Context, packageName: String, modpackName: String?) {
         context.dataStore.edit { prefs ->
