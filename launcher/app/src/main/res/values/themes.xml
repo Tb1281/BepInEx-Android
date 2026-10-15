@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base launcher theme — follows system DayNight by default -->
-    <style name="Theme.BepInEx.Launcher" parent="android:Theme.Material.NoActionBar">
+    <!-- Base launcher theme — AppCompat DayNight is required because
+         MainActivity extends AppCompatActivity for per-app locales
+         (AppCompatDelegate.setApplicationLocales). Compose Material 3 colors
+         are applied on top via BepInExTheme. -->
+    <style name="Theme.BepInEx.Launcher" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
