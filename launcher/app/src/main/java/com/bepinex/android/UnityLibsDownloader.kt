@@ -78,7 +78,7 @@ object UnityLibsDownloader {
     private fun normalizeVersionForDownload(version: String): String {
         val matcher = UNITY_BASE_VERSION_PATTERN.matcher(version)
         if (matcher.find()) {
-            return matcher.group(1)
+            return matcher.group(1) ?: version
         }
         return version
     }

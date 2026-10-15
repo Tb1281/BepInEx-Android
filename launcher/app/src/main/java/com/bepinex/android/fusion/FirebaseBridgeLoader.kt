@@ -46,7 +46,7 @@ object FirebaseBridgeLoader {
      *  this thread. A nested lookup for the SAME name returns null at once
      *  (cuts infinite ping-pong); different names proceed, so a supertype
      *  rescue inside a bridge call still works. */
-    private val resolving = ThreadLocal.withInitial { HashSet<String>() }
+    private val resolving: ThreadLocal<HashSet<String>> = ThreadLocal.withInitial { HashSet() }
 
     /** Open jar files with their snapshot key, so a rewrite is noticed. */
     private val openDex = HashMap<String, Pair<String, DexFile>>()
@@ -86,7 +86,9 @@ object FirebaseBridgeLoader {
         val cache = cacheDir ?: return null
         val target = gameLoader
         if (!name.startsWith("com.google.firebase.")) return null
-        val inFlight = resolving.get()
+        // get() never returns null (withInitial always supplies), but its Java
+        // platform type forces an explicit null path for the warning-free build.
+        val inFlight = resolving.get() ?: return null
         if (!inFlight.add(name)) return null
         return try {
             warmGameClasses()
@@ -163,6 +165,10 @@ object FirebaseBridgeLoader {
      *  ART itself (no custom dex parsing); every Firebase entry is then
      *  loaded through the game loader's normal path, which defines it there.
      *  @return how many were defined. */
+    // DexFile.loadDex/entries/close are deprecated since API 26, but they are
+    // kept deliberately: this warmup reads raw dex entries without defining
+    // classes, which DexClassLoader cannot do. No behavior change intended.
+    @Suppress("DEPRECATION")
     private fun warmApk(apkPath: String, loader: ClassLoader): Int {
         var count = 0
         val scanDir = File(cacheDir, "dexscan").apply { mkdirs() }
@@ -254,6 +260,8 @@ object FirebaseBridgeLoader {
      *  repeat so children whose superclass lives in the same jar resolve
      *  later; missing supertypes are preloaded first (see [noteFailures]).
      *  Individually failing classes are skipped, never fatal. */
+    // Same deliberate DexFile usage as warmApk above: entry inspection only.
+    @Suppress("DEPRECATION")
     private fun defineJar(jar: File, target: ClassLoader) {
         val key = liveKey(jar)
         val dex = synchronized(this) {

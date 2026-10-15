@@ -413,8 +413,7 @@ class BootstrapActivity : Activity() {
         val dataStamp = File(copiedData, ".data-copy-version")
         val currentStamp = try {
             val pi = packageManager.getPackageInfo(targetPackage, 0)
-            val vc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) pi.longVersionCode else pi.versionCode.toLong()
-            "$vc:${pi.versionName}"
+            "${androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pi)}:${pi.versionName}"
         } catch (e: Exception) {
             "unknown"
         }

@@ -349,8 +349,11 @@ object FirebaseComponentDiscoveryFix {
         for (key in metaData.keySet()) {
             if (!key.startsWith(REGISTRAR_PREFIX)) continue
             // Match Firebase: only entries whose value is the registrar marker count.
+            // getString() is equivalent to get() here (the marker is a String;
+            // non-String values yield null and are skipped either way) and avoids
+            // the API 33-deprecated Bundle.get().
             val value = try {
-                metaData.get(key)
+                metaData.getString(key)
             } catch (e: Exception) {
                 null
             }
