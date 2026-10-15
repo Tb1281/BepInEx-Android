@@ -23,6 +23,9 @@ import com.bepinex.android.ui.navigation.BepInExNavHost
 import com.bepinex.android.ui.theme.BepInExTheme
 import java.io.File
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.bepinex.android.ui.components.CrashRecoveryDialog
@@ -41,21 +44,10 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
 
     override fun attachBaseContext(newBase: Context) {
-        // Apply the persisted language preference to the activity's resources.
-        // ComponentActivity (Compose) does not go through AppCompat's
-        // configuration update the way AppCompatActivity does, so without this
-        // the UI can stay in the previous language after a selection.
-        val language = runBlocking { AppSettings.getLanguageFlow(newBase).first() }
-        val locale = AppSettings.toLocale(language)
-        val context = if (locale == null) {
-            newBase
-        } else {
-            val config = Configuration(newBase.resources.configuration)
-            config.setLocale(locale)
-            config.setLayoutDirection(locale)
-            newBase.createConfigurationContext(config)
-        }
-        super.attachBaseContext(context)
+        // Keep base context creation lightweight. Locale is applied to Compose
+        // through a localized CompositionLocal below, avoiding a DataStore read
+        // (and potential deadlock) during Activity recreation.
+        super.attachBaseContext(newBase)
     }
 
     private val viewModel: MainViewModel by viewModels()
@@ -91,8 +83,23 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-            
+
+            // Apply the selected language to Compose's string resources without
+            // recreating the Activity (which previously could deadlock).
+            val localizedContext = remember(uiState.language) {
+                val locale = AppSettings.toLocale(uiState.language)
+                if (locale == null) {
+                    this@MainActivity
+                } else {
+                    val config = Configuration(resources.configuration)
+                    config.setLocale(locale)
+                    config.setLayoutDirection(locale)
+                    createConfigurationContext(config)
+                }
+            }
+
             BepInExTheme(themeMode = uiState.themeMode, dynamicColor = uiState.dynamicColor) {
+                CompositionLocalProvider(LocalContext provides localizedContext) {
                 BepInExNavHost(
                     detectedGames = uiState.detectedGames,
                     selectedGame = uiState.selectedGame,
@@ -110,12 +117,9 @@ class MainActivity : ComponentActivity() {
                     onThemeChanged = { viewModel.setTheme(it) },
                     onLanguageChanged = { lang ->
                         viewModel.setLanguage(lang)
-                        // Persist synchronously so the persisted locale is up to date.
+                        // Persist synchronously; the Compose localized context above
+                        // will switch the UI language without an Activity recreation.
                         runBlocking { AppSettings.setLanguage(this@MainActivity, lang) }
-                        // AppCompatDelegate.setApplicationLocales triggers the actual
-                        // configuration/locale change (and activity recreation) on its
-                        // own. Calling recreate() here as well can deadlock/freeze.
-                        AppSettings.applyLanguage(lang)
                     },
                     onFloatingLogInGameChanged = { enabled ->
                         if (enabled && !Settings.canDrawOverlays(this@MainActivity)) {
@@ -166,8 +170,9 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
-            }
-        }
+                } // CompositionLocalProvider
+            } // BepInExTheme
+        } // setContent
     }
 
     private fun checkStoragePermission() {
