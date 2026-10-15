@@ -121,8 +121,9 @@ PR only when upstream actually moved. On conflict publishes diagnostics via
 `BEPINEX_SKIP_TREE_GATE=1` and `scripts/record_patched_tree.sh` re-records
 the tree hash immediately after; the updated
 `references/patched-tree.sha256` rides the sync PR, whose own CI re-applies
-the gate from scratch. Attests the sync-built APK, SBOM and
-`provenance.json` inline and publishes all three on the release.
+the gate from scratch. Shipping goes through the shared `ship-release.yml`
+path, which attests the APK, SBOM and `provenance.json` and publishes all
+three on the release (called by both `sync-upstream` and `release-tag`).
 
 No Dependabot: the load-bearing pins live in `provenance/*.env`, which
 Dependabot cannot see, and every bump needs human judgment plus
