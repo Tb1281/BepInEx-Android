@@ -13,6 +13,16 @@ import kotlinx.coroutines.runBlocking
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "bepinex_launcher_settings")
 
 /**
+ * Game-process state. This file is touched ONLY from the `:game` process
+ * (BootstrapActivity's persist/apply bookkeeping). The main settings file
+ * above is owned by the default process only: DataStore is not multi-process
+ * safe, so the two processes must never open the same file, even though the
+ * launcher runs a single game at a time — the default process stays alive
+ * while the game runs, so concurrent access is the normal case, not an edge.
+ */
+val Context.gameStateDataStore: DataStore<Preferences> by preferencesDataStore(name = "bepinex_game_state")
+
+/**
  * Application settings persisted via DataStore.
  *
  * Covers: theme mode, language preference, and settings actions.
@@ -173,13 +183,19 @@ object AppSettings {
         }
     }
 
+    /**
+     * Previously applied modpack, used to persist runtime cfg/logs back to the
+     * right owner on the next launch. Backed by [gameStateDataStore], which is
+     * `:game`-process-only (see above): the default process never reads or
+     * writes this key, so no cross-process DataStore sharing occurs.
+     */
     fun getActiveModpackFlow(context: Context, packageName: String): Flow<String?> =
-        context.dataStore.data.map { prefs ->
+        context.gameStateDataStore.data.map { prefs ->
             prefs[keyActiveModpack(packageName)]?.ifEmpty { null }
         }
 
     suspend fun setActiveModpack(context: Context, packageName: String, modpackName: String?) {
-        context.dataStore.edit { prefs ->
+        context.gameStateDataStore.edit { prefs ->
             prefs[keyActiveModpack(packageName)] = modpackName ?: ""
         }
     }

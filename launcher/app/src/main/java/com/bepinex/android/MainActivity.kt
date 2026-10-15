@@ -209,6 +209,8 @@ class MainActivity : AppCompatActivity() {
         BepInExLog.i("=== Launching ${game.label} (modpacks: ${if (modpackNames.isEmpty()) "vanilla" else modpackNames.joinToString(", ")}) via BootstrapActivity ===")
 
         // Per-game DataStore reads do file I/O; resolve them off Main, then start.
+        // All game-behavior flags travel via Intent extras because the :game
+        // process must never open the default process's DataStore file.
         lifecycleScope.launch {
             val useOriginalLibUnity = withContext(Dispatchers.IO) {
                 !AppSettings.isUseUnstrippedLibUnityFlow(this@MainActivity, game.packageName).first()
@@ -216,12 +218,20 @@ class MainActivity : AppCompatActivity() {
             val blockUnityKill = withContext(Dispatchers.IO) {
                 AppSettings.isUnityKillBlockEnabledFlow(this@MainActivity, game.packageName).first()
             }
+            val screenDimEnabled = withContext(Dispatchers.IO) {
+                AppSettings.getScreenDimInGameEnabledFlow(this@MainActivity).first()
+            }
+            val floatingLogEnabled = withContext(Dispatchers.IO) {
+                AppSettings.getFloatingLogInGameEnabledFlow(this@MainActivity).first()
+            }
             try {
                 CrashDiagnostics.markLaunch(this@MainActivity, game.packageName)
                 val intent = Intent(this@MainActivity, BootstrapActivity::class.java).apply {
                     putExtra(BootstrapActivity.EXTRA_TARGET_PACKAGE, game.packageName)
                     putExtra(BootstrapActivity.EXTRA_USE_ORIGINAL_LIBUNITY, useOriginalLibUnity)
                     putExtra(BootstrapActivity.EXTRA_BLOCK_UNITY_KILL, blockUnityKill)
+                    putExtra(BootstrapActivity.EXTRA_SCREEN_DIM_ENABLED, screenDimEnabled)
+                    putExtra(BootstrapActivity.EXTRA_FLOATING_LOG_ENABLED, floatingLogEnabled)
                     if (modpackNames.isNotEmpty()) {
                         putStringArrayListExtra(BootstrapActivity.EXTRA_ACTIVE_MODPACKS, ArrayList(modpackNames))
                         putExtra(BootstrapActivity.EXTRA_ACTIVE_MODPACK, modpackNames.first())

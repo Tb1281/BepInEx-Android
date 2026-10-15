@@ -12,11 +12,6 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import com.bepinex.android.BepInExLog
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import top.canyie.pine.Pine
 import top.canyie.pine.callback.MethodHook
 import java.lang.reflect.Constructor
@@ -67,8 +62,11 @@ object UnityPlayerHooks {
      *
      * @param gameContext The game's package context (from createPackageContext)
      * @param blockUnityKill Whether startup calls to UnityPlayer.kill() should be blocked
+     * @param floatingLogEnabled Whether the floating log overlay should be verified
+     *        after the game window appears. Passed as a plain flag because the
+     *        :game process must not open the default process's DataStore file.
      */
-    fun installHooks(gameContext: Context, blockUnityKill: Boolean = false) {
+    fun installHooks(gameContext: Context, blockUnityKill: Boolean = false, floatingLogEnabled: Boolean = false) {
         val classLoader = gameContext.classLoader
             ?: throw IllegalStateException("Game ClassLoader is null")
 
@@ -164,22 +162,15 @@ object UnityPlayerHooks {
                         }
                     }
                     // Ensure floating log overlay service is active if enabled in settings.
-                    // The DataStore read does file I/O: bounce it off the game
-                    // main thread and only touch the service back on Main.
+                    // Plain flag read: no DataStore I/O on the game main thread.
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                val enabled = com.bepinex.android.settings.AppSettings
-                                    .getFloatingLogInGameEnabledFlow(act).first()
-                                if (enabled) {
-                                    withContext(Dispatchers.Main) {
-                                        com.bepinex.android.log.LogOverlayService.start(act, gameContext.packageName)
-                                    }
-                                    BepInExLog.i("Floating log overlay service verified for game window")
-                                }
-                            } catch (e: Exception) {
-                                BepInExLog.e("Failed to ensure floating log overlay service", e)
+                        try {
+                            if (floatingLogEnabled) {
+                                com.bepinex.android.log.LogOverlayService.start(act, gameContext.packageName)
+                                BepInExLog.i("Floating log overlay service verified for game window")
                             }
+                        } catch (e: Exception) {
+                            BepInExLog.e("Failed to ensure floating log overlay service", e)
                         }
                     }, 2000)
                 }

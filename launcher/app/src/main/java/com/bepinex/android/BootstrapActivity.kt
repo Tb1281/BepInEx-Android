@@ -34,6 +34,12 @@ class BootstrapActivity : Activity() {
         const val EXTRA_ACTIVE_MODPACKS = "active_modpacks" // null/empty = vanilla (List<String>)
         const val EXTRA_ACTIVE_MODPACK = "active_modpack"   // single string backwards compatibility
         const val EXTRA_BLOCK_UNITY_KILL = "block_unity_kill"
+        // Game-behavior flags. The :game process must never open the default
+        // process's DataStore file (not multi-process safe), so every setting
+        // the game needs travels in the launch Intent; MainActivity always sets
+        // them, and the fallbacks below are only for defensive direct starts.
+        const val EXTRA_SCREEN_DIM_ENABLED = "screen_dim"
+        const val EXTRA_FLOATING_LOG_ENABLED = "floating_log"
 
         private const val BACKUP_UNITY_VERSION = "2017.0.0"
         private const val GLOBAL_METADATA_FILE = "global-metadata.dat"
@@ -46,6 +52,7 @@ class BootstrapActivity : Activity() {
     private var preparedConfig: FusionConfig? = null
     private var targetPackage: String? = null
     private var screenDimEnabled = false
+    private var floatingLogEnabled = false
 
     private var tvStep: TextView? = null
     private var tvDetail: TextView? = null
@@ -139,12 +146,12 @@ class BootstrapActivity : Activity() {
 
         // 3. Prepare Fusion state (paths, extract zips, copy data, detect version)
         val useOriginalLibUnity = intent.getBooleanExtra(EXTRA_USE_ORIGINAL_LIBUNITY, true)
-        // This runs on the background bootstrap thread, so bridging the suspend
-        // DataStore read with runBlocking here cannot ANR the UI.
-        val blockUnityKill = intent.getBooleanExtra(
-            EXTRA_BLOCK_UNITY_KILL,
-            runBlocking { AppSettings.isUnityKillBlockEnabledFlow(this@BootstrapActivity, targetPackage).first() }
-        )
+        val blockUnityKill = intent.getBooleanExtra(EXTRA_BLOCK_UNITY_KILL, false)
+        // Snapshot the remaining game-behavior flags on the UI thread before the
+        // background thread starts: Intent extras are immutable and process-local,
+        // unlike DataStore, which this process must not open.
+        screenDimEnabled = intent.getBooleanExtra(EXTRA_SCREEN_DIM_ENABLED, false)
+        floatingLogEnabled = intent.getBooleanExtra(EXTRA_FLOATING_LOG_ENABLED, false)
         preparedConfig = prepareFusionState(targetPackage, gameContext, useOriginalLibUnity)
 
         // 4. Install base Pine hooks
@@ -164,7 +171,7 @@ class BootstrapActivity : Activity() {
             InstrumentationHooks.gameContextRef = gameContext
             InstrumentationHooks.storageContextRef = this
             InstrumentationHooks.install(targetPackage)
-            UnityPlayerHooks.installHooks(gameContext, blockUnityKill)
+            UnityPlayerHooks.installHooks(gameContext, blockUnityKill, floatingLogEnabled)
             // A hosted game cannot run its own Firebase discovery service, so Firebase
             // finds no components and aborts the game during startup. Supply the
             // registrars the game declares, read from its own manifest.
@@ -177,10 +184,7 @@ class BootstrapActivity : Activity() {
             throw IllegalStateException("Failed to install base hooks", e)
         }
 
-        // 4b. Read screen dim setting & install onUserInteraction hook
-        screenDimEnabled = runBlocking {
-            AppSettings.getScreenDimInGameEnabledFlow(this@BootstrapActivity).first()
-        }
+        // 4b. Install onUserInteraction hook if screen dim is enabled
         if (screenDimEnabled) {
             installUserInteractionHook()
         }
@@ -351,8 +355,7 @@ class BootstrapActivity : Activity() {
             BepInExLog.i("Fusion config staged: ${stagedFile.absolutePath}")
 
             // Start floating log overlay if enabled in settings
-            // Background bootstrap thread: runBlocking bridge cannot ANR.
-            if (runBlocking { AppSettings.getFloatingLogInGameEnabledFlow(this@BootstrapActivity).first() }) {
+            if (floatingLogEnabled) {
                 val pkg = this.targetPackage ?: "unknown"
                 LogOverlayService.start(this@BootstrapActivity, pkg)
                 BepInExLog.i("Started floating log overlay service")
