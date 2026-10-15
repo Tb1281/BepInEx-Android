@@ -17,10 +17,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
+import android.content.ClipData
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,10 +78,13 @@ fun LogOverlay(
                             modifier = Modifier.weight(1f)
                         )
                         // Copy button
-                        val clipboardManager = LocalClipboardManager.current
+                        val clipboard = LocalClipboard.current
+                        val copyScope = rememberCoroutineScope()
                         IconButton(onClick = {
                             val text = logLines.joinToString("\n") { "${it.level.label}: ${it.message}" }
-                            clipboardManager.setText(AnnotatedString(text))
+                            copyScope.launch {
+                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("log", text)))
+                            }
                         }, modifier = Modifier.size(36.dp)) {
                             Icon(Icons.Filled.ContentCopy, stringResource(R.string.log_copy),
                                 Modifier.size(18.dp),
