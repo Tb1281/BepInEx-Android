@@ -1,0 +1,74 @@
+{
+  "schema": "bepinex-android/provenance/1",
+  "generated_utc": "2026-10-17T08:31:29Z",
+  "repo_commit": "625d8b1cdde7873f0c80af1f7cc8e0307aba93b4",
+  "bepinex_upstream": {
+    "url": "https://github.com/BepInEx/BepInEx",
+    "commit": "6cea286d204eb3754d3b8363a5a1fd6640164a49"
+  },
+  "patched_tree": "310a5e37c260462b4d5dfa83ef0d0f6927d063a0",
+  "patch_queue": [
+    {
+      "file": "0001-core-resolve-paths-env-vars-and-platform-for-Android.patch",
+      "sha256": "dbae3932f150529801ef0cfdd9072f0c70f2581477bbfb2e0fb86f80d36bfc44"
+    },
+    {
+      "file": "0002-logging-route-the-console-and-BepInEx-log-to-logcat.patch",
+      "sha256": "299af71acccc6b202c3ba1c86787d00ad62dabc530fa5bdac8c443bac49d53e7"
+    },
+    {
+      "file": "0003-il2cpp-replace-the-Doorstop-entrypoint-with-a-native.patch",
+      "sha256": "044c39a9e8fcd4942c74d761e122158db72713805b1f52e43d0a1e432ed9ce85"
+    },
+    {
+      "file": "0004-il2cpp-hook-through-libfusion-and-resolve-export-stu.patch",
+      "sha256": "78d166f59aef4eba8cd7702df4bb345c8f6a52563f52122ee4a9120c50753c03"
+    },
+    {
+      "file": "0005-build-retarget-the-project-files-at-the-Android-IL2C.patch",
+      "sha256": "a5120b1e2d1a9af7a888704e0875a50328df4c3c3438f6f5148fe944bec7aa58"
+    },
+    {
+      "file": "0006-core-delete-the-Mono-runtime.patch",
+      "sha256": "81de2b86320add9595af349d04cfd9d69a0519a71cc0bdad609b00a5f2ffe0da"
+    },
+    {
+      "file": "0007-core-delete-the-Unix-and-Windows-console-drivers.patch",
+      "sha256": "ae0fc73b7f046e9cb24be7462abb5306285363699db2d4e030bd6ec9bf751253"
+    },
+    {
+      "file": "0008-build-drop-the-layers-that-cannot-run-on-Android.patch",
+      "sha256": "dc1094d7daa8434e97c0f9bae87fab743b067e0827459f0764959ca92a6f670e"
+    },
+    {
+      "file": "0009-il2cpp-fix-the-arm64-export-thunk-target-arith.patch",
+      "sha256": "c130dea0f18ac961531d23d63233c67366f130381a224b40f60a9ec7d59d9dc7"
+    },
+    {
+      "file": "0010-build-pin-il2cppinterop-1.5.2-and-local-feed.patch",
+      "sha256": "21b31fe06aa5e96df9659798edd67028ae38b593247205ca6a864eb366da743f"
+    },
+    {
+      "file": "0011-build-pin-monomod-to-the-rebuilt-Android-package.patch",
+      "sha256": "230da9ffd3d00dc230f316be7bd9f738943a0932cb12b66d80ff25fabc587e6c"
+    },
+    {
+      "file": "0012-il2cpp-resolve-thunks-in-NativeDetour-and-guard-ARM6.patch",
+      "sha256": "adbbcfc6e4a4f3191502e7568fec175f0b48816dc406fc087ecf4544d501e8f9"
+    },
+    {
+      "file": "0013-il2cpp-pin-cpp2il-to-published-prerelease.patch",
+      "sha256": "3686e59b6dd998cb3c6dc3ccb07e17b8cfb3dc30aad488ca3ec46ebf2ca26d20"
+    }
+  ],
+  "dotnet_sdk": {
+    "pinned": "10.0.401",
+    "actual": "10.0.401"
+  },
+  "ci": {
+    "workflow": "sync-upstream",
+    "run_id": "39016904157",
+    "sha": "625d8b1cdde7873f0c80af1f7cc8e0307aba93b4",
+    "actor": "Tb1281"
+  }
+}

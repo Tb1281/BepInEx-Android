@@ -1,0 +1,943 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "com.bepinex.android-0.184",
+  "documentNamespace": "https://github.com/BepInEx-Android/BepInEx-Android/sbom/625d8b1cdde7873f0c80af1f7cc8e0307aba93b4-0.184",
+  "creationInfo": {
+    "created": "2026-10-17T08:31:29Z",
+    "creators": [
+      "Tool: BepInEx-generate_sbom",
+      "Organization: BepInEx-Android"
+    ]
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.activity-activity-compose",
+      "name": "androidx.activity:activity-compose",
+      "versionInfo": {
+        "ref": "activityCompose"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.activity/activity-compose@{'ref': 'activityCompose'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-activity-compose"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.appcompat-appcompat",
+      "name": "androidx.appcompat:appcompat",
+      "versionInfo": {
+        "ref": "appcompat"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.appcompat/appcompat@{'ref': 'appcompat'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-appcompat"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.compose-compose-bom",
+      "name": "androidx.compose:compose-bom",
+      "versionInfo": {
+        "ref": "composeBom"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.compose/compose-bom@{'ref': 'composeBom'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-compose-bom"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.compose.material-material-icons-extended",
+      "name": "androidx.compose.material:material-icons-extended",
+      "versionInfo": "managed-by-compose-bom-2025.10.00",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.compose.material/material-icons-extended"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-compose-material-icons-extended; version resolved by Compose BOM"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.compose.material3-material3",
+      "name": "androidx.compose.material3:material3",
+      "versionInfo": "managed-by-compose-bom-2025.10.00",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.compose.material3/material3"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-compose-material3; version resolved by Compose BOM"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.compose.ui-ui",
+      "name": "androidx.compose.ui:ui",
+      "versionInfo": "managed-by-compose-bom-2025.10.00",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.compose.ui/ui"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-compose-ui; version resolved by Compose BOM"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.compose.ui-ui-graphics",
+      "name": "androidx.compose.ui:ui-graphics",
+      "versionInfo": "managed-by-compose-bom-2025.10.00",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.compose.ui/ui-graphics"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-compose-ui-graphics; version resolved by Compose BOM"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.compose.ui-ui-tooling",
+      "name": "androidx.compose.ui:ui-tooling",
+      "versionInfo": "managed-by-compose-bom-2025.10.00",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.compose.ui/ui-tooling"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-compose-ui-tooling; version resolved by Compose BOM"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.compose.ui-ui-tooling-preview",
+      "name": "androidx.compose.ui:ui-tooling-preview",
+      "versionInfo": "managed-by-compose-bom-2025.10.00",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.compose.ui/ui-tooling-preview"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-compose-ui-tooling-preview; version resolved by Compose BOM"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.core-core-ktx",
+      "name": "androidx.core:core-ktx",
+      "versionInfo": {
+        "ref": "coreKtx"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.core/core-ktx@{'ref': 'coreKtx'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-core-ktx"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.datastore-datastore-preferences",
+      "name": "androidx.datastore:datastore-preferences",
+      "versionInfo": {
+        "ref": "datastorePreferences"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.datastore/datastore-preferences@{'ref': 'datastorePreferences'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-datastore-preferences"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.lifecycle-lifecycle-runtime-compose",
+      "name": "androidx.lifecycle:lifecycle-runtime-compose",
+      "versionInfo": {
+        "ref": "lifecycle"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose@{'ref': 'lifecycle'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-lifecycle-runtime-compose"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.lifecycle-lifecycle-runtime-ktx",
+      "name": "androidx.lifecycle:lifecycle-runtime-ktx",
+      "versionInfo": {
+        "ref": "lifecycle"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx@{'ref': 'lifecycle'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-lifecycle-runtime-ktx"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.lifecycle-lifecycle-viewmodel-compose",
+      "name": "androidx.lifecycle:lifecycle-viewmodel-compose",
+      "versionInfo": {
+        "ref": "lifecycle"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose@{'ref': 'lifecycle'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-lifecycle-viewmodel-compose"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-androidx.navigation-navigation-compose",
+      "name": "androidx.navigation:navigation-compose",
+      "versionInfo": {
+        "ref": "navigationCompose"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/androidx.navigation/navigation-compose@{'ref': 'navigationCompose'}"
+        }
+      ],
+      "comment": "Gradle catalog alias androidx-navigation-compose"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-org.jetbrains.kotlinx-kotlinx-coroutines-android",
+      "name": "org.jetbrains.kotlinx:kotlinx-coroutines-android",
+      "versionInfo": {
+        "ref": "coroutines"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@{'ref': 'coroutines'}"
+        }
+      ],
+      "comment": "Gradle catalog alias kotlinx-coroutines-android"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-org.jetbrains.kotlinx-kotlinx-serialization-json",
+      "name": "org.jetbrains.kotlinx:kotlinx-serialization-json",
+      "versionInfo": {
+        "ref": "serialization"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@{'ref': 'serialization'}"
+        }
+      ],
+      "comment": "Gradle catalog alias kotlinx-serialization-json"
+    },
+    {
+      "SPDXID": "SPDXRef-Gradle-top.canyie.pine-core",
+      "name": "top.canyie.pine:core",
+      "versionInfo": {
+        "ref": "pine"
+      },
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:maven/top.canyie.pine/core@{'ref': 'pine'}"
+        }
+      ],
+      "comment": "Gradle catalog alias pine-core"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-DotnetRuntime",
+      "name": "microsoft.netcore.app.runtime.android-arm64",
+      "versionInfo": "10.0.12",
+      "supplier": "Organization: Microsoft",
+      "downloadLocation": "https://api.nuget.org/v3-flatcontainer",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "homepage": "https://dotnet.microsoft.com",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "7f67905e5e5324e0c2b03920b62a3b09c036737ba84f9e7cb61f7e058d285ad3"
+        }
+      ],
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/microsoft.netcore.app.runtime.android-arm64@10.0.12"
+        }
+      ],
+      "comment": "official Microsoft runtime pack; supplies libcoreclr.so and dotnet.zip BCL"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Il2CppInterop-Common",
+      "name": "Il2CppInterop.Common",
+      "versionInfo": "1.5.3-android.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Il2CppInterop.Common@1.5.3-android.1"
+        }
+      ],
+      "comment": "rebuilt here from Il2CppInterop@81a6f78; local-nuget/"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Il2CppInterop-Generator",
+      "name": "Il2CppInterop.Generator",
+      "versionInfo": "1.5.3-android.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Il2CppInterop.Generator@1.5.3-android.1"
+        }
+      ],
+      "comment": "rebuilt here from Il2CppInterop@81a6f78; local-nuget/"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Il2CppInterop-HarmonySupport",
+      "name": "Il2CppInterop.HarmonySupport",
+      "versionInfo": "1.5.3-android.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Il2CppInterop.HarmonySupport@1.5.3-android.1"
+        }
+      ],
+      "comment": "rebuilt here from Il2CppInterop@81a6f78; local-nuget/"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Il2CppInterop-Runtime",
+      "name": "Il2CppInterop.Runtime",
+      "versionInfo": "1.5.3-android.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/Il2CppInterop.Runtime@1.5.3-android.1"
+        }
+      ],
+      "comment": "rebuilt here from Il2CppInterop@81a6f78; local-nuget/"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-MonoMod-Core",
+      "name": "MonoMod.Core",
+      "versionInfo": "25.3.7-android.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/MonoMod.Core@25.3.7-android.1"
+        }
+      ],
+      "comment": "rebuilt here from MonoMod@d2f2fd9; local-nuget/"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-MonoMod-RuntimeDetour",
+      "name": "MonoMod.RuntimeDetour",
+      "versionInfo": "25.3.7-android.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/MonoMod.RuntimeDetour@25.3.7-android.1"
+        }
+      ],
+      "comment": "rebuilt here from MonoMod@d2f2fd9; local-nuget/"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-MonoMod-Utils",
+      "name": "MonoMod.Utils",
+      "versionInfo": "25.3.7-android.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:nuget/MonoMod.Utils@25.3.7-android.1"
+        }
+      ],
+      "comment": "rebuilt here from MonoMod@d2f2fd9; local-nuget/"
+    },
+    {
+      "SPDXID": "SPDXRef-Root-APK",
+      "name": "com.bepinex.android",
+      "versionInfo": "0.184",
+      "supplier": "Organization: BepInEx-Android",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "homepage": "https://github.com/BepInEx-Android/BepInEx-Android",
+      "comment": "versionCode 184; built from commit 625d8b1cdde7873f0c80af1f7cc8e0307aba93b4"
+    },
+    {
+      "SPDXID": "SPDXRef-Tool-AGP",
+      "name": "com.android.application (AGP)",
+      "versionInfo": "9.4.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "pinned build toolchain"
+    },
+    {
+      "SPDXID": "SPDXRef-Tool-CMake",
+      "name": "CMake",
+      "versionInfo": "3.22.1",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "pinned build toolchain"
+    },
+    {
+      "SPDXID": "SPDXRef-Tool-DotnetSDK",
+      "name": ".NET SDK",
+      "versionInfo": "10.0.401",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "pinned build toolchain"
+    },
+    {
+      "SPDXID": "SPDXRef-Tool-JDK",
+      "name": "Eclipse Temurin JDK",
+      "versionInfo": "17",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "pinned build toolchain"
+    },
+    {
+      "SPDXID": "SPDXRef-Tool-Kotlin",
+      "name": "org.jetbrains.kotlin",
+      "versionInfo": "2.2.10",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "pinned build toolchain"
+    },
+    {
+      "SPDXID": "SPDXRef-Tool-NDK",
+      "name": "Android NDK",
+      "versionInfo": "30.0.16248370",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "comment": "pinned build toolchain"
+    },
+    {
+      "SPDXID": "SPDXRef-Upstream-BepInEx",
+      "name": "BepInEx/BepInEx",
+      "versionInfo": "6cea286d204eb3754d3b8363a5a1fd6640164a49",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/BepInEx/BepInEx",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "homepage": "https://github.com/BepInEx/BepInEx",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceType": "git-commit",
+          "referenceLocator": "6cea286d204eb3754d3b8363a5a1fd6640164a49"
+        }
+      ],
+      "comment": "pinned commit 6cea286"
+    },
+    {
+      "SPDXID": "SPDXRef-Upstream-Dobby",
+      "name": "canyie/dobby",
+      "versionInfo": "6813ca76ddeafcaece525bf8c6cde7ff4c21d3ce",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/canyie/dobby",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "homepage": "https://github.com/canyie/dobby",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceType": "git-commit",
+          "referenceLocator": "6813ca76ddeafcaece525bf8c6cde7ff4c21d3ce"
+        }
+      ],
+      "comment": "pinned commit 6813ca7"
+    },
+    {
+      "SPDXID": "SPDXRef-Upstream-Il2CppInterop",
+      "name": "BepInEx/Il2CppInterop",
+      "versionInfo": "81a6f78c8b653e0da4a3420ac4cd00819e8b6292",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/BepInEx/Il2CppInterop",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "homepage": "https://github.com/BepInEx/Il2CppInterop",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceType": "git-commit",
+          "referenceLocator": "81a6f78c8b653e0da4a3420ac4cd00819e8b6292"
+        }
+      ],
+      "comment": "pinned commit 81a6f78"
+    },
+    {
+      "SPDXID": "SPDXRef-Upstream-MonoMod",
+      "name": "MonoMod/MonoMod",
+      "versionInfo": "d2f2fd91f0daababe41b81239b3d53a4be77cd43",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/MonoMod/MonoMod",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "homepage": "https://github.com/MonoMod/MonoMod",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceType": "git-commit",
+          "referenceLocator": "d2f2fd91f0daababe41b81239b3d53a4be77cd43"
+        }
+      ],
+      "comment": "pinned commit d2f2fd9"
+    },
+    {
+      "SPDXID": "SPDXRef-Upstream-Pine",
+      "name": "canyie/Pine",
+      "versionInfo": "216d910f18b18430a5d21c510affb221a9833a55",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/canyie/Pine",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "homepage": "https://github.com/canyie/Pine",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceType": "git-commit",
+          "referenceLocator": "216d910f18b18430a5d21c510affb221a9833a55"
+        }
+      ],
+      "comment": "pinned commit 216d910"
+    },
+    {
+      "SPDXID": "SPDXRef-Upstream-Pine-XZ",
+      "name": "tukaani-project/xz-embedded",
+      "versionInfo": "d4a9bc83c72d8087fe36ff388e89599626da7873",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "https://github.com/tukaani-project/xz-embedded",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "homepage": "https://github.com/tukaani-project/xz-embedded",
+      "externalRefs": [
+        {
+          "referenceCategory": "OTHER",
+          "referenceType": "git-commit",
+          "referenceLocator": "d4a9bc83c72d8087fe36ff388e89599626da7873"
+        }
+      ],
+      "comment": "nested submodule compiled into libpine.so"
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Root-APK"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.activity-activity-compose"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.appcompat-appcompat"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.compose-compose-bom"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.compose.material-material-icons-extended"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.compose.material3-material3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.compose.ui-ui"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.compose.ui-ui-graphics"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.compose.ui-ui-tooling"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.compose.ui-ui-tooling-preview"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.core-core-ktx"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.datastore-datastore-preferences"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.lifecycle-lifecycle-runtime-compose"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.lifecycle-lifecycle-runtime-ktx"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.lifecycle-lifecycle-viewmodel-compose"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-androidx.navigation-navigation-compose"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-org.jetbrains.kotlinx-kotlinx-coroutines-android"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-org.jetbrains.kotlinx-kotlinx-serialization-json"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Gradle-top.canyie.pine-core"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-DotnetRuntime"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-Il2CppInterop-Common"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-Il2CppInterop-Generator"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-Il2CppInterop-HarmonySupport"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-Il2CppInterop-Runtime"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-MonoMod-Core"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-MonoMod-RuntimeDetour"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-MonoMod-Utils"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Tool-AGP"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Tool-CMake"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Tool-DotnetSDK"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Tool-JDK"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Tool-Kotlin"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Tool-NDK"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Upstream-BepInEx"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Upstream-Dobby"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Upstream-Il2CppInterop"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Upstream-MonoMod"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Upstream-Pine"
+    },
+    {
+      "spdxElementId": "SPDXRef-Root-APK",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Upstream-Pine-XZ"
+    }
+  ]
+}

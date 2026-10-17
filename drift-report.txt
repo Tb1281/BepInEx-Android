@@ -1,0 +1,22 @@
+============================================================
+ upstream pin drift report
+============================================================
+pin source cross-check:
+  (no gitlinks: pin source is provenance/*.env alone)
+
+  MOVED    bepinex  pin 5b766a3b7f -> upstream 6cea286d20
+  current  pine  (pin 216d910f18)
+  current  dobby  (pin 6813ca76dd)
+  MOVED    monomod  pin d2f2fd91f0 -> upstream 045c362b4e
+  current  il2cppinterop  (pin 81a6f78c8b)
+
+============================================================
+ RESULT: 3 current, 2 moved, 0 unknown
+============================================================
+
+One or more upstreams moved. This is news, not a failure, and nothing here
+was bumped. Moving a pin is deliberate work: check the pin file's own
+procedure before touching it - for MonoMod, provenance/monomod.env records
+that without the Android patch every Harmony patch fails on device; the
+runtime is covered by scripts/check_runtime_pin.sh with its own four-step
+procedure.
