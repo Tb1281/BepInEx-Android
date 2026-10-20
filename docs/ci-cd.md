@@ -191,9 +191,9 @@ so it has no release key and cannot build. It runs the `--verify-only` preflight
 requires a stable tag and recorded device verification, consumer-verifies the
 pre-release, runs `gh release edit --prerelease=false`, and consumer-verifies
 with `--require-stable`. If the post-check fails it restores the pre-release
-flag and fails the run. Device
-verification is recorded in the release issue using the matrix in
-`docs/progress.md`; the Pine license review remains a stable blocker.
+flag and fails the run. Device verification is recorded in the release issue
+using the matrix in `docs/progress.md`; the Pine license review remains a
+stable blocker.
 
 ### `sync-upstream.yml`
 
@@ -242,11 +242,15 @@ loudly instead of building silently against the wrong tree.
   pinned to SHA. Default policy is `audit` (records, never blocks).
   `scripts/test_harden_runner.sh` asserts every job carries the block first
   and that only the registered pilot set may use `block`.
-- **Block pilot.`verify-provenance:provenance`, `:patch-queue`, `build-bepinex:build`, `build-native-deps:build`, `fetch-runtime:fetch-runtime`, `sync-upstream:sync`, and `build-launcher-apk:apk` use `egress-policy: block` with explicit allow-lists (the former rebuilds from
-  pins, so its list covers the .NET/Java/NDK toolchains plus upstream clones
-  and restore feeds). Further jobs graduate one at a time after a green
-  blocked run confirms their allow-list. Rollback is one line back to
-  `audit`.
+- **Block pilot.** `verify-provenance:provenance`, `:patch-queue`,
+  `build-bepinex:build`, `build-native-deps:build`,
+  `fetch-runtime:fetch-runtime`, `sync-upstream:sync`,
+  `build-launcher-apk:apk`, `release-tag:build`, and `ship-release:ship` use
+  `egress-policy: block` with explicit allow-lists (the build jobs rebuild from
+  pins, so their lists cover the .NET/Java/NDK toolchains plus upstream clones
+  and restore feeds; the ship list covers release upload and Sigstore). Further
+  jobs graduate one at a time after a green blocked run confirms their
+  allow-list. Rollback is one line back to `audit`.
 - **SDK pinning.** .NET SDK `10.0.401` is pinned in workflows and root
   `global.json`. NDK `30.0.16248370` is pinned for native builds.
 - **Deterministic archives.** `BepInEx.Android.zip` and `dotnet.zip` are
@@ -292,10 +296,11 @@ loudly instead of building silently against the wrong tree.
   over the development defaults.
 - **Branch protection.** `main` should require `verify-provenance` to pass.
   Without it, push access bypasses every check above in a single commit.
-- **Rolling failure notifications.** Scheduled workflows report failures via
-  `scripts/ci_failure_notice.sh`, which opens or updates a single rolling
-  `ci-failure` issue and closes it on recovery, always exiting 0. Pin drift
-  gets the same treatment via `scripts/pin_drift_notice.sh` (rolling
+- **Rolling failure notifications.** Scheduled workflows, the tag build,
+  consumer verification, and manual promotion report failures via
+  `scripts/ci_failure_notice.sh`, which opens or updates one rolling
+  `ci-failure` issue per workflow and closes it on recovery, always exiting 0.
+  Pin drift gets the same treatment via `scripts/pin_drift_notice.sh` (rolling
   `pin-drift` issue): the drift checks report to green-run summaries nobody
   opens, so without it drift is detected and invisible at once. Drift never
   moves a pin — pins move by hand.

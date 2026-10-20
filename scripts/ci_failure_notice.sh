@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# BepInEx Android - leave a durable record when a scheduled run fails
+# BepInEx Android - leave a durable record when a CI run fails
 # ==============================================================================
 #
 # WHY THIS EXISTS
@@ -16,12 +16,16 @@
 # inside the repository is visible to whoever has access, regardless of how their
 # account is configured.
 #
-# WHAT IT COVERS, AND WHY ONLY SCHEDULED RUNS
+# WHAT IT COVERS
 #
 # A run that was triggered by a push failed in front of whoever pushed. A run
 # that was triggered by a cron schedule failed in front of nobody, which is why
-# it can stay broken for days. So this is wired into the two scheduled workflows
-# only, and the same script closes the record when they go green again.
+# it can stay broken for days. A tag build, its consumer verification, or a
+# manual promotion can also fail after the person who started it has moved on.
+# So this is wired into the scheduled workflows, the tag build, consumer
+# verification, and promotion; the ship job follows the tag build rather than
+# duplicating the notice. The same script closes the record when they go green
+# again.
 #
 # WHAT "ROLLING" MEANS HERE
 #
