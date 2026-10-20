@@ -2,7 +2,10 @@ name: verify-provenance
 on:
   workflow_dispatch:
   push:
-    # Every path here is an input to one of the two jobs below, and nothing else.
+    # Every path here is an input to one of the two jobs below, and nothing
+    # else, except `docs/**`: docs changes cannot affect provenance, but branch
+    # protection requires these checks on every pull request, and the two trigger
+    # lists must match so the gate cannot be skipped for one kind of change.
     # The previous list omitted the patch queue's own inputs, so `patches/**` -
     # the one thing this repository exists to keep honest - was only verified on
     # pull_request, and this repository works by pushing to a branch. `global.json`
@@ -60,6 +63,7 @@ on:
       - 'scripts/report_patch_conflict.sh'
       - 'provenance/bepinex.env'
       - 'scripts/bepinex_paths.sh'
+      - 'docs/**'
   pull_request:
     paths:
       - 'provenance/**'
@@ -106,6 +110,10 @@ on:
       - 'scripts/report_patch_conflict.sh'
       - 'provenance/bepinex.env'
       - 'scripts/bepinex_paths.sh'
+      # Docs are included for branch-protection parity: the jobs do not read
+      # docs, but a docs-only PR still needs the required checks. The push list
+      # carries the same path so the trigger-path test stays exact.
+      - 'docs/**'
 
 # Gate: nothing reaches the APK unless every shipped binary matches the CI
 # manifest, the crypto PAL is the platform one, and the runtime pack is a
