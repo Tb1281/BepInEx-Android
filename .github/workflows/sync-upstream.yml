@@ -33,11 +33,12 @@ jobs:
       # hosts (services/downloads/plugins, maven central/google/aliyun,
       # jitpack — the mirror hit varies per run), the pull-request API
       # (api.github.com), and the artifact/cache blob storage
-      # (*.blob.core.windows.net). The release/Sigstore entries are retained
-      # until this allow-list is re-measured for the artifact-only path.
-      # Telemetry and CRL hosts (aka.ms, visualstudio, digicert, symantec) are
-      # deliberately excluded: the build-bepinex pilot already proves they are
-      # non-fatal. Rollback is one line back to audit.
+      # (*.blob.core.windows.net). This path publishes a CI artifact only, so
+      # the release/Sigstore entries are gone: it neither mints an attestation
+      # nor creates or uploads a release. Telemetry and CRL hosts (aka.ms,
+      # visualstudio, digicert, symantec) are deliberately excluded: the
+      # build-bepinex pilot already proves they are non-fatal. Rollback is one
+      # line back to audit.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
         with:
           egress-policy: block
@@ -57,17 +58,12 @@ jobs:
             api.adoptium.net
             services.gradle.org
             downloads.gradle.org
-            release-assets.githubusercontent.com
             plugins.gradle.org
             repo.maven.apache.org
             repo1.maven.org
             maven.google.com
             maven.aliyun.com
             jitpack.io
-            fulcio.sigstore.dev
-            rekor.sigstore.dev
-            uploads.github.com
-            cafe.github.com
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
