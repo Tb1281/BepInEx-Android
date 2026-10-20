@@ -261,6 +261,13 @@ jobs:
           branch: upstream-sync
           title: 'sync: BepInEx upstream update (${{ steps.sync.outputs.new }})'
           commit-message: 'sync: BepInEx upstream update to ${{ steps.sync.outputs.new }}'
+          # Only the source pin and the re-recorded tree hash belong in the
+          # pin-bump PR. The SBOM, provenance, and drift report are build
+          # outputs uploaded as artifacts; staging the whole tree would commit
+          # them to the branch on every run.
+          add-paths: |
+            provenance/bepinex.env
+            references/patched-tree.sha256
           body: |
             Automated upstream sync of the BepInEx pin (`provenance/bepinex.env`) with the patch queue replayed on top.
 

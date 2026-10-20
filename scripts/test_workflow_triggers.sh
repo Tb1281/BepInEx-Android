@@ -169,6 +169,24 @@ check(
     sorted(sync),
 )
 
+sync_doc = yaml.safe_load((ROOT / "sync-upstream.yml").read_text())
+sync_steps = sync_doc.get("jobs", {}).get("sync", {}).get("steps", [])
+pr_steps = [s for s in sync_steps if s.get("name") == "Create PR for pin update"]
+check(
+    "sync-upstream has exactly one pin-bump PR step",
+    len(pr_steps) == 1,
+    len(pr_steps),
+)
+add_paths = str(pr_steps[0].get("with", {}).get("add-paths", "")) if pr_steps else ""
+check(
+    "sync PR commits only the pin and patched-tree hash",
+    set(add_paths.split()) == {
+        "provenance/bepinex.env",
+        "references/patched-tree.sha256",
+    },
+    add_paths,
+)
+
 ship = load("ship-release.yml")
 check("ship-release is call-only", set(ship) == {"workflow_call"}, sorted(ship))
 

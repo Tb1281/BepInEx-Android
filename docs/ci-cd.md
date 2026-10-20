@@ -205,9 +205,11 @@ PR only when upstream actually moved. On conflict publishes diagnostics via
 `report_patch_conflict.sh`. Because the pin advanced, the replay runs with
 `BEPINEX_SKIP_TREE_GATE=1` and `scripts/record_patched_tree.sh` re-records
 the tree hash immediately after; the updated
-`references/patched-tree.sha256` rides the sync PR, whose own CI re-applies
-the gate from scratch. Sync output is a CI-only artifact, not a release: the
-job builds `assembleArtifact`, uploads `sync-artifacts`
+`references/patched-tree.sha256` rides the sync PR alongside the pin, whose
+own CI re-applies the gate from scratch. The generated SBOM, provenance, and
+drift report stay build artifacts and are not committed to the PR. Sync
+output is a CI-only artifact, not a release: the job builds
+`assembleArtifact`, uploads `sync-artifacts`
 (`app-artifact-aligned.apk`, `sbom.spdx.json`, `provenance.json`) with
 one-day retention, and links the workflow run from the PR body. It never
 calls `ship-release.yml` and never creates a release or tag. Merge the PR,
