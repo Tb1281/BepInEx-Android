@@ -65,8 +65,8 @@
 - [x] Release preflight: tag on `main`, covered by `verified`, secrets present, `gh release create --verify-tag`.
 - [x] `sync-upstream` stops publishing stable releases; it produces artifacts only.
 - [x] Release notes and assets: install/upgrade, known issues, certificate fingerprint, GPL/LGPL notices, source offer.
-- [ ] Repository protections applied: `main` required checks, the `release-tags` ruleset excluding `verified`, the `release` environment restricted to `main`/`v*`, and the default workflow token read-only (`scripts/apply_repo_settings.sh --apply`).
-- [ ] `v0.0.0-rc1` end-to-end rehearsal and rollback runbook.
+- [x] Repository protections applied: `main` required checks, the `release-tags` ruleset excluding `verified`, the `release` environment restricted to `main`/`v*`, and the default workflow token read-only with Actions PR creation for the sync path (`scripts/apply_repo_settings.sh --apply`, audited 2026-10-20).
+- [x] `v0.0.0-rc1` end-to-end rehearsal and rollback runbook (pre-release verified with nine assets; promotion rejected; advisory retained; 2026-10-20).
 - [ ] Pine license review (stable-release blocker).
 
 ### Priority 1: Trust
@@ -77,7 +77,7 @@
 
 ### Priority 2: CI/CD
 
-- [x] Release automation: tag-based general release via the shared shipping path; sync-path builds are CI artifacts only. The remaining release work is the `v0.0.0-rc1` rehearsal and repository protections.
+- [x] Release automation: tag-based general release via the shared shipping path; sync-path builds are CI artifacts only. The `v0.0.0-rc1` rehearsal exercised the full path and rollback; stable promotion remains blocked by the Pine review.
 - [ ] Test matrix: expand beyond the Unity 6000 / 2022.3 titles already verified.
 - [ ] Keep short artifact retention and no-cache policy under quota; revisit only with quota headroom.
 
