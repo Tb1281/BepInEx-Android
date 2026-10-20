@@ -133,7 +133,8 @@ fails closed unless all of the following hold:
 - The tag is `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-<label>`.
 - The tag commit is an ancestor of remote `main`.
 - The tag commit is covered by the **remote** `verified` tag.
-- The tag-derived `versionCode` is greater than the highest stable release.
+- The tag-derived `versionCode` is greater than the highest stable tag on the
+  remote, and the tag does not already have a stable GitHub Release.
 - The four release-key secrets are present, the keystore opens, and its
   certificate matches the committed `provenance/release-cert.sha256`.
 
@@ -245,8 +246,9 @@ loudly instead of building silently against the wrong tree.
   APK's own attestation.
 - **SBOM.** `scripts/generate_sbom.py` emits an SPDX 2.3 source SBOM from
   `provenance/*.env`, the Gradle catalog, and the pinned toolchain, with no
-  network access. `build-launcher-apk` and `sync-upstream` checksum and
-  attest it with their artifact; `release-tag` also passes the tag-derived
+  network access. `build-launcher-apk` checksums and attests it with its
+  artifact; `sync-upstream` uploads it in the CI artifact without a checksum
+  or attestation; `release-tag` also passes the tag-derived
   `BEPINEX_VERSION_NAME`/`BEPINEX_VERSION_CODE`, which the generator prefers
   over the development defaults.
 - **Branch protection.** `main` should require `verify-provenance` to pass.

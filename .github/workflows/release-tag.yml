@@ -82,6 +82,10 @@ jobs:
       - name: Release preflight
         id: preflight
         env:
+          # Pass the tag through the environment. Interpolating it into `run:`
+          # lets tag-controlled shell syntax execute inside a job that holds the
+          # release key.
+          RELEASE_TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
@@ -89,7 +93,7 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           PREFLIGHT_KEYSTORE_OUT: ${{ runner.temp }}/release.keystore
-        run: ./scripts/release_preflight.sh "${{ github.ref_name }}"
+        run: ./scripts/release_preflight.sh "$RELEASE_TAG"
 
       # Same Gradle cache as build-launcher-apk.yml: public repository, 10 GB
       # quota. Keyed on the dependency inputs (see that workflow for why the
@@ -258,6 +262,7 @@ jobs:
       notes_extra: |-
         - **Version:** `${{ github.ref_name }}`
         - **Build:** release (R8 minification + resource shrinking)
+        - **Upgrade:** uninstall `com.bepinex.android.release` and any old debug install at `com.bepinex.android` once before installing this release
         - **State:** pre-release until release verification and device verification are recorded
       artifact_name: tag-ship-inputs
       # actions/upload-artifact keeps the least-common ancestor of the uploaded

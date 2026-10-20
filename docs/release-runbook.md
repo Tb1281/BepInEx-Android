@@ -24,11 +24,15 @@ Target process for Release Contract v1 (ADR-0016 through ADR-0018). Signing, ver
 
 The current key was generated on 2026-10-20. Its SHA-256 certificate fingerprint is `b2fe00a6a80d6e69beee4eea8e8063dc74cca6759c0fdecc2c322bf56066db73`. Treat the keystore as unrecoverable if the offline backup is lost.
 
+## One-time upgrade from the old package
+
+The first contract release installs as `com.bepinex.android` signed by the release key. Uninstall `com.bepinex.android.release` and any old debug install at `com.bepinex.android` once before installing it. Android treats the old signatures as different identities, so an in-place update is not possible; app data is not migrated.
+
 ## Pre-release checklist
 
 - [ ] `main` is green on `verify-provenance`.
 - [ ] The release commit is covered by the `verified` tag.
-- [ ] The tag is `vX.Y.Z` and `versionCode` is greater than the last stable release.
+- [ ] The tag is `vX.Y.Z` and `versionCode` is greater than the highest stable tag on the remote.
 - [ ] Changelog and known issues are updated. The Tower RTDB issue is listed if still open.
 - [ ] The Pine license review is closed; it is a stable-release blocker.
 - [ ] Release notes include install/upgrade, supported matrix, checksums, certificate fingerprint, and license/source links.
