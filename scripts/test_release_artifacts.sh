@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fixture: the APK build paths use the right variant, and the Gradle cache is on.
+# Fixture: the APK build paths use the right variant, and only non-release jobs
+# use the Gradle cache.
 #
 # WHY THIS EXISTS
 #
@@ -41,6 +42,9 @@ check_absent() { # check_absent <name> <pattern> <file...>
 }
 
 WF_RELEASE=".github/workflows/release-tag.yml"
+WF_SHIP=".github/workflows/ship-release.yml"
+WF_VERIFY=".github/workflows/verify-release.yml"
+WF_PROMOTE=".github/workflows/promote-release.yml"
 WF_LAUNCHER=".github/workflows/build-launcher-apk.yml"
 WF_SYNC=".github/workflows/sync-upstream.yml"
 GRADLE="launcher/app/build.gradle.kts"
@@ -62,6 +66,69 @@ check "release-tag passes the tag version to Gradle" grep -q "bepinex.versionNam
 # be told the same path; the flat default cannot find it after download.
 check "release-tag passes the nested APK path to the ship job" \
     grep -q "apk_path: launcher/app/build/outputs/apk/release/app-release-aligned.apk" "$WF_RELEASE"
+check "release-tag is limited to v[0-9] tags" \
+    grep -qF -- "- 'v[0-9]*'" "$WF_RELEASE"
+check "release-tag declares the release environment" \
+    grep -q "^    environment: release$" "$WF_RELEASE"
+# The release job is the one job with the key. A cache restore/save path there
+# is a second state channel into that job; the contract keeps it absent.
+check_absent "release-tag does not use the Gradle cache" "actions/cache" "$WF_RELEASE"
+check_absent "ship-release does not get the release environment" "environment: release" "$WF_SHIP"
+
+# The shipping path publishes the complete contract asset set and keeps the
+# tag-only creation guarantee.
+for asset in "THIRDPARTY_NATIVE.md" "release-cert.pem" "release-cert.sha256" "LICENSE"; do
+    check "ship-release publishes $asset" grep -q "$asset" "$WF_SHIP"
+done
+check "ship-release publishes the APK checksum asset" grep -q '"\$APK_PATH.sha256"' "$WF_SHIP"
+check "ship-release publishes LICENSE, notices, cert, and fingerprint" \
+    grep -q 'LICENSE THIRDPARTY_NATIVE.md release-cert.pem release-cert.sha256' "$WF_SHIP"
+check "ship-release prints flat checksum names for downloaded assets" \
+    grep -q 'sha256sum "$(basename "$SBOM_PATH")"' "$WF_SHIP"
+check "ship-release verifies the pushed tag" grep -q -- "--verify-tag" "$WF_SHIP"
+check "ship-release can create a pre-release" grep -q -- "--prerelease" "$WF_SHIP"
+for section in "Install and upgrade" "Verified device matrix" "Known issues" "Checksums" "Signing certificate" "Attestation" "License and source"; do
+    check "ship-release notes include $section" grep -q "$section" "$WF_SHIP"
+done
+check "ship-release notes name the one-time uninstall" \
+    grep -q "com.bepinex.android.release" "$WF_SHIP"
+check "ship-release notes name the release package" \
+    grep -q "installs as .com.bepinex.android." "$WF_SHIP"
+check "ship-release notes list The Tower crash" \
+    grep -q "Firebase RTDB" "$WF_SHIP"
+check "ship-release notes list the Pine review" \
+    grep -q "Pine license review" "$WF_SHIP"
+check "ship-release notes state GPL and LGPL" \
+    bash -c 'grep -q "GPL-3.0" "$1" && grep -q "LGPL-2.1" "$1"' _ "$WF_SHIP"
+
+# The consumer job must install apksigner; the runner image does not ship it.
+check "verify-release installs pinned build-tools" \
+    grep -q 'build-tools;35.0.0' "$WF_VERIFY"
+check "verify-release checks out the default-branch verifier" \
+    grep -q 'ref: .*github.event.repository.default_branch' "$WF_VERIFY"
+check "verify-release passes the tag through the environment" \
+    grep -q 'RELEASE_TAG: .*github.event.release.tag_name' "$WF_VERIFY"
+
+# Promotion is manual and never receives the release key.
+check "promote-release is workflow_dispatch only" grep -q "workflow_dispatch:" "$WF_PROMOTE"
+check_absent "promote-release is not release-triggered" "^  release:" "$WF_PROMOTE"
+check_absent "promote-release is not push-triggered" "^  push:" "$WF_PROMOTE"
+check "promote-release checks out the default-branch verifier" \
+    grep -q 'ref: .*github.event.repository.default_branch' "$WF_PROMOTE"
+check_absent "promote-release does not get the release environment" "environment: release" "$WF_PROMOTE"
+check "promote-release requires recorded device verification" \
+    grep -q "device_verification" "$WF_PROMOTE"
+check "promote-release installs pinned build-tools" \
+    grep -q 'build-tools;35.0.0' "$WF_PROMOTE"
+check "promote-release uses the verify-only preflight" \
+    grep -q -- "--verify-only" "$WF_PROMOTE"
+check "promote-release requires the stable verifier after editing" \
+    grep -q -- "--require-stable" "$WF_PROMOTE"
+check "promote-release clears the pre-release flag" \
+    grep -q -- "--prerelease=false" "$WF_PROMOTE"
+check "promote-release can restore the pre-release flag" \
+    grep -q -- "gh release edit .* --prerelease$" "$WF_PROMOTE"
+check_absent "promote-release has no release key" "secrets.RELEASE_" "$WF_PROMOTE" "$WF_VERIFY"
 
 for wf in "$WF_LAUNCHER" "$WF_SYNC"; do
     check "$(basename "$wf") assembles the artifact variant" grep -q "assembleArtifact" "$wf"

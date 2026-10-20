@@ -396,9 +396,11 @@ jobs:
       # The release page is the one artifact surface no gate above touches:
       # producers attest, the shipping path checks inputs, but nobody ever
       # verified the published APK as a consumer would. verify_release_assets.sh
-      # downloads a release tag and checks checksum then bundle; the fixture
-      # proves a tampered APK, an unvouched bundle, and a missing bundle all
-      # fail, with gh stubbed per the attestation-gate precedent.
+      # downloads a release tag and checks the full asset set, checksum, bundle,
+      # signer certificate, and stable/pre-release state. The fixture proves
+      # tampering, missing assets, a wrong signer, and a pre-release passed to
+      # --require-stable all fail, with gh and apksigner stubbed per the
+      # attestation-gate precedent.
       - name: The published release verifies as a consumer
         run: ./scripts/test_verify_release_assets.sh
 
