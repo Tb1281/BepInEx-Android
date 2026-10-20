@@ -35,8 +35,9 @@ is `net10.0`; the .NET SDK is `10.0.401` via root `global.json`.
   (hash match plus reverse catalog check).
 - **Origin.** Each producer attests its output before upload; the launcher
   verifies attestations before packaging. Hashes prove byte identity,
-  attestations prove origin; neither replaces the other. Consumer check:
-  `gh attestation verify app-release-aligned.apk --repo <owner>/<repo>`.
+  attestations prove origin; neither replaces the other. Consumer check for a
+  release: `gh attestation verify app-release-aligned.apk --repo
+  <owner>/<repo>`; CI artifact builds use `app-artifact-aligned.apk`.
   Full policy is in `docs/ci-cd.md`.
 - **Reproducibility bounds — measured, not assumed.**
   - Byte-identical across machines: the .NET pack (`dotnet.zip`,

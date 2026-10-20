@@ -3,21 +3,26 @@
 ## 1. Pipeline Overview
 
 ```
-[ Scheduled / Push Event ]
+[ Scheduled / Push / Tag Event ]
         │
         ├──> verify-provenance.yml (quality and integrity gate)
         │
         ├──> build-native-deps.yml (NDK: libdobby.so, libpine.so) ──┐
         │                                                          │
         ├──> fetch-runtime.yml    (.NET 10 Android runtime pack)   ├──> build-launcher-apk.yml
-        │                                                          │     (assembles final APK)
+        │                                                          │     (CI artifact APK)
         └──> build-bepinex.yml    (managed framework assemblies)  ──┘
         │
-        └──> sync-upstream.yml    (tracks upstream BepInEx changes daily)
+        ├──> sync-upstream.yml    (daily upstream tracking; CI artifact only)
+        │
+        └──> release-tag.yml      (v-tag: preflight -> release APK -> GitHub Release)
 ```
 
 Naming: `build-*` compiles components in this repository; `fetch-*`
 downloads a pinned, immutable upstream binary and validates it by SHA-256.
+Only `release-tag.yml` produces a release. `build-launcher-apk.yml` and
+`sync-upstream.yml` build the CI-only `artifact` variant, which is
+debug-signed under `com.bepinex.android.artifact` and is never published.
 
 ---
 
@@ -43,7 +48,8 @@ bytes read from the repository:
   `test_attestation_gate.sh`, `test_upstream_pins.sh`,
   `test_workflow_triggers.sh`, `test_generate_sbom.sh`,
   `test_emit_provenance.sh`, `test_mark_verified.sh`, `test_ci_failure_notice.sh`,
-  `test_launcher_compile_gate.sh`, `test_verify_release_assets.sh`).
+  `test_launcher_compile_gate.sh`, `test_release_preflight.sh`,
+  `test_verify_release_assets.sh`).
 - Asserts push and pull-request path filters agree
   (`test_workflow_triggers.sh`); when adding a path, add it to both triggers.
 - On success moves the `verified` tag to HEAD (`scripts/mark_verified.sh`).
@@ -95,20 +101,64 @@ the zip. Artifacts:
 
 ### `build-launcher-apk.yml`
 
-Assembles the launcher APK from the three producer artifacts:
+Assembles a CI-only launcher artifact from the three producer artifacts:
 
 - Verifies hashes against producer manifests (`verify_ci_artifacts.sh`).
 - Verifies all producers built from the current commit
   (`verify_producer_commit.sh`; API failure fails closed).
 - Verifies attestations before Gradle (`verify_attestation.sh`, see below).
 - Compiles the JNI bridge (`libmain.so`, `libfusion.so`) and Kotlin UI.
-- Builds the **release** APK: R8 minification with the crypto PAL keep
-  rules plus resource shrinking (a debug APK ships every unused compose
-  icon class; the release build type is what makes the APK distributable).
+- Builds the **artifact** APK (`assembleArtifact`): the same R8
+  minification, crypto PAL keep rules, resource shrinking, and 16 KB
+  alignment as release, but debug-signed under
+  `com.bepinex.android.artifact`. Only `release-tag.yml` builds the release
+  variant with the release key.
 - Asserts `zipalign -c -P 16 4` and APK entry consistency
   (`verify_apk_entries.sh`).
 - Generates, checksums, and attests `sbom.spdx.json` alongside the APK.
-- Artifacts: signed/aligned release APK, checksum manifest, source SBOM.
+- Artifacts: `app-artifact-aligned.apk`, checksum manifest, source SBOM,
+  attestation bundle (`launcher-artifact-aligned`).
+
+The artifact installs alongside the release and debug builds, and is never
+published as a release.
+
+### `release-tag.yml`
+
+Triggered only by a `v[0-9]*` tag; the narrower trigger keeps the moving
+`verified` tag from starting a release. The build job declares the `release`
+GitHub Environment, checks out full history and tags, and runs
+`scripts/release_preflight.sh` before the expensive build. The preflight
+fails closed unless all of the following hold:
+
+- The tag is `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-<label>`.
+- The tag commit is an ancestor of remote `main`.
+- The tag commit is covered by the **remote** `verified` tag.
+- The tag-derived `versionCode` is greater than the highest stable tag on the
+  remote, and the tag does not already have a stable GitHub Release.
+- The four release-key secrets are present, the keystore opens, and its
+  certificate matches the committed `provenance/release-cert.sha256`.
+
+The preflight emits `version_name`, `version_code`, `is_prerelease`, and the
+materialized `keystore_path`. Gradle receives the tag-derived version and
+the release build type refuses to run without the key and version, so there
+is no debug-key fallback. The job builds `app-release-aligned.apk` under
+`com.bepinex.android`, checks zip entries and 16 KB alignment, generates the
+SBOM with the tag version, emits `provenance.json`, and uploads
+`tag-ship-inputs`. An `always()` step removes the materialized keystore even
+when the build fails. The job then calls `ship-release.yml` with
+`prerelease: true`: every tag release starts as a GitHub pre-release, and
+stable promotion is a separate step.
+
+### `ship-release.yml`
+
+The shared shipping path, called by `release-tag.yml`. It runs on a fresh
+runner, so the APK, SBOM, and provenance arrive as the caller's artifact. It
+attests those exact bytes, writes the APK checksum manifest, composes the
+release notes, and runs `gh release create --verify-tag`. `--verify-tag`
+makes the pushed tag the only way to create the release; if the tag is
+missing, the command fails instead of creating it implicitly. The
+`prerelease` input defaults to `true`, and the caller can opt out only after
+the promotion path exists.
 
 ### `sync-upstream.yml`
 
@@ -121,9 +171,12 @@ PR only when upstream actually moved. On conflict publishes diagnostics via
 `BEPINEX_SKIP_TREE_GATE=1` and `scripts/record_patched_tree.sh` re-records
 the tree hash immediately after; the updated
 `references/patched-tree.sha256` rides the sync PR, whose own CI re-applies
-the gate from scratch. Shipping goes through the shared `ship-release.yml`
-path, which attests the APK, SBOM and `provenance.json` and publishes all
-three on the release (called by both `sync-upstream` and `release-tag`).
+the gate from scratch. Sync output is a CI-only artifact, not a release: the
+job builds `assembleArtifact`, uploads `sync-artifacts`
+(`app-artifact-aligned.apk`, `sbom.spdx.json`, `provenance.json`) with
+one-day retention, and links the workflow run from the PR body. It never
+calls `ship-release.yml` and never creates a release or tag. Merge the PR,
+then push a `v` tag on the merged commit to cut a release.
 
 No Dependabot: the load-bearing pins live in `provenance/*.env`, which
 Dependabot cannot see, and every bump needs human judgment plus
@@ -169,8 +222,8 @@ loudly instead of building silently against the wrong tree.
   byte-stable across fresh clones; see `provenance/SOURCES.md` for the
   measured boundary.
 - **Caches.** The repository is public, so the 10 GB Actions cache quota
-  applies. The two Gradle jobs (`build-launcher-apk`, `sync-upstream`)
-  cache `~/.gradle/caches` and `~/.gradle/wrapper`, keyed on the
+  applies. The three Gradle jobs (`build-launcher-apk`, `sync-upstream`,
+  `release-tag`) cache `~/.gradle/caches` and `~/.gradle/wrapper`, keyed on the
   dependency inputs (`libs.versions.toml`, Gradle scripts); Gradle verifies
   content hashes on use. This was revisited after the no-cache era, when a
   single 323 MB NuGet HTTP entry blocked verification against the private
@@ -185,14 +238,19 @@ loudly instead of building silently against the wrong tree.
   metadata fallback bundle covers environments where Sigstore is
   unavailable). `verify_attestation.sh` runs in `build-launcher-apk` before
   Gradle and fails closed on any unsigned input. Producers require
-  `attestations: write` and `id-token: write`. Consumer example:
-  `gh attestation verify app-release-aligned.apk --repo <owner>/<repo>`.
+  `attestations: write` and `id-token: write`. Consumer example for a
+  release: `gh attestation verify app-release-aligned.apk --repo
+  <owner>/<repo>`; CI artifacts use `app-artifact-aligned.apk`.
   Attestation proves origin; hashes prove byte identity. Neither replaces
   the other, and neither covers bytes inside the packaged APK beyond the
   APK's own attestation.
 - **SBOM.** `scripts/generate_sbom.py` emits an SPDX 2.3 source SBOM from
   `provenance/*.env`, the Gradle catalog, and the pinned toolchain, with no
-  network access. `build-launcher-apk` checksums and attests it with the APK.
+  network access. `build-launcher-apk` checksums and attests it with its
+  artifact; `sync-upstream` uploads it in the CI artifact without a checksum
+  or attestation; `release-tag` also passes the tag-derived
+  `BEPINEX_VERSION_NAME`/`BEPINEX_VERSION_CODE`, which the generator prefers
+  over the development defaults.
 - **Branch protection.** `main` should require `verify-provenance` to pass.
   Without it, push access bypasses every check above in a single commit.
 - **Rolling failure notifications.** Scheduled workflows report failures via
