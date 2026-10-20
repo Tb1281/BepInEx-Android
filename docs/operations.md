@@ -125,7 +125,10 @@ a `RET` in the first 16 bytes. Fail-closed: halt before attaching.
 
 ## 4. Deterministic Boot States
 
-One tree builds debug and release (`./gradlew assembleDebug/assembleRelease`).
+One tree builds debug, CI artifact, and release
+(`./gradlew assembleDebug/assembleArtifact/assembleRelease`). Release builds
+require the release key and tag-derived version; use `assembleArtifact` for a
+local installable build without release credentials.
 A successful launch transitions in order:
 
 ```

@@ -19,8 +19,6 @@ jobs:
       moved: ${{ steps.sync.outputs.moved }}
       old_commit: ${{ steps.sync.outputs.old }}
       new_commit: ${{ steps.sync.outputs.new }}
-      new_short: ${{ steps.release_tag.outputs.short }}
-      tag_name: ${{ steps.release_tag.outputs.tag }}
     permissions:
       contents: write      # create-pull-request (the release itself is created by the ship job below)
       pull-requests: write # opens the sync PR
@@ -212,18 +210,19 @@ jobs:
           # covers it (NDK 30.0.16248370 on both paths).
           ./scripts/verify_ndk_libcxx.sh
 
-      # Release, not debug: the sync release is a distributable artifact, so it
-      # gets the R8 + resource-shrunk build (see build-launcher-apk.yml for
-      # why). Signing still uses the debug keystore.
-      - name: Assemble and 16KB-align release APK
+      # Artifact, not release: an upstream pin bump is not a release. The
+      # artifact build type keeps the R8 + resource-shrunk output for smoke
+      # testing, but is debug-signed under a distinct application ID and is
+      # never published. Only a v-tag on merged main can produce a release.
+      - name: Assemble and 16KB-align artifact APK
         if: steps.sync.outputs.moved == 'true' || inputs.force
         working-directory: launcher
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
-          APK="app/build/outputs/apk/release/app-release.apk"
-          OUT="app/build/outputs/apk/release/app-release-aligned.apk"
+          ./gradlew assembleArtifact --no-daemon
+          APK="app/build/outputs/apk/artifact/app-artifact.apk"
+          OUT="app/build/outputs/apk/artifact/app-artifact-aligned.apk"
           ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
           "$ZIPALIGN" -f -P 16 4 "$APK" "$OUT"
 
@@ -233,48 +232,32 @@ jobs:
         if: steps.sync.outputs.moved == 'true' || inputs.force
         working-directory: launcher
         run: |
-          ../scripts/verify_apk_entries.sh app/build/outputs/apk/release/app-release-aligned.apk
+          ../scripts/verify_apk_entries.sh app/build/outputs/apk/artifact/app-artifact-aligned.apk
 
-      # Source SBOM for this release: same generator the shipping path
-      # uses, so a sync release and a manual build describe the same pins.
-      # Its own step (not inside Publish below) because the attestation after
-      # it covers both files — attesting before the SBOM exists would sign
-      # the APK next to nothing.
+      # Source SBOM for this artifact: same generator the release path uses,
+      # so a sync artifact and a release describe the same pins.
       - name: Generate the source SBOM
         if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
         run: python3 scripts/generate_sbom.py --output sbom.spdx.json
 
-      # As-built record for this release: the upstream pin, the patched-tree
+      # As-built record for this artifact: the upstream pin, the patched-tree
       # hash the replay actually produced, the patch files and the SDK.
       - name: Emit build provenance
         if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
         run: ./scripts/emit_provenance.sh provenance.json
 
-      # The release tag is computed here so this workflow owns the
-      # sync-YYYYMMDD-<sha> naming; the ship job below only consumes it.
-      - name: Compute the release tag
-        id: release_tag
-        if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
-        run: |
-          NEW_COMMIT="${{ steps.sync.outputs.new }}"
-          echo "tag=sync-$(date +'%Y%m%d')-${NEW_COMMIT:0:7}" >> "$GITHUB_OUTPUT"
-          echo "short=${NEW_COMMIT:0:7}" >> "$GITHUB_OUTPUT"
-
-      # The shipping path lives in ship-release.yml (the ship job below),
-      # which runs on a fresh runner: the APK, SBOM and provenance cross the
-      # job boundary as this artifact. The attestation is minted there, so it
-      # covers the exact bytes the release publishes.
-      - name: Upload the shipping inputs
+      # The artifact stays on the workflow run with short retention. It is
+      # never a GitHub Release, and it is not attested for publication.
+      - name: Upload the installable artifact
         if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: sync-ship-inputs
+          name: sync-artifacts
           path: |
-            launcher/app/build/outputs/apk/release/app-release-aligned.apk
+            launcher/app/build/outputs/apk/artifact/app-artifact-aligned.apk
             sbom.spdx.json
             provenance.json
           retention-days: 1
-
 
       - name: Create PR for pin update
         if: steps.sync.outputs.moved == 'true'
@@ -285,7 +268,10 @@ jobs:
           commit-message: 'sync: BepInEx upstream update to ${{ steps.sync.outputs.new }}'
           body: |
             Automated upstream sync of the BepInEx pin (`provenance/bepinex.env`) with the patch queue replayed on top.
-            Release has been created with the built APK.
+
+            This workflow produces a CI-only artifact for smoke testing, not a GitHub Release. Download it from run
+            [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+            Merge this PR, then tag a merged commit to cut a release.
 
       # Record failure to Issue or close open issue on success
       - name: Record the failure, or clear the record
@@ -298,26 +284,3 @@ jobs:
           else
             ./scripts/ci_failure_notice.sh sync-upstream failed
           fi
-
-  # The shared shipping path (attest + checksums + notes + `gh release
-  # create`). A separate job because a called workflow cannot share the
-  # caller's filesystem; the APK, SBOM and provenance arrive as the
-  # sync-ship-inputs artifact uploaded above.
-  ship:
-    needs: sync
-    if: needs.sync.outputs.moved == 'true' || inputs.force
-    permissions:
-      contents: write      # GitHub Release creation
-      attestations: write  # mint the APK+SBOM+provenance attestation
-      id-token: write
-    uses: ./.github/workflows/ship-release.yml
-    with:
-      tag_name: ${{ needs.sync.outputs.tag_name }}
-      release_title: 'BepInEx Android Sync (${{ needs.sync.outputs.new_short }})'
-      notes_header: '### 🚀 Automated Upstream Sync Build'
-      notes_extra: |-
-        - **Upstream Old:** `${{ needs.sync.outputs.old_commit }}`
-        - **Upstream New:** `${{ needs.sync.outputs.new_commit }}`
-        - **Build:** release (R8 minification + resource shrinking)
-      artifact_name: sync-ship-inputs
-      attestation_bundle_name: sync-apk.attestation.json

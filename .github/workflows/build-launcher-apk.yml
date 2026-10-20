@@ -37,7 +37,7 @@ jobs:
     steps:
       # Egress pilot: blocks with an explicit allow-list confirmed against
       # the audit-mode full-run map from 38564091185 (green, official
-      # Sigstore attestation on the shipping APK): checkout and artifact
+      # Sigstore attestation on the candidate APK): checkout and artifact
       # downloads (github.com, codeload, blob storage, actions hosts), the
       # NDK install (dl.google.com), the temurin JDK (api.adoptium.net, on
       # cache miss), the Gradle/Maven hosts (same build as the
@@ -180,7 +180,7 @@ jobs:
 
       - name: The installed artifacts match the hashes their producers recorded
         # Before the Gradle build, not after: a substituted artifact should cost
-        # seconds, not the ten minutes assembleRelease takes.
+        # seconds, not the ten minutes assembleArtifact takes.
         #
         # The three producer jobs each wrote a .sha256 next to their output and
         # shipped it inside their artifact. Until this step, this job downloaded
@@ -225,32 +225,29 @@ jobs:
           ./launcher/scripts/verify_crypto_java.sh
           ./scripts/verify_dotnet_pack.sh launcher/app/src/main/assets/dotnet.zip
 
-      # Release, not debug: the release build type runs R8 with the
-      # proguard-rules.pro keep rules (net.dot.android.crypto.** is resolved
-      # by the crypto PAL via JNI name lookup) and shrinks resources. A debug
-      # APK ships every unused compose icon class - classes.dex alone was
-      # 39.6 MB of a 104 MB APK - which is the difference between a
-      # sideloadable APK and a distributable one. Signing still uses the
-      # debug keystore (see build.gradle.kts), so release installs over an
-      # existing install of the same applicationId.
-      - name: Gradle build release APK
+      # Artifact, not release: this manual job builds an installable candidate
+      # for testing. The artifact build type runs the same R8 rules, resource
+      # shrinking, and 16 KB alignment as release, but is debug-signed under
+      # com.bepinex.android.artifact. Only the tag workflow builds and signs the
+      # release variant with the release key.
+      - name: Gradle build artifact APK
         working-directory: launcher
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleArtifact --no-daemon
 
       - name: zipalign 16k check & fix
         working-directory: launcher
         run: |
-          APK=app/build/outputs/apk/release/app-release.apk
+          APK=app/build/outputs/apk/artifact/app-artifact.apk
           ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
           "$ZIPALIGN" -v -c -P 16 4 "$APK" > zipalign.log 2>&1 || true
           cat zipalign.log
           if ! "$ZIPALIGN" -c -P 16 4 "$APK"; then
-            "$ZIPALIGN" -f -v -P 16 4 "$APK" app/build/outputs/apk/release/app-release-aligned.apk
+            "$ZIPALIGN" -f -v -P 16 4 "$APK" app/build/outputs/apk/artifact/app-artifact-aligned.apk
           else
-            cp "$APK" app/build/outputs/apk/release/app-release-aligned.apk
+            cp "$APK" app/build/outputs/apk/artifact/app-artifact-aligned.apk
           fi
 
       # The zip's local headers and central directory must agree. Incremental
@@ -260,7 +257,7 @@ jobs:
       - name: The packaged APK has no duplicate zip entries
         working-directory: launcher
         run: |
-          ../scripts/verify_apk_entries.sh app/build/outputs/apk/release/app-release-aligned.apk
+          ../scripts/verify_apk_entries.sh app/build/outputs/apk/artifact/app-artifact-aligned.apk
 
       # The same gate again, now that an APK exists.
       #
@@ -283,7 +280,7 @@ jobs:
         run: |
           ( cd launcher/app/src/main/jniLibs/arm64-v8a && sha256sum *.so ) > apk-native.sha256
           sha256sum launcher/app/src/main/assets/*.zip >> apk-native.sha256
-          sha256sum launcher/app/build/outputs/apk/release/app-release-aligned.apk >> apk-native.sha256
+          sha256sum launcher/app/build/outputs/apk/artifact/app-artifact-aligned.apk >> apk-native.sha256
           cat apk-native.sha256
 
       # Source SBOM in SPDX 2.3: what upstream went into this APK, not what
@@ -292,21 +289,21 @@ jobs:
       # construction — the file is written here, from this commit, every run.
       # Attested together with the APK below, so the statement covers both the
       # artifact and its dependency list. A consumer that wants a built-artifact
-      # inventory instead can run `syft app-release-aligned.apk -o spdx-json`;
+      # inventory instead can run `syft app-artifact-aligned.apk -o spdx-json`;
       # the two documents compose rather than replace each other.
       - name: Generate the source SBOM
         run: |
           python3 scripts/generate_sbom.py --output sbom.spdx.json
           sha256sum sbom.spdx.json | tee -a apk-native.sha256
 
-      # Attest the shipping APK itself, not just its inputs.
+      # Attest the candidate APK itself, not just its inputs.
       #
       # Every attestation above describes a file that goes *into* the APK. That
       # leaves the gap this repository has already measured: AGP strips
       # libdobby.so, libpine.so and libc++_shared.so while packaging, so the bytes
       # inside the APK are not the bytes those attestations cover. The gate in
       # scripts/verify_attestation.sh speaks about "inputs to packaging", and
-      # until now nothing attested the artifact a user actually installs.
+      # until now nothing attested the artifact a tester actually installs.
       #
       # Attested AFTER zipalign so the statement covers the final aligned file
       # that is uploaded. Attesting the pre-align APK would leave the shipped
@@ -321,24 +318,24 @@ jobs:
       # itself in the same run. The value is that the uploaded APK carries a
       # statement naming this repository, this workflow and this commit, so any
       # later gate or a human can run
-      # `gh attestation verify app-release-aligned.apk --repo ...`.
+      # `gh attestation verify app-artifact-aligned.apk --repo ...`.
       #
       # attestations: write is needed here for this step; the three producers
       # mint the per-input statements that the earlier gate consumed.
-      - name: Attest the shipping APK
+      - name: Attest the candidate APK
         uses: ./.github/actions/attest-inputs
         with:
-          bundle-output: launcher-apk.attestation.json
+          bundle-output: launcher-artifact.attestation.json
           paths: |
-            launcher/app/build/outputs/apk/release/app-release-aligned.apk
+            launcher/app/build/outputs/apk/artifact/app-artifact-aligned.apk
             sbom.spdx.json
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: launcher-apk-aligned
+          name: launcher-artifact-aligned
           path: |
-            launcher/app/build/outputs/apk/release/app-release-aligned.apk
-            launcher-apk.attestation.json
+            launcher/app/build/outputs/apk/artifact/app-artifact-aligned.apk
+            launcher-artifact.attestation.json
             apk-native.sha256
             sbom.spdx.json
           retention-days: 1

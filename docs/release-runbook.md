@@ -1,6 +1,6 @@
 # Release Runbook
 
-Target process for Release Contract v1 (ADR-0016 through ADR-0018). The signing, versioning, and preflight automation lands in the follow-up PRs referenced in the contract PR.
+Target process for Release Contract v1 (ADR-0016 through ADR-0018). Signing, versioning, tag release, and preflight are implemented; stable promotion and repository settings follow in the rollout.
 
 ## Release invariants
 
@@ -44,7 +44,7 @@ git push origin vX.Y.Z
 gh run watch --workflow=release-tag.yml
 ```
 
-The `release-tag` preflight must pass before the build: tag format, `main` ancestry, `verified` coverage, monotonic version, and release-key secrets. `ship-release` uses `gh release create --verify-tag`, so it cannot create the tag implicitly.
+The `release-tag` preflight must pass before the build: tag format, `main` ancestry, `verified` coverage, monotonic version, release-key secrets, and the key certificate fingerprint. `ship-release` uses `gh release create --verify-tag`, so it cannot create the tag implicitly. Every tag release starts as a GitHub pre-release; stable promotion is a separate step.
 
 ## Verify the release
 
