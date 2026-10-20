@@ -62,6 +62,15 @@ check "release-tag passes the preflight tag from the environment" \
 check "release-tag does not interpolate the tag into run" \
     bash -c '! grep -q "release_preflight.sh \"\${{ github.ref_name }}\"" "$1"' _ "$WF_RELEASE"
 check "release-tag passes the tag version to Gradle" grep -q "bepinex.versionName" "$WF_RELEASE"
+# zipalign rewrites the archive and invalidates the v2/v3 signature AGP just
+# applied. Signing must happen after alignment, and the build must prove the
+# signer before the APK can reach the shipping job.
+check "release-tag aligns before signing" \
+    bash -c 'z=$(grep -n "ZIPALIGN" "$1" | head -1 | cut -d: -f1); a=$(grep -n "apksigner.*sign" "$1" | head -1 | cut -d: -f1); [ -n "$z" ] && [ -n "$a" ] && [ "$a" -gt "$z" ]' _ "$WF_RELEASE"
+check "release-tag verifies the release signer" \
+    grep -q 'verify --print-certs' "$WF_RELEASE"
+check "release-tag compares the signer with the release certificate" \
+    grep -q 'provenance/release-cert.sha256' "$WF_RELEASE"
 # The uploaded path is nested under the repository root, so the ship job must
 # be told the same path; the flat default cannot find it after download.
 check "release-tag passes the nested APK path to the ship job" \

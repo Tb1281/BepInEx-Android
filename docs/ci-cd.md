@@ -144,14 +144,19 @@ The preflight emits `version_name`, `version_code`, `is_prerelease`, and the
 materialized `keystore_path`. Gradle receives the tag-derived version and
 independently rejects a mismatched handoff; the release build type refuses to
 run without the key and version, so there is no debug-key fallback. The job
-builds `app-release-aligned.apk` under `com.bepinex.android`, checks zip
-entries and 16 KB alignment, generates the SBOM with the tag version, emits
-`provenance.json`, and uploads `tag-ship-inputs`. An `always()` step removes
-the materialized keystore even when the build fails. This job intentionally
-does not use a Gradle cache: it is the one job that handles the release key,
-and the contract keeps it free of restore/save paths. The job then calls
-`ship-release.yml` with `prerelease: true`: every tag release starts as a
-GitHub pre-release, and stable promotion is a separate step.
+builds `app-release-aligned.apk` under `com.bepinex.android`, aligns it with
+`zipalign`, then re-signs with `apksigner`: zipalign rewrites the archive and
+invalidates the v2/v3 signature Gradle applied, so signing must follow
+alignment. A build gate runs `apksigner verify --print-certs` and compares the
+signer with `provenance/release-cert.sha256` before the APK can be uploaded.
+The job also checks zip entries and 16 KB alignment, generates the SBOM with
+the tag version, emits `provenance.json`, and uploads `tag-ship-inputs`. An
+`always()` step removes the materialized keystore even when the build fails.
+This job intentionally does not use a Gradle cache: it is the one job that
+handles the release key, and the contract keeps it free of restore/save paths.
+The job then calls `ship-release.yml` with `prerelease: true`: every tag
+release starts as a GitHub pre-release, and stable promotion is a separate
+step.
 
 ### `ship-release.yml`
 

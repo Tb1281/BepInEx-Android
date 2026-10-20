@@ -100,7 +100,9 @@ The `release-tag` preflight must pass before the build: tag format, `main`
 ancestry, `verified` coverage, monotonic version, duplicate stable-release
 rejection, release-key secrets, and the key certificate fingerprint.
 `ship-release` uses `gh release create --verify-tag`, so it cannot create the
-tag implicitly. Every tag release starts as a GitHub pre-release.
+tag implicitly. The build aligns with `zipalign`, re-signs with `apksigner`,
+and verifies the APK signer against `provenance/release-cert.sha256` before the
+ship job can run. Every tag release starts as a GitHub pre-release.
 
 ## Verify the release
 
