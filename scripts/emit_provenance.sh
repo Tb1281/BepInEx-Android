@@ -13,9 +13,9 @@
 # what went into them.
 #
 # This writes that record next to the artifacts (build-bepinex.yml attests it
-# alongside BepInEx.Android.zip; sync-upstream.yml ships it in the release).
-# It is informational: a missing tool degrades a field to "unknown" instead
-# of failing the build. The enforcement stays in the gates.
+# alongside BepInEx.Android.zip; sync-upstream.yml uploads it in the CI
+# artifact). It is informational: a missing tool degrades a field to "unknown"
+# instead of failing the build. The enforcement stays in the gates.
 #
 # Usage:
 #   emit_provenance.sh [output-file]   (default: stdout)

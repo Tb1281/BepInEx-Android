@@ -73,7 +73,14 @@ check "release-tag declares the release environment" \
 # The release job is the one job with the key. A cache restore/save path there
 # is a second state channel into that job; the contract keeps it absent.
 check_absent "release-tag does not use the Gradle cache" "actions/cache" "$WF_RELEASE"
+check_absent "release-tag trigger does not match verified" "v\\*'$" "$WF_RELEASE"
+check_absent "release-tag is not branch-triggered" "^    branches:" "$WF_RELEASE"
+check_absent "release-tag is not manually dispatched" "^  workflow_dispatch:" "$WF_RELEASE"
 check_absent "ship-release does not get the release environment" "environment: release" "$WF_SHIP"
+check "ship-release is reusable only" grep -q "^  workflow_call:" "$WF_SHIP"
+check_absent "ship-release is not push-triggered" "^  push:" "$WF_SHIP"
+check_absent "ship-release is not release-triggered" "^  release:" "$WF_SHIP"
+check_absent "ship-release has no release key" "secrets.RELEASE_" "$WF_SHIP"
 
 # The shipping path publishes the complete contract asset set and keeps the
 # tag-only creation guarantee.
@@ -137,7 +144,55 @@ done
 check_absent "non-tag workflows do not assemble release" "assembleRelease" "$WF_LAUNCHER" "$WF_SYNC"
 check_absent "no assembleDebug in workflows" "assembleDebug" "$WF_LAUNCHER" "$WF_SYNC"
 check_absent "no debug APK filename in workflows" "app-debug" "$WF_LAUNCHER" "$WF_SYNC"
+
+# The sync path is an artifact producer, not a release path. Removing the
+# release/Sigstore egress entries is part of that contract: this job neither
+# mints an attestation nor creates or uploads a release.
 check_absent "sync-upstream does not call the shipping path" "ship-release.yml" "$WF_SYNC"
+check_absent "sync-upstream has no release trigger" "^  release:" "$WF_SYNC"
+check_absent "sync-upstream is not push-triggered" "^  push:" "$WF_SYNC"
+check_absent "sync-upstream is not tag-triggered" "^    tags:" "$WF_SYNC"
+check_absent "sync-upstream does not create releases" "gh release create" "$WF_SYNC"
+check_absent "sync-upstream has no release environment" "environment: release" "$WF_SYNC"
+check_absent "sync-upstream reads no release secrets" "secrets.RELEASE_" "$WF_SYNC"
+check_absent "sync-upstream does not attest for publication" "attestations: write" "$WF_SYNC"
+check_absent "sync-upstream does not request an OIDC token" "id-token: write" "$WF_SYNC"
+check_absent "sync-upstream has no release asset endpoint" "release-assets.githubusercontent.com" "$WF_SYNC"
+check_absent "sync-upstream has no release upload endpoint" "uploads.github.com" "$WF_SYNC"
+check_absent "sync-upstream has no release helper endpoint" "cafe.github.com" "$WF_SYNC"
+check_absent "sync-upstream has no Fulcio endpoint" "fulcio.sigstore.dev" "$WF_SYNC"
+check_absent "sync-upstream has no Rekor endpoint" "rekor.sigstore.dev" "$WF_SYNC"
+check_absent "sync-upstream does not create a pre-release" "prerelease" "$WF_SYNC"
+
+# Release jobs request only the permissions they use.
+check "verify-release has read-only contents" grep -q "contents: read" "$WF_VERIFY"
+check_absent "verify-release cannot write contents" "contents: write" "$WF_VERIFY"
+check_absent "verify-release cannot attest" "attestations: write" "$WF_VERIFY"
+check_absent "verify-release cannot mint OIDC" "id-token: write" "$WF_VERIFY"
+check "promote-release writes contents for the release edit" grep -q "contents: write" "$WF_PROMOTE"
+check_absent "promote-release cannot attest" "attestations: write" "$WF_PROMOTE"
+check_absent "promote-release cannot mint OIDC" "id-token: write" "$WF_PROMOTE"
+check "ship-release writes contents" grep -q "contents: write" "$WF_SHIP"
+check "ship-release attests" grep -q "attestations: write" "$WF_SHIP"
+check "ship-release mints OIDC" grep -q "id-token: write" "$WF_SHIP"
+check_absent "ship-release cannot write issues" "issues: write" "$WF_SHIP"
+check "release-tag build has read-only contents" \
+    bash -c 'sed -n "/^  build:/,/^  ship:/p" "$1" | grep -q "contents: read"' _ "$WF_RELEASE"
+check_absent "release-tag build cannot write contents" "contents: write" \
+    <(sed -n '/^  build:/,/^  ship:/p' "$WF_RELEASE")
+check_absent "release-tag build cannot attest" "attestations: write" \
+    <(sed -n '/^  build:/,/^  ship:/p' "$WF_RELEASE")
+check_absent "release-tag build cannot mint OIDC" "id-token: write" \
+    <(sed -n '/^  build:/,/^  ship:/p' "$WF_RELEASE")
+
+# Only release-tag may read the release key. This catches a future workflow
+# that copies the secrets block without the environment boundary.
+for wf in .github/workflows/*.yml; do
+    case "$wf" in
+        *release-tag.yml) continue ;;
+    esac
+    check_absent "$(basename "$wf") reads no release secrets" "secrets.RELEASE_" "$wf"
+done
 
 # The artifact variant must inherit the release build type's shrinking so the
 # CI APK stays representative of the release bytes, while signing with debug
