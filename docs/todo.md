@@ -65,6 +65,7 @@
 - [x] Release preflight: tag on `main`, covered by `verified`, secrets present, `gh release create --verify-tag`.
 - [x] `sync-upstream` stops publishing stable releases; it produces artifacts only.
 - [x] Release notes and assets: install/upgrade, known issues, certificate fingerprint, GPL/LGPL notices, source offer.
+- [ ] Repository protections applied: `main` required checks, the `release-tags` ruleset excluding `verified`, the `release` environment restricted to `main`/`v*`, and the default workflow token read-only (`scripts/apply_repo_settings.sh --apply`).
 - [ ] `v0.0.0-rc1` end-to-end rehearsal and rollback runbook.
 - [ ] Pine license review (stable-release blocker).
 

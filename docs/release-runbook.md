@@ -1,8 +1,9 @@
 # Release Runbook
 
 Target process for Release Contract v1 (ADR-0016 through ADR-0018). Signing,
-versioning, tag release, preflight, consumer verification, and manual stable
-promotion are implemented; repository settings follow in the rollout.
+versioning, tag release, preflight, consumer verification, manual stable
+promotion, and the repository protections are implemented. Apply the settings
+with `scripts/apply_repo_settings.sh`; the script is the source of truth.
 
 ## Release invariants
 
@@ -14,7 +15,7 @@ promotion are implemented; repository settings follow in the rollout.
 
 ## One-time setup
 
-1. Create the release keystore outside the repo with `scripts/create_release_keystore.sh` (follow-up PR).
+1. The release key is already generated (2026-10-20). Keep the keystore and password files outside the repo; never commit or upload them.
 2. Register the following secrets in the `release` GitHub Environment:
    - `RELEASE_KEYSTORE_BASE64`
    - `RELEASE_KEYSTORE_PASSWORD`
@@ -22,9 +23,51 @@ promotion are implemented; repository settings follow in the rollout.
    - `RELEASE_KEY_PASSWORD`
 3. Back up the keystore and password files offline. GitHub secrets are write-only and cannot be downloaded later.
 4. Commit the public certificate and fingerprint as `provenance/release-cert.pem` and `provenance/release-cert.sha256`.
-5. Apply `scripts/apply_repo_settings.sh` (follow-up PR) to protect `main`, protect release tags, and constrain the `release` environment.
+5. Apply `scripts/apply_repo_settings.sh` to protect `main`, create the
+   `release-tags` ruleset, and constrain the `release` environment:
+
+   ```bash
+   GH_TOKEN=... GITHUB_REPOSITORY=Tb1281/BepInEx-Android \
+     ./scripts/apply_repo_settings.sh --dry-run
+   GH_TOKEN=... GITHUB_REPOSITORY=Tb1281/BepInEx-Android \
+     ./scripts/apply_repo_settings.sh --apply
+   ```
+
+   The script is idempotent and fails closed before any mutation without admin
+   permission. It also requires the four secret names above to exist, sets the
+   default workflow token read-only, and disables Actions approval of pull
+   requests. Re-run it after changing a protected branch or environment policy.
 
 The current key was generated on 2026-10-20. Its SHA-256 certificate fingerprint is `b2fe00a6a80d6e69beee4eea8e8063dc74cca6759c0fdecc2c322bf56066db73`. Treat the keystore as unrecoverable if the offline backup is lost.
+
+## Repository settings
+
+`scripts/apply_repo_settings.sh` defines the protections the release path
+depends on:
+
+- `main` requires a pull request, the `provenance` and `patch-queue` checks,
+  up-to-date branches, linear history, and conversation resolution. Force
+  pushes and deletions are blocked, administrators are included, and the
+  required approval count is zero so a solo maintainer can still merge. There
+  are no push restrictions.
+- The `release-tags` ruleset covers `refs/tags/v*` but excludes the moving
+  `refs/tags/verified`. Creation, update, and deletion are restricted; only
+  repository admins and maintainers can bypass. The `verified` tag stays
+  movable by `verify-provenance`.
+- The `release` environment accepts deployments only from the `main` branch and
+  `v*` tags. Its four release-key secret names must exist; their values are
+  never read or printed. The environment is the only place the release key is
+  available, and only the tag build declares it.
+- The default workflow token is read-only, and Actions cannot approve pull
+  requests. Release jobs opt in to the write scopes they need.
+
+Run `--dry-run` first; `--apply` is safe to repeat. Audit with:
+
+```bash
+gh api repos/Tb1281/BepInEx-Android/branches/main/protection
+gh api repos/Tb1281/BepInEx-Android/rulesets
+gh api repos/Tb1281/BepInEx-Android/environments/release
+```
 
 ## One-time upgrade from the old package
 

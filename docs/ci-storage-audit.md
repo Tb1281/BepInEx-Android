@@ -52,4 +52,9 @@ alone (accepted data cost, not a regression).
 Release jobs declare permissions explicitly. The `patch-queue` job uses the
 repository default, which is read-only; no job inherits a write default. The
 `release` environment is the only place the release key is available, and only
-`release-tag:build` declares it.
+`release-tag:build` declares it. `scripts/apply_repo_settings.sh` is the source
+of truth for the surrounding controls: `main` requires the `provenance` and
+`patch-queue` checks plus a pull request; the `release-tags` ruleset covers
+`refs/tags/v*` but excludes the moving `refs/tags/verified`; the `release`
+environment accepts only `main` and `v*`; and the default workflow token is
+read-only.

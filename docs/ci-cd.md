@@ -294,8 +294,15 @@ loudly instead of building silently against the wrong tree.
   or attestation; `release-tag` also passes the tag-derived
   `BEPINEX_VERSION_NAME`/`BEPINEX_VERSION_CODE`, which the generator prefers
   over the development defaults.
-- **Branch protection.** `main` should require `verify-provenance` to pass.
-  Without it, push access bypasses every check above in a single commit.
+- **Branch protection.** `scripts/apply_repo_settings.sh` makes `main` require
+  the `provenance` and `patch-queue` checks, a pull request, up-to-date
+  branches, linear history, and conversation resolution. Force pushes and
+  deletions are blocked, administrators are included, and the required
+  approval count is zero so a solo maintainer can merge. The same script
+  creates the `release-tags` ruleset (`refs/tags/v*`, excluding
+  `refs/tags/verified`), restricts the `release` environment to `main` and
+  `v*` tags, checks the four secret names, and sets the default workflow token
+  read-only. The runbook has the dry-run/apply commands.
 - **Rolling failure notifications.** Scheduled workflows, the tag build,
   consumer verification, and manual promotion report failures via
   `scripts/ci_failure_notice.sh`, which opens or updates one rolling
