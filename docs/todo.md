@@ -55,6 +55,19 @@
 
 ## Next Steps
 
+### Priority 0: Release Contract v1 [IN PROGRESS]
+
+- [x] Release contract documented: GitHub Releases only, stable requires build/release/device verification, tag-only releases (ADR-0016 through ADR-0018).
+- [x] Release key generated and registered in the `release` GitHub Environment (2026-10-20).
+- [ ] Offline backup of the release key confirmed by the maintainer.
+- [ ] Release signing and application-ID migration; release build fails closed without the release key.
+- [ ] Tag-derived `versionCode`/`versionName`, monotonic version check, and `v[0-9]*` trigger.
+- [ ] Release preflight: tag on `main`, covered by `verified`, secrets present, `gh release create --verify-tag`.
+- [ ] `sync-upstream` stops publishing stable releases; it produces artifacts only.
+- [ ] Release notes and assets: install/upgrade, known issues, certificate fingerprint, GPL/LGPL notices, source offer.
+- [ ] `v0.0.0-rc1` end-to-end rehearsal and rollback runbook.
+- [ ] Pine license review (stable-release blocker).
+
 ### Priority 1: Trust
 
 - [x] Sigstore/Rekor attestation on all release artifacts (2026-10-14): repo is public and every producer attests officially — verified same-day across runtime, hook engines, managed framework, sync APK, and shipping APK (`Attestation signed using certificate from Public Good Sigstore instance`; consumer gate reports `Sigstore bundle` on all 12 inputs, no fallbacks). SBOM published alongside the APK on both release paths.

@@ -2,6 +2,8 @@
 
 ## 1. Architectural Decision Records (ADRs)
 
+> ADR-0001 through ADR-0015 are listed below. New decisions (ADR-0016+) live in [`docs/adr/`](adr/README.md).
+
 ### ADR 1: Official Microsoft .NET Runtime Pack vs. Source Cross-Compilation
 
 - Context: cross-compiling CoreCLR from source took hours, needed host packages, and risked mixing runtime-identifier assemblies.
