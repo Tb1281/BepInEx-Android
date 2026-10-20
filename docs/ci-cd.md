@@ -310,7 +310,9 @@ loudly instead of building silently against the wrong tree.
   creates the `release-tags` ruleset (`refs/tags/v*`, excluding
   `refs/tags/verified`), restricts the `release` environment to `main` and
   `v*` tags, checks the four secret names, and sets the default workflow token
-  read-only. The runbook has the dry-run/apply commands.
+  read-only. It also allows Actions to create the sync pull request; no
+  workflow approves pull requests, and the required approval count is zero. The
+  runbook has the dry-run/apply commands.
 - **Rolling failure notifications.** Scheduled workflows, the tag build,
   consumer verification, and manual promotion report failures via
   `scripts/ci_failure_notice.sh`, which opens or updates one rolling
