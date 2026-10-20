@@ -287,20 +287,20 @@ done
 
 # 5. If a built APK is around, confirm the descriptors actually landed in a dex.
 #
-# This checks the RELEASE apk, not the debug one. The debug apk is not what ships,
-# and it is not even minified with the project's own rules - proguardFiles is
-# declared only on the release build type, so turning on isMinifyEnabled for debug
-# runs R8 with none of proguard-rules.pro. That is not hypothetical: doing it
-# strips DotnetX509KeyManager's constructor and the only thing that noticed was
-# this check, pointed at the wrong artifact.
+# This checks the RELEASE apk first, then the artifact apk, then the debug one.
+# The debug apk is not what ships and does not enable minification by default,
+# so it is the least useful input. That is not hypothetical: a minified debug
+# build once stripped DotnetX509KeyManager's constructor and the only thing that
+# noticed was this check, pointed at the wrong artifact.
 #
-# Release is preferred, then debug, so a build that only has one of the two still
-# gets inspected. Release first because that is the one that ships.
+# Release first because that is the one that ships; artifact second because it
+# is the CI candidate that carries the same R8 rules; debug last as a fallback.
 echo ""
 echo "[5/5] Built APK..."
 APK=""
 for candidate in \
     "${ROOT_DIR}/app/build/outputs/apk/release/app-release.apk" \
+    "${ROOT_DIR}/app/build/outputs/apk/artifact/app-artifact.apk" \
     "${ROOT_DIR}/app/build/outputs/apk/debug/app-debug.apk"
 do
     if [ -f "$candidate" ]; then

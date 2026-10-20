@@ -386,6 +386,13 @@ jobs:
       - name: Drift notices update one rolling issue
         run: ./scripts/test_pin_drift_notice.sh
 
+      # The tag path's gate is the only thing between a pushed tag and a
+      # release. Its failure directions are what matter: a tag off main, a
+      # commit the verified gate never saw, a reused version, or a substituted
+      # key must each stop the build. git, gh and keytool are stubbed.
+      - name: The release preflight closes on bad tags, coverage, versions, and keys
+        run: ./scripts/test_release_preflight.sh
+
       # The release page is the one artifact surface no gate above touches:
       # producers attest, the shipping path checks inputs, but nobody ever
       # verified the published APK as a consumer would. verify_release_assets.sh

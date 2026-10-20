@@ -1,8 +1,8 @@
 name: ship-release
 # Shared shipping path for every release kind: attest the APK+SBOM+provenance,
 # write the checksum manifest, compose the release notes, and `gh release
-# create`. Called by sync-upstream (automated upstream-sync releases) and
-# release-tag (tag-based general releases).
+# create`. Currently called by release-tag (tag-based general releases); the
+# sync-upstream path produces CI artifacts only and never reaches this file.
 #
 # This is a called workflow — not steps in the caller — because the shipping
 # path is identical for every release kind; the only differences (tag format,
@@ -18,7 +18,7 @@ on:
   workflow_call:
     inputs:
       tag_name:
-        description: 'Release tag to create (e.g. sync-20261015-abc1234 or v1.2.3)'
+        description: 'Release tag to create (e.g. v1.2.3); sync builds are CI artifacts, not releases'
         required: true
         type: string
       release_title:
@@ -42,6 +42,11 @@ on:
         description: 'Name of the artifact the caller uploaded holding the APK, SBOM and provenance'
         required: true
         type: string
+      prerelease:
+        description: 'Create the release as a GitHub pre-release; stable promotion is a separate step'
+        required: false
+        type: boolean
+        default: true
       apk_path:
         description: 'Path of the aligned APK inside the downloaded artifact'
         required: false
@@ -71,8 +76,8 @@ jobs:
       attestations: write  # mint the APK+SBOM+provenance attestation
       id-token: write
     steps:
-      # Block egress; the allow-list is the release half of the
-      # sync-upstream map: checkout (github.com, codeload), artifact download
+      # Block egress; the allow-list is the release half of the release-tag
+      # map: checkout (github.com, codeload), artifact download
       # (actions hosts, blob storage), the release API and asset upload
       # (api.github.com, uploads.github.com, cafe.github.com — all three hit
       # by `gh release create`), and the Sigstore Public Good instance the
@@ -126,6 +131,7 @@ jobs:
           SBOM_PATH: ${{ inputs.sbom_path }}
           PROV_PATH: ${{ inputs.provenance_path }}
           BUNDLE_NAME: ${{ inputs.attestation_bundle_name }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
           SHA="$(sha256sum "$APK_PATH" | awk '{print $1}')"
@@ -147,6 +153,14 @@ jobs:
             printf '\n### 🔏 Attestation\n`%s` binds this repository, this workflow\nrun and this commit to the APK and SBOM bytes above. Verify with:\n```\ngh attestation verify %s --repo %s\n```\n' "$BUNDLE_NAME" "$APK_BASENAME" "$GITHUB_REPOSITORY"
             printf '(On a private repository the bundle is the fallback CI provenance\nstatement; it becomes a Sigstore attestation automatically if the\nrepository is made public.)\n'
           } > ../release-notes.md
+          EXTRA_ARGS=()
+          if [ "$PRERELEASE" = "true" ]; then
+            EXTRA_ARGS+=(--prerelease)
+          fi
+          # --verify-tag makes the tag the only way to create this release: if
+          # the tag is missing, gh fails instead of creating it implicitly.
           gh release create "$TAG_NAME" "$APK_PATH" "$APK_PATH.sha256" "$SBOM_PATH" "$PROV_PATH" "$BUNDLE_NAME" \
             --title "$RELEASE_TITLE" \
-            --notes-file ../release-notes.md
+            --notes-file ../release-notes.md \
+            --verify-tag \
+            "${EXTRA_ARGS[@]}"

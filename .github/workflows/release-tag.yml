@@ -1,7 +1,9 @@
 name: release-tag
-# Tag-based general releases: push a `v*` tag and this builds the full
-# release APK from the pinned sources at that tag, then ships it through the
-# shared shipping path (ship-release.yml).
+# Tag-based general releases: push a `vMAJOR.MINOR.PATCH` tag and this builds
+# the full release APK from the pinned sources at that tag, then ships it
+# through the shared shipping path (ship-release.yml). The narrower trigger is
+# deliberate: `v*` also matched the moving `verified` tag, which must never
+# start a release.
 #
 # Unlike sync-upstream there is no upstream-pin movement detection here — a
 # tag is an explicit human decision to cut a release from exactly this
@@ -10,11 +12,14 @@ name: release-tag
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]*'
 
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # The release key lives here. Jobs that never read it (the ship job below)
+    # deliberately do not declare this environment.
+    environment: release
     permissions:
       contents: read
       issues: write        # scripts/ci_failure_notice.sh only
@@ -51,6 +56,11 @@ jobs:
             jitpack.io
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # The preflight proves the tag commit is an ancestor of remote main
+          # and covered by the remote `verified` tag; both need the full graph.
+          fetch-depth: 0
+          fetch-tags: true
 
       # No download caches — see build-bepinex.yml for why (323 MB vs the
       # private 500 MB quota blocked verification the day they were added).
@@ -63,6 +73,23 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+
+      # Gate before the expensive build: tag grammar, tag on remote main,
+      # coverage by the remote verified tag, monotonic version, release key
+      # present, and the key's certificate matching the committed fingerprint.
+      # The materialized keystore is consumed by the Gradle step below and
+      # removed by the always() cleanup step.
+      - name: Release preflight
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          PREFLIGHT_KEYSTORE_OUT: ${{ runner.temp }}/release.keystore
+        run: ./scripts/release_preflight.sh "${{ github.ref_name }}"
 
       # Same Gradle cache as build-launcher-apk.yml: public repository, 10 GB
       # quota. Keyed on the dependency inputs (see that workflow for why the
@@ -135,14 +162,23 @@ jobs:
           ./scripts/verify_ndk_libcxx.sh
 
       # Release, not debug: a tag release is a distributable artifact, so it
-      # gets the R8 + resource-shrunk build (see build-launcher-apk.yml for
-      # why). Signing still uses the debug keystore.
+      # gets the R8 + resource-shrunk build. The release build type refuses to
+      # run without the preflight's materialized key and tag-derived version.
       - name: Assemble and 16KB-align release APK
         working-directory: launcher
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ steps.preflight.outputs.keystore_path }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          BEPINEX_VERSION_NAME: ${{ steps.preflight.outputs.version_name }}
+          BEPINEX_VERSION_CODE: ${{ steps.preflight.outputs.version_code }}
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon \
+            -Pbepinex.versionName="$BEPINEX_VERSION_NAME" \
+            -Pbepinex.versionCode="$BEPINEX_VERSION_CODE"
           APK="app/build/outputs/apk/release/app-release.apk"
           OUT="app/build/outputs/apk/release/app-release-aligned.apk"
           ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
@@ -156,11 +192,14 @@ jobs:
           ../scripts/verify_apk_entries.sh app/build/outputs/apk/release/app-release-aligned.apk
 
       # Source SBOM for this release: same generator the sync path uses, so a
-      # tag release and a sync release describe the same pins. Its own step
+      # tag release and a sync artifact describe the same pins. Its own step
       # (not inside the ship job) because the attestation there covers both
       # files — attesting before the SBOM exists would sign the APK next to
       # nothing.
       - name: Generate the source SBOM
+        env:
+          BEPINEX_VERSION_NAME: ${{ steps.preflight.outputs.version_name }}
+          BEPINEX_VERSION_CODE: ${{ steps.preflight.outputs.version_code }}
         run: python3 scripts/generate_sbom.py --output sbom.spdx.json
 
       # As-built record for this release: the upstream pin, the patched-tree
@@ -180,6 +219,16 @@ jobs:
             sbom.spdx.json
             provenance.json
           retention-days: 1
+
+      # The key materialized by the preflight must not outlive the job, even
+      # when the build fails. The path is empty when the preflight failed
+      # before emitting it, so guard the rm.
+      - name: Remove the materialized release keystore
+        if: always()
+        run: |
+          if [ -n "${{ steps.preflight.outputs.keystore_path }}" ]; then
+            rm -f -- "${{ steps.preflight.outputs.keystore_path }}"
+          fi
 
       # Record failure to Issue or close open issue on success
       - name: Record the failure, or clear the record
@@ -209,4 +258,10 @@ jobs:
       notes_extra: |-
         - **Version:** `${{ github.ref_name }}`
         - **Build:** release (R8 minification + resource shrinking)
+        - **State:** pre-release until release verification and device verification are recorded
       artifact_name: tag-ship-inputs
+      # actions/upload-artifact keeps the least-common ancestor of the uploaded
+      # paths, which is the repository root here. The downloaded artifact
+      # therefore holds the APK at its build path, not at the artifact root.
+      apk_path: launcher/app/build/outputs/apk/release/app-release-aligned.apk
+      prerelease: true
