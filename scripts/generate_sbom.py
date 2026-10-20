@@ -145,19 +145,24 @@ def created_timestamp():
 
 
 def parse_gradle_app_version(launcher_dir):
-    version_name = "unknown"
-    version_code = "unknown"
+    # The release workflow passes the tag-derived version explicitly, because
+    # the Gradle build overrides it from -P properties. Fall back to the
+    # development defaults declared in the build file for artifact builds.
+    version_name = os.environ.get("BEPINEX_VERSION_NAME", "").strip() or "unknown"
+    version_code = os.environ.get("BEPINEX_VERSION_CODE", "").strip() or "unknown"
     namespace = "com.bepinex.android"
     path = os.path.join(launcher_dir, "app", "build.gradle.kts")
     try:
         with open(path, "r", encoding="utf-8") as fp:
             text = fp.read()
-        m = re.search(r'versionName\s*=\s*"([^"]+)"', text)
-        if m:
-            version_name = m.group(1)
-        m = re.search(r'versionCode\s*=\s*(\d+)', text)
-        if m:
-            version_code = m.group(1)
+        if version_name == "unknown":
+            m = re.search(r'val\s+defaultVersionName\s*=\s*"([^"]+)"', text)
+            if m:
+                version_name = m.group(1)
+        if version_code == "unknown":
+            m = re.search(r'val\s+defaultVersionCode\s*=\s*(\d+)', text)
+            if m:
+                version_code = m.group(1)
         m = re.search(r'namespace\s*=\s*"([^"]+)"', text)
         if m:
             namespace = m.group(1)
