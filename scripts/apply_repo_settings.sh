@@ -115,17 +115,17 @@ admin="$(get "repos/$REPO" '.permissions.admin')" \
 # in verify-provenance.yml that must pass before main can merge. Requiring the
 # workflow name itself would leave every pull request pending forever.
 #
+# Send only `contexts`, not `checks`. The API rejects a payload that carries
+# both arrays (422, "more than one subschema matched"); `contexts` is the
+# accepted form and does not require hard-coding an app id.
+#
 # A pull request is required, but a solo maintainer must be able to merge it:
 # GitHub forbids self-approval, so the required approval count is zero.
 BRANCH_BODY="$(cat <<'JSON'
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["provenance", "patch-queue"],
-    "checks": [
-      {"context": "provenance"},
-      {"context": "patch-queue"}
-    ]
+    "contexts": ["provenance", "patch-queue"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {
