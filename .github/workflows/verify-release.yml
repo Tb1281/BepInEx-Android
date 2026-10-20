@@ -1,16 +1,17 @@
 name: verify-release
 on:
   # Every published release is consumer-verified automatically: download what
-  # a user would download and check it the way a user should (checksum, then
-  # the Sigstore statement for the APK). An attestation nobody verifies is a
-  # sticker; a release job that uploaded a stale APK would otherwise look
-  # identical to a good one from the releases page.
+  # a user would download and check the full asset set, the checksum, the
+  # Sigstore statement, the signing certificate, and the stable/pre-release
+  # state. An attestation nobody verifies is a sticker; a release job that
+  # uploaded a stale APK would otherwise look identical to a good one from the
+  # releases page.
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to consumer-verify (e.g. sync-20261014-5b766a3)'
+        description: 'Release tag to consumer-verify (e.g. v1.2.3)'
         required: true
         type: string
 
@@ -23,20 +24,39 @@ jobs:
     steps:
       # Egress audit on every job (see sync-upstream.yml): records, never
       # blocks. This job talks to the release API, Rekor/TUF (via gh
-      # attestation verify), and the issue API on failure - all measured
-      # here before any block pilot is ever considered for it.
+      # attestation verify), the Android SDK host (apksigner install), and the
+      # issue API on failure - all measured here before any block pilot is
+      # ever considered for it.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
         with:
           egress-policy: audit
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # Verify with the repository's current verifier and trust anchor, not
+          # with whatever script the release tag happens to contain. The assets
+          # under test are downloaded from the release by tag.
+          ref: ${{ github.event.repository.default_branch }}
+
+      # apksigner is not on the runner image. Install the same build-tools
+      # major the release uses, then put its bin directory on PATH.
+      - name: Install apksigner from pinned build-tools
+        run: |
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "ANDROID_HOME is not set; cannot install apksigner." >&2
+            exit 1
+          fi
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "build-tools;35.0.0" 2>&1 | tail -1
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
 
       - name: Consumer-verify the published assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${{ github.event.release.tag_name || inputs.tag }}"
-          ./scripts/verify_release_assets.sh "$TAG"
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: ./scripts/verify_release_assets.sh "$RELEASE_TAG"
 
       # Record failure to Issue or close open issue on success
       - name: Record the failure, or clear the record

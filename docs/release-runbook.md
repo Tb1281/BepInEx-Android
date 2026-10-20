@@ -1,12 +1,14 @@
 # Release Runbook
 
-Target process for Release Contract v1 (ADR-0016 through ADR-0018). Signing, versioning, tag release, and preflight are implemented; stable promotion and repository settings follow in the rollout.
+Target process for Release Contract v1 (ADR-0016 through ADR-0018). Signing,
+versioning, tag release, preflight, consumer verification, and manual stable
+promotion are implemented; repository settings follow in the rollout.
 
 ## Release invariants
 
 - A release is a GitHub Release asset, never a git commit.
 - A stable release requires build-verified, release-verified, and device-verified.
-- Only `vMAJOR.MINOR.PATCH` tags on `main` create releases.
+- Only `vMAJOR.MINOR.PATCH` and `vMAJOR.MINOR.PATCH-<label>.<number>` tags on `main` create releases.
 - The private release key never enters git or a release asset.
 - `sync-upstream` artifacts are not releases.
 
@@ -26,15 +28,14 @@ The current key was generated on 2026-10-20. Its SHA-256 certificate fingerprint
 
 ## One-time upgrade from the old package
 
-The first contract release installs as `com.bepinex.android` signed by the release key. Uninstall `com.bepinex.android.release` and any old debug install at `com.bepinex.android` once before installing it. Android treats the old signatures as different identities, so an in-place update is not possible; app data is not migrated.
+The first contract release installs as `com.bepinex.android` signed by the release key. Uninstall `com.bepinex.android.release` and any old debug install at `com.bepinex.android` once before installing it. Android treats the old signatures as different identities, so an in-place update is not possible; app data is not migrated. Later releases signed by the same key install over the previous release.
 
 ## Pre-release checklist
 
 - [ ] `main` is green on `verify-provenance`.
 - [ ] The release commit is covered by the `verified` tag.
-- [ ] The tag is `vX.Y.Z` and `versionCode` is greater than the highest stable tag on the remote.
+- [ ] The tag is a valid release tag; a stable release's version is above the highest stable tag on the remote, and a pre-release base is above the last stable base.
 - [ ] Changelog and known issues are updated. The Tower RTDB issue is listed if still open.
-- [ ] The Pine license review is closed; it is a stable-release blocker.
 - [ ] Release notes include install/upgrade, supported matrix, checksums, certificate fingerprint, and license/source links.
 - [ ] Repository protections and the `release` environment policy are applied.
 
@@ -48,30 +49,81 @@ git push origin vX.Y.Z
 gh run watch --workflow=release-tag.yml
 ```
 
-The `release-tag` preflight must pass before the build: tag format, `main` ancestry, `verified` coverage, monotonic version, release-key secrets, and the key certificate fingerprint. `ship-release` uses `gh release create --verify-tag`, so it cannot create the tag implicitly. Every tag release starts as a GitHub pre-release; stable promotion is a separate step.
+The `release-tag` preflight must pass before the build: tag format, `main`
+ancestry, `verified` coverage, monotonic version, duplicate stable-release
+rejection, release-key secrets, and the key certificate fingerprint.
+`ship-release` uses `gh release create --verify-tag`, so it cannot create the
+tag implicitly. Every tag release starts as a GitHub pre-release.
 
 ## Verify the release
 
 ```bash
+export GITHUB_REPOSITORY=Tb1281/BepInEx-Android
 scripts/verify_release_assets.sh vX.Y.Z
+```
+
+The script downloads what a user downloads and checks the complete asset set,
+the checksum manifest, the Sigstore bundle, the APK signer certificate against
+the repository trust anchor `provenance/release-cert.sha256`, the published
+certificate and fingerprint against the same anchor, and the GitHub Release
+state. It needs `gh`, `apksigner`, and `openssl` on `PATH`; `verify-release.yml`
+installs `build-tools;35.0.0` and runs this automatically on every published
+release, pre-release included.
+
+A normal run accepts a pre-release. Use `--require-stable` only after
+promotion. For a manual second opinion:
+
+```bash
 gh attestation verify app-release-aligned.apk --repo Tb1281/BepInEx-Android
 apksigner verify --print-certs app-release-aligned.apk
 ```
 
-Compare the certificate SHA-256 with the published fingerprint. Then install on the device matrix and record the results in the release issue. Mark the release stable only after device verification.
+Compare the certificate SHA-256 with `release-cert.sha256`, with the
+fingerprint in the release notes, and with `provenance/release-cert.sha256` in
+the repository.
+
+## Promote the release
+
+Device verification is recorded in the release issue using the matrix in
+`docs/progress.md`. Promotion is blocked while the Pine license review or any
+matrix row is unresolved.
+
+```bash
+gh workflow run promote-release.yml \
+  -f tag=vX.Y.Z \
+  -f device_verification=recorded
+gh run watch --workflow=promote-release.yml
+```
+
+The workflow has no release key and cannot build. It installs the pinned
+build-tools for `apksigner`, runs the `--verify-only` preflight, requires a
+stable tag and the explicit device-verification confirmation,
+consumer-verifies the pre-release, clears the pre-release flag, and verifies
+again with `--require-stable`. If the post-check fails it restores the
+pre-release flag and fails the run.
+
+Confirm afterwards:
+
+```bash
+gh release view vX.Y.Z --json isPrerelease --jq .isPrerelease       # false
+scripts/verify_release_assets.sh --require-stable vX.Y.Z
+```
 
 ## Rollback
 
-- **Bad but not malicious**: edit the release, mark it pre-release, and publish an advisory in the release notes and a tracking issue. Do not delete the tag; publish a fixed patch release.
+- **Bad but not malicious**: mark the release pre-release, publish an advisory in the release notes and a tracking issue, and cut a fixed patch release. Do not delete the tag.
+  ```bash
+  gh release edit vX.Y.Z --prerelease
+  ```
 - **Malicious or compromised**: delete the release assets, publish an advisory, and rotate the key. Rotation requires a new applicationId or every user uninstalling and reinstalling.
 - **Key loss**: existing users cannot update. Publish the recovery procedure (new applicationId or reinstall).
 
 ## Known issues
 
 - **The Tower**: the production Firebase RTDB path still aborts in `DeleteInternal` on the pinned Firebase C++ SDK. See `docs/release-crash-investigation.md`. Publish as a known issue until resolved.
-- **Pine license**: the GPL-3.0 launcher and Anti-996 Pine compatibility review is unresolved. Stable releases are blocked until it closes.
+- **Pine license**: the GPL-3.0 launcher and Anti-996 Pine compatibility review is unresolved. Stable promotion is blocked until it closes.
 
-## Assets expected on a stable release
+## Assets expected on a release
 
 - `app-release-aligned.apk`
 - `app-release-aligned.apk.sha256`
@@ -80,4 +132,7 @@ Compare the certificate SHA-256 with the published fingerprint. Then install on 
 - `apk.attestation.json`
 - `LICENSE`
 - `THIRDPARTY_NATIVE.md`
-- `release-cert.pem` and `release-cert.sha256` (or a link to them)
+- `release-cert.pem`
+- `release-cert.sha256`
+
+`scripts/verify_release_assets.sh` requires all nine and fails if any is missing.
