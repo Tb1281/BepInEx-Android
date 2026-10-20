@@ -74,6 +74,7 @@ jobs:
       contents: write      # GitHub Release creation
       attestations: write  # mint the APK+SBOM+provenance attestation
       id-token: write
+      actions: write       # dispatch verify-release after publication
     steps:
       # Block egress; the allow-list is the release half of the release-tag
       # map: checkout (github.com, codeload), artifact download
@@ -198,3 +199,13 @@ jobs:
             --notes-file ../release-notes.md \
             --verify-tag \
             "${EXTRA_ARGS[@]}"
+
+      # A release created with GITHUB_TOKEN does not emit a release event that
+      # starts another workflow (workflow_dispatch and repository_dispatch are
+      # the exceptions). Dispatch the consumer verifier explicitly so every
+      # published tag release is still checked automatically.
+      - name: Dispatch consumer verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
+        run: gh workflow run verify-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$RELEASE_TAG"

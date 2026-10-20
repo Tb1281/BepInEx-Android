@@ -159,7 +159,7 @@ jobs:
       # Release, not debug: a tag release is a distributable artifact, so it
       # gets the R8 + resource-shrunk build. The release build type refuses to
       # run without the preflight's materialized key and tag-derived version.
-      - name: Assemble and 16KB-align release APK
+      - name: Assemble, align, and re-sign release APK
         working-directory: launcher
         env:
           RELEASE_KEYSTORE_PATH: ${{ steps.preflight.outputs.keystore_path }}
@@ -177,7 +177,38 @@ jobs:
           APK="app/build/outputs/apk/release/app-release.apk"
           OUT="app/build/outputs/apk/release/app-release-aligned.apk"
           ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          # zipalign rewrites the archive and invalidates the v2/v3 signature
+          # AGP just applied. Align first, then sign the aligned bytes; signing
+          # before alignment publishes an unsigned APK.
           "$ZIPALIGN" -f -P 16 4 "$APK" "$OUT"
+          "$APKSIGNER" sign \
+            --ks "$RELEASE_KEYSTORE_PATH" \
+            --ks-pass env:RELEASE_KEYSTORE_PASSWORD \
+            --ks-key-alias "$RELEASE_KEY_ALIAS" \
+            --key-pass env:RELEASE_KEY_PASSWORD \
+            --out "$OUT.signed" "$OUT"
+          mv "$OUT.signed" "$OUT"
+
+      - name: Verify the release APK signature and alignment
+        working-directory: launcher
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release-aligned.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
+          "$ZIPALIGN" -c -P 16 4 "$APK"
+          SIGNER_OUT="$("$APKSIGNER" verify --print-certs "$APK")"
+          SIGNER_FP="$(printf '%s\n' "$SIGNER_OUT" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            | head -n1 | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+          EXPECTED_FP="$(tr -d '[:space:]' < ../provenance/release-cert.sha256 | tr 'A-F' 'a-f')"
+          [ -n "$SIGNER_FP" ] || { echo "apksigner did not report a signer certificate" >&2; exit 1; }
+          [ "$SIGNER_FP" = "$EXPECTED_FP" ] || {
+            echo "APK signer $SIGNER_FP does not match $EXPECTED_FP" >&2
+            exit 1
+          }
+          echo "release APK signer matches release-cert.sha256: $SIGNER_FP"
 
       # Local headers and central directory must agree (incremental builds
       # have shipped duplicates twice); see build-launcher-apk.yml.
