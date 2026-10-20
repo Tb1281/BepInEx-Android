@@ -276,6 +276,7 @@ jobs:
       contents: write      # GitHub Release creation
       attestations: write  # mint the APK+SBOM+provenance attestation
       id-token: write
+      actions: write       # allow ship-release to dispatch verify-release
     uses: ./.github/workflows/ship-release.yml
     with:
       tag_name: ${{ github.ref_name }}
