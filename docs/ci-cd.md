@@ -167,14 +167,20 @@ fingerprint, the attestation command, and the GPL/LGPL source offer.
 `--verify-tag` makes the pushed tag the only way to create the release; if the
 tag is missing, the command fails instead of creating it implicitly. The
 `prerelease` input defaults to `true`, and the tag caller always sets it;
-promotion is the only path that clears the flag.
+promotion is the only path that clears the flag. Because the release is created
+with the workflow `GITHUB_TOKEN`, GitHub suppresses the resulting
+`release: published` event, so the job explicitly dispatches
+`verify-release.yml` with `actions: write` after publication.
 
 ### `verify-release.yml`
 
-Runs on every published GitHub Release, including pre-releases, and on manual
-dispatch. It checks out the default branch so the verifier and trust anchor are
-the current repository's, then installs `build-tools;35.0.0` (the runner image
-does not ship `apksigner`) and runs `scripts/verify_release_assets.sh`. That
+Runs on published GitHub Releases, including pre-releases, and on manual
+dispatch. `ship-release.yml` also dispatches it explicitly after publication:
+a release created with `GITHUB_TOKEN` does not emit a workflow-triggering
+`release` event. It checks out the default branch so the verifier and trust
+anchor are the current repository's, then installs `build-tools;35.0.0` (the
+runner image does not ship `apksigner`) and runs
+`scripts/verify_release_assets.sh`. That
 checks the complete asset set, the checksum manifest, the Sigstore bundle, the
 APK signer and the published certificate/fingerprint against the repository
 trust anchor `provenance/release-cert.sha256`, and the release state. It has

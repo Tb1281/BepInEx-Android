@@ -110,8 +110,9 @@ the checksum manifest, the Sigstore bundle, the APK signer certificate against
 the repository trust anchor `provenance/release-cert.sha256`, the published
 certificate and fingerprint against the same anchor, and the GitHub Release
 state. It needs `gh`, `apksigner`, and `openssl` on `PATH`; `verify-release.yml`
-installs `build-tools;35.0.0` and runs this automatically on every published
-release, pre-release included.
+installs `build-tools;35.0.0` and runs this automatically after `ship-release`
+publishes. Releases created outside that path can be checked with a manual
+`workflow_dispatch`.
 
 A normal run accepts a pre-release. Use `--require-stable` only after
 promotion. For a manual second opinion:
