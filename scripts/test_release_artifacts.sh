@@ -185,6 +185,8 @@ check "ship-release writes contents" grep -q "contents: write" "$WF_SHIP"
 check "ship-release attests" grep -q "attestations: write" "$WF_SHIP"
 check "ship-release mints OIDC" grep -q "id-token: write" "$WF_SHIP"
 check "ship-release can dispatch the consumer verifier" grep -q "actions: write" "$WF_SHIP"
+check "release-tag caller grants the ship job Actions write" \
+    bash -c 'sed -n "/^  ship:/,\$p" "$1" | grep -q "actions: write"' _ "$WF_RELEASE"
 check "ship-release dispatches verify-release with the tag" \
     grep -q 'gh workflow run verify-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$RELEASE_TAG"' "$WF_SHIP"
 check_absent "ship-release cannot write issues" "issues: write" "$WF_SHIP"
