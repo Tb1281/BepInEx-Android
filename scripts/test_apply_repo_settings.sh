@@ -234,6 +234,8 @@ fi
 branch_body="$(body_for PUT "repos/$REPO/branches/main/protection")"
 check "branch protection requires both checks" \
     jq -e '.required_status_checks.strict == true and (.required_status_checks.contexts | index("provenance")) != null and (.required_status_checks.contexts | index("patch-queue")) != null' "$branch_body"
+check "branch protection sends only the accepted contexts field" \
+    jq -e '.required_status_checks | has("checks") | not' "$branch_body"
 check "branch protection requires a pull request" \
     jq -e '.required_pull_request_reviews != null and .required_pull_request_reviews.required_approving_review_count == 0' "$branch_body"
 check "branch protection requires linear history" \
