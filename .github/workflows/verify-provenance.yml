@@ -39,6 +39,7 @@ on:
       - 'launcher/app/src/main/**'
       - 'scripts/mark_verified.sh'
       - 'scripts/ci_failure_notice.sh'
+      - 'scripts/apply_repo_settings.sh'
       - 'scripts/emit_provenance.sh'
       - 'scripts/pin_drift_notice.sh'
       - 'scripts/test_*.sh'
@@ -88,6 +89,7 @@ on:
       - 'launcher/app/src/main/**'
       - 'scripts/mark_verified.sh'
       - 'scripts/ci_failure_notice.sh'
+      - 'scripts/apply_repo_settings.sh'
       - 'scripts/emit_provenance.sh'
       - 'scripts/pin_drift_notice.sh'
       - 'scripts/test_*.sh'
@@ -334,6 +336,14 @@ jobs:
       # Gradle config the switch depends on, and the dependency cache.
       - name: The shipping APK is a release build
         run: ./scripts/test_release_artifacts.sh
+
+      # The repository settings are part of the release contract: branch
+      # protection for main, a tag ruleset that excludes the moving verified
+      # tag, the release environment's ref policy, and a read-only default
+      # workflow token. The fixture stubs gh and asserts the payloads and
+      # idempotency, so it needs no repository access.
+      - name: Repository settings are idempotent and fail closed
+        run: ./scripts/test_apply_repo_settings.sh
 
       # The launcher compile gate above is a Gradle invocation, not a script,
       # so it has no fixture of its own to run here. What can rot instead is
