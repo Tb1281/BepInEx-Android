@@ -57,4 +57,5 @@ of truth for the surrounding controls: `main` requires the `provenance` and
 `patch-queue` checks plus a pull request; the `release-tags` ruleset covers
 `refs/tags/v*` but excludes the moving `refs/tags/verified`; the `release`
 environment accepts only `main` and `v*`; and the default workflow token is
-read-only.
+read-only. Actions may create the sync pull request, but no workflow approves
+pull requests and the required approval count is zero.

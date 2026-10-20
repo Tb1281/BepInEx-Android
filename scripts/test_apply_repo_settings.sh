@@ -273,8 +273,8 @@ check "first apply creates exactly two deployment policies" \
 token_body="$(body_for PUT "repos/$REPO/actions/permissions/workflow")"
 check "default workflow token is read-only" \
     jq -e '.default_workflow_permissions == "read"' "$token_body"
-check "Actions cannot approve pull requests" \
-    jq -e '.can_approve_pull_request_reviews == false' "$token_body"
+check "Actions may create pull requests for the sync" \
+    jq -e '.can_approve_pull_request_reviews == true' "$token_body"
 check "secret names are reported" \
     grep -q "release environment secret names present: RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD" "$WORK/output"
 check_absent_text "secret values are never printed" "dummy-secret-value" "$WORK/output"

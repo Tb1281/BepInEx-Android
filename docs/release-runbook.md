@@ -35,8 +35,10 @@ with `scripts/apply_repo_settings.sh`; the script is the source of truth.
 
    The script is idempotent and fails closed before any mutation without admin
    permission. It also requires the four secret names above to exist, sets the
-   default workflow token read-only, and disables Actions approval of pull
-   requests. Re-run it after changing a protected branch or environment policy.
+   default workflow token read-only, and allows Actions to create pull requests
+   for the sync path. No workflow approves pull requests, and the required
+   approval count is zero, so the approval capability does not satisfy a review
+   gate. Re-run it after changing a protected branch or environment policy.
 
 The current key was generated on 2026-10-20. Its SHA-256 certificate fingerprint is `b2fe00a6a80d6e69beee4eea8e8063dc74cca6759c0fdecc2c322bf56066db73`. Treat the keystore as unrecoverable if the offline backup is lost.
 
@@ -58,8 +60,10 @@ depends on:
   `v*` tags. Its four release-key secret names must exist; their values are
   never read or printed. The environment is the only place the release key is
   available, and only the tag build declares it.
-- The default workflow token is read-only, and Actions cannot approve pull
-  requests. Release jobs opt in to the write scopes they need.
+- The default workflow token is read-only. Actions is allowed to create pull
+  requests because `sync-upstream` opens the pin-bump PR; no workflow approves
+  them, and the required approval count is zero. Release jobs opt in to the
+  write scopes they need.
 
 Run `--dry-run` first; `--apply` is safe to repeat. Audit with:
 

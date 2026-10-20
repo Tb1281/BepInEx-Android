@@ -17,8 +17,9 @@
 #   - the `release` environment accepts deployments only from main and v* tags.
 #     The four release-key secret names must exist; values are never read or
 #     printed.
-#   - the default workflow token is read-only, and Actions cannot approve pull
-#     requests.
+#   - the default workflow token is read-only. GitHub Actions may create pull
+#     requests because sync-upstream opens the pin-bump PR; no workflow approves
+#     them, and branch protection requires zero approvals anyway.
 #
 # The script is idempotent: run it as often as needed. It updates the branch
 # protection, the `release-tags` ruleset, and the environment policies; a second
@@ -184,10 +185,15 @@ ENV_BODY="$(cat <<'JSON'
 JSON
 )"
 
+# create-pull-request cannot open the sync PR while this is false: GitHub
+# rejects the call with "GitHub Actions is not permitted to create or approve
+# pull requests" regardless of the job's pull-requests: write scope. The
+# setting also permits approvals, but no workflow approves, and the required
+# approval count is zero, so it cannot satisfy a review gate.
 TOKEN_BODY="$(cat <<'JSON'
 {
   "default_workflow_permissions": "read",
-  "can_approve_pull_request_reviews": false
+  "can_approve_pull_request_reviews": true
 }
 JSON
 )"
