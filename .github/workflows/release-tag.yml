@@ -95,18 +95,9 @@ jobs:
           PREFLIGHT_KEYSTORE_OUT: ${{ runner.temp }}/release.keystore
         run: ./scripts/release_preflight.sh "$RELEASE_TAG"
 
-      # Same Gradle cache as build-launcher-apk.yml: public repository, 10 GB
-      # quota. Keyed on the dependency inputs (see that workflow for why the
-      # cache is safe here).
-      - name: Cache Gradle dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('launcher/gradle/libs.versions.toml', 'launcher/**/build.gradle.kts', 'launcher/settings.gradle.kts', 'launcher/gradle.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+      # No Gradle cache in this job. It is the one job that handles the release
+      # key; the release contract keeps that job free of restore/save paths.
+      # The extra download time is paid only on a tag push.
 
       - name: Prepare Android SDK and NDK
         run: |
@@ -262,8 +253,7 @@ jobs:
       notes_extra: |-
         - **Version:** `${{ github.ref_name }}`
         - **Build:** release (R8 minification + resource shrinking)
-        - **Upgrade:** uninstall `com.bepinex.android.release` and any old debug install at `com.bepinex.android` once before installing this release
-        - **State:** pre-release until release verification and device verification are recorded
+        - **Channel:** tag release; starts as a GitHub pre-release
       artifact_name: tag-ship-inputs
       # actions/upload-artifact keeps the least-common ancestor of the uploaded
       # paths, which is the repository root here. The downloaded artifact

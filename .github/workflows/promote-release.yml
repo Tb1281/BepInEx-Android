@@ -1,0 +1,115 @@
+name: promote-release
+# Manual only. This is the one path that clears the pre-release flag, so it is
+# never triggered by a tag or a release event. It does not declare the
+# `release` environment and therefore has no access to the release key: it
+# verifies what is already published, then edits the release state.
+#
+# The preflight is the same gate the build used (--verify-only skips the key
+# check). The consumer verifier runs before promotion and again with
+# --require-stable after it; if the post-check fails, the workflow restores the
+# pre-release flag so a broken release is never left advertised as stable.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Stable tag to promote (vMAJOR.MINOR.PATCH)'
+        required: true
+        type: string
+      device_verification:
+        description: 'Confirm device verification is recorded for this tag'
+        required: true
+        type: choice
+        options:
+          - not-recorded
+          - recorded
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write      # gh release edit
+      issues: write        # scripts/ci_failure_notice.sh only
+    steps:
+      # Audit on every job. This workflow talks to the release API and the
+      # issue API; it never contacts the release-key environment.
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # Promotion verifies against the current default branch verifier and
+          # trust anchor, not a caller-selected ref.
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      # The verifier checks the APK signer, so promotion needs apksigner too.
+      # The runner image does not ship it; install the same pinned build-tools
+      # major the release and verify-release jobs use.
+      - name: Install apksigner from pinned build-tools
+        run: |
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "ANDROID_HOME is not set; cannot install apksigner." >&2
+            exit 1
+          fi
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "build-tools;35.0.0" 2>&1 | tail -1
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+
+      - name: Preflight the stable tag
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: ./scripts/release_preflight.sh --verify-only "$RELEASE_TAG"
+
+      - name: Require a stable tag and recorded device verification
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          IS_PRERELEASE: ${{ steps.preflight.outputs.is_prerelease }}
+          DEVICE_VERIFICATION: ${{ inputs.device_verification }}
+        run: |
+          if [ "$IS_PRERELEASE" != "0" ]; then
+            echo "promote-release: $RELEASE_TAG is not a stable tag; only vMAJOR.MINOR.PATCH can be promoted." >&2
+            exit 1
+          fi
+          if [ "$DEVICE_VERIFICATION" != "recorded" ]; then
+            echo "promote-release: device verification for $RELEASE_TAG is not recorded; refusing to promote." >&2
+            exit 1
+          fi
+
+      - name: Consumer-verify the release before promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: ./scripts/verify_release_assets.sh "$RELEASE_TAG"
+
+      - name: Promote and confirm the stable state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false
+          if ! ./scripts/verify_release_assets.sh --require-stable "$RELEASE_TAG"; then
+            echo "promote-release: post-promotion verification failed; restoring the pre-release flag." >&2
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease
+            exit 1
+          fi
+
+      # Record failure to Issue or close open issue on success
+      - name: Record the failure, or clear the record
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            ./scripts/ci_failure_notice.sh promote-release passed
+          else
+            ./scripts/ci_failure_notice.sh promote-release failed
+          fi

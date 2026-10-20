@@ -92,7 +92,7 @@ run.
 As-built provenance (`scripts/emit_provenance.sh`) records what a run
 actually built with - upstream pin, achieved tree hash, patch file hashes,
 SDK version - as JSON next to the artifacts (`build-bepinex.yml` attests it
-with the zip; `sync-upstream.yml` ships it in the release). The pins say
+with the zip; `sync-upstream.yml` ships it in the CI artifact). The pins say
 what was intended; this says what was built. Informational by design: a
 missing tool degrades a field to `"unknown"` instead of failing the build,
 because enforcement lives in the gates.
