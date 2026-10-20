@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: 'Force a full build and release even if upstream has not moved'
+        description: 'Force a full artifact build even if upstream has not moved'
         required: false
         type: boolean
         default: false
@@ -20,7 +20,7 @@ jobs:
       old_commit: ${{ steps.sync.outputs.old }}
       new_commit: ${{ steps.sync.outputs.new }}
     permissions:
-      contents: write      # create-pull-request (the release itself is created by the ship job below)
+      contents: write      # create-pull-request
       pull-requests: write # opens the sync PR
       issues: write        # scripts/ci_failure_notice.sh and pin_drift_notice.sh only
     steps:
@@ -31,14 +31,13 @@ jobs:
       # temurin JDK on cache miss), the NDK install (dl.google.com), the
       # restore feeds (api.nuget.org, nuget.bepinex.dev), the Gradle/Maven
       # hosts (services/downloads/plugins, maven central/google/aliyun,
-      # jitpack — the mirror hit varies per run), the release API and asset
-      # upload (api.github.com, uploads.github.com, cafe.github.com — all
-      # three hit by `gh release create`), the artifact/cache blob storage
-      # (*.blob.core.windows.net), and the Sigstore Public Good instance
-      # the attest step signs through (fulcio/rekor). Telemetry and CRL
-      # hosts (aka.ms, visualstudio, digicert, symantec) are deliberately
-      # excluded: the build-bepinex pilot already proves they are non-fatal.
-      # Rollback is one line back to audit.
+      # jitpack — the mirror hit varies per run), the pull-request API
+      # (api.github.com), and the artifact/cache blob storage
+      # (*.blob.core.windows.net). The release/Sigstore entries are retained
+      # until this allow-list is re-measured for the artifact-only path.
+      # Telemetry and CRL hosts (aka.ms, visualstudio, digicert, symantec) are
+      # deliberately excluded: the build-bepinex pilot already proves they are
+      # non-fatal. Rollback is one line back to audit.
       - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2
         with:
           egress-policy: block
@@ -127,7 +126,7 @@ jobs:
         id: sync
         run: ./scripts/sync_upstream.sh
 
-      # Only proceed with build & release if upstream moved or force requested
+      # Only proceed with the artifact build if upstream moved or force requested
       - name: Prepare Android SDK and NDK
         if: steps.sync.outputs.moved == 'true' || inputs.force
         run: |

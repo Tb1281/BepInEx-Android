@@ -16,6 +16,25 @@ val releaseVersionCode: Int? = providers.gradleProperty("bepinex.versionCode")
 val releaseKeystorePath: String? = providers.environmentVariable("RELEASE_KEYSTORE_PATH")
     .orNull?.takeIf { it.isNotBlank() }
 
+// Mirrors scripts/release_preflight.sh. The workflow passes both values, but the
+// build independently derives the code from the name so a mismatched handoff is
+// rejected here instead of shipping an APK that claims the wrong version.
+fun derivedVersionCode(versionName: String): Int? {
+    val match = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$")
+        .matchEntire(versionName) ?: return null
+    val (majorText, minorText, patchText) = match.destructured
+    val components = listOf(majorText, minorText, patchText)
+    if (components.any { it.length > 3 || (it.length > 1 && it.startsWith("0")) }) {
+        return null
+    }
+    val major = majorText.toInt()
+    val minor = minorText.toInt()
+    val patch = patchText.toInt()
+    if (major > 200 || minor > 999 || patch > 999) return null
+    val channel = if (match.groups[4] != null) 1 else 2
+    return major * 10_000_000 + minor * 10_000 + patch * 10 + channel
+}
+
 android {
     namespace = "com.bepinex.android"
     compileSdk = 35
@@ -281,8 +300,18 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
             "Release version is not configured. Pass -Pbepinex.versionName and " +
                 "-Pbepinex.versionCode from the release preflight."
         }
-        check(releaseVersionCode!! > 0) {
+        val versionName = releaseVersionName!!
+        val versionCode = releaseVersionCode!!
+        check(versionCode > 0) {
             "Release versionCode must be positive."
+        }
+        val expectedVersionCode = derivedVersionCode(versionName)
+        check(expectedVersionCode != null) {
+            "Release versionName '$versionName' is not a tag version."
+        }
+        check(versionCode == expectedVersionCode) {
+            "Release versionCode $versionCode does not match versionName '$versionName' " +
+                "(expected $expectedVersionCode). Derive both from the tag."
         }
         val store = file(System.getenv("RELEASE_KEYSTORE_PATH"))
         check(store.isFile) {

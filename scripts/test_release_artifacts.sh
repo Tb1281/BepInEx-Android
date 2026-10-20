@@ -50,6 +50,13 @@ echo "== release and artifact builds =="
 check "release-tag assembles the release variant" grep -q "assembleRelease" "$WF_RELEASE"
 check "release-tag names the release-aligned APK" grep -q "app-release-aligned.apk" "$WF_RELEASE"
 check "release-tag runs the release preflight" grep -q "release_preflight.sh" "$WF_RELEASE"
+# Tag names can contain shell metacharacters. Passing the tag through the
+# environment keeps `${{ github.ref_name }}` out of a `run:` body that holds the
+# release key; quoting the environment value is safe.
+check "release-tag passes the preflight tag from the environment" \
+    grep -q 'release_preflight.sh "\$RELEASE_TAG"' "$WF_RELEASE"
+check "release-tag does not interpolate the tag into run" \
+    bash -c '! grep -q "release_preflight.sh \"\${{ github.ref_name }}\"" "$1"' _ "$WF_RELEASE"
 check "release-tag passes the tag version to Gradle" grep -q "bepinex.versionName" "$WF_RELEASE"
 # The uploaded path is nested under the repository root, so the ship job must
 # be told the same path; the flat default cannot find it after download.
