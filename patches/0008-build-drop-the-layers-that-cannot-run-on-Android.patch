@@ -1,7 +1,7 @@
-From af8978b01f89cef95602f60d93fa944a8809c848 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: port <port@local>
 Date: Sun, 4 Oct 2026 15:48:04 +0900
-Subject: [PATCH] build: drop the layers that cannot run on Android
+Subject: [PATCH 8/8] build: drop the layers that cannot run on Android
 
 After removing the Mono runtime and the desktop console drivers, four more
 trees are left that this port never builds or ships:
@@ -42,6 +42,8 @@ Depends-On: 0004-il2cpp-hook-through-libfusion-and-resolve-export-stu, 0006-core
  .../BepInEx.NET.Shared.projitems              |  14 -
  .../BepInEx.NET.Shared.shproj                 |  16 -
  .../BepInEx.NET.Shared/SharedEntrypoint.cs    | 144 -------
+ .../Hook/ExportThunkResolver.cs               |  17 +-
+ .../BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs |   1 +
  .../Bootstrap/UnityChainloader.cs             | 175 ---------
  .../Logging/UnityLogSource.cs                 | 114 ------
  .../Unity/Doorstop/doorstop_config_il2cpp.ini |  47 ---
@@ -57,7 +59,7 @@ Depends-On: 0004-il2cpp-hook-through-libfusion-and-resolve-export-stu, 0006-core
  build/DownloadTasks.cs                        |  89 -----
  build/GitTasks.cs                             |  12 -
  build/Program.cs                              | 368 ------------------
- 30 files changed, 2 insertions(+), 2619 deletions(-)
+ 32 files changed, 10 insertions(+), 2629 deletions(-)
  delete mode 100644 Runtimes/NET/BepInEx.NET.Common/BasePlugin.cs
  delete mode 100644 Runtimes/NET/BepInEx.NET.Common/BepInEx.NET.Common.csproj
  delete mode 100644 Runtimes/NET/BepInEx.NET.Common/NetChainloader.cs
@@ -1238,6 +1240,55 @@ index 47d9db8..0000000
 -            TryResolveDllAssembly(assemblyName, directory, Assembly.LoadFrom, out assembly);
 -    }
 -}
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+index d00eb6f..f01525e 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
+@@ -2,8 +2,9 @@ using System;
+ using System.Collections.Generic;
+ using System.Globalization;
+ using System.IO;
++using System.Runtime.InteropServices;
+ using BepInEx.Logging;
+-using BepInEx.Preloader.Core.Logging;
++using BepInEx.Preloader.Core;
+ 
+ namespace BepInEx.Unity.IL2CPP.Hook;
+ 
+@@ -102,16 +103,12 @@ internal static unsafe class ExportThunkResolver
+ 
+     private static InstructionArchitecture GetInstructionArchitecture()
+     {
+-        if (!OperatingSystem.IsAndroid() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() &&
+-            !OperatingSystem.IsWindows())
+-            return InstructionArchitecture.Unknown;
+-
+-        return System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
++        return RuntimeInformation.ProcessArchitecture switch
+         {
+-            System.Runtime.InteropServices.Architecture.Arm64 => InstructionArchitecture.Arm64,
+-            System.Runtime.InteropServices.Architecture.X64   => InstructionArchitecture.X64,
+-            System.Runtime.InteropServices.Architecture.X86   => InstructionArchitecture.X86,
+-            _                                               => InstructionArchitecture.Unknown
++            Architecture.Arm64 => InstructionArchitecture.Arm64,
++            Architecture.X64   => InstructionArchitecture.X64,
++            Architecture.X86   => InstructionArchitecture.X86,
++            _                  => InstructionArchitecture.Unknown
+         };
+     }
+ 
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+index 3aa95c2..53aec30 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+@@ -10,6 +10,7 @@ using BepInEx.Unity.IL2CPP.Hook;
+ using BepInEx.Unity.IL2CPP.Logging;
+ using BepInEx.Unity.IL2CPP.Utils;
+ using Il2CppInterop.Runtime.InteropTypes;
++using MonoMod.Utils;
+ using UnityEngine;
+ using Logger = BepInEx.Logging.Logger;
+ 
 diff --git a/Runtimes/Unity/BepInEx.Unity.Mono/Bootstrap/UnityChainloader.cs b/Runtimes/Unity/BepInEx.Unity.Mono/Bootstrap/UnityChainloader.cs
 deleted file mode 100644
 index 429ba56..0000000
@@ -2946,6 +2997,3 @@ index ee498b1..0000000
 -[TaskName("Default")]
 -[IsDependentOn(typeof(CompileTask))]
 -public class DefaultTask : FrostingTask { }
--- 
-2.53.0
-

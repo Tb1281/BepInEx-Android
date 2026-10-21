@@ -1,4 +1,4 @@
-From 9383db2b66d2309c5b9e575724bb48c7e14f0078 Mon Sep 17 00:00:00 2001
+From 8ff7d6aa9c23377e8c459dee3824a9881b224906 Mon Sep 17 00:00:00 2001
 From: port <port@local>
 Date: Sun, 11 Oct 2026 20:12:38 +0900
 Subject: [PATCH] il2cpp: resolve thunks in NativeDetour and guard ARM64 inline
@@ -83,6 +83,3 @@ index 90ac126..40989b6 100644
          Detour = Marshal.GetFunctionPointerForDelegate(detour);
          SpecialReturnBuffer = specialReturnBuffer;
          Apply();
--- 
-2.53.0
-

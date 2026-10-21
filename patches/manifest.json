@@ -176,6 +176,8 @@
       "Runtimes/NET/BepInEx.NET.Shared/BepInEx.NET.Shared.projitems",
       "Runtimes/NET/BepInEx.NET.Shared/BepInEx.NET.Shared.shproj",
       "Runtimes/NET/BepInEx.NET.Shared/SharedEntrypoint.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs",
       "Runtimes/Unity/BepInEx.Unity.Mono/Bootstrap/UnityChainloader.cs",
       "Runtimes/Unity/BepInEx.Unity.Mono/Logging/UnityLogSource.cs",
       "Runtimes/Unity/Doorstop/doorstop_config_il2cpp.ini",

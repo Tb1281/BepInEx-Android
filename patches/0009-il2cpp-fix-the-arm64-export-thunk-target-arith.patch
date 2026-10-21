@@ -1,4 +1,4 @@
-From ed4be12168d6e97a2f4d409b38b36bfa7ab9aae2 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: port <port@local>
 Date: Mon, 5 Oct 2026 00:42:20 +0900
 Subject: [PATCH] il2cpp: fix the arm64 export-thunk target arithmetic
@@ -32,47 +32,14 @@ counter never reached depth 3) and Harmony support (removed, unchanged).
 
 Depends-On: 0008-build-drop-the-layers-that-cannot-run-on-Android
 ---
- .../Hook/ExportThunkResolver.cs               | 35 +++++++++++++------
- 1 file changed, 24 insertions(+), 11 deletions(-)
+ .../Hook/ExportThunkResolver.cs                | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
 
 diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
-index d00eb6f..34b96b5 100644
+index f01525e..34b96b5 100644
 --- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
 +++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
-@@ -2,8 +2,9 @@ using System;
- using System.Collections.Generic;
- using System.Globalization;
- using System.IO;
-+using System.Runtime.InteropServices;
- using BepInEx.Logging;
--using BepInEx.Preloader.Core.Logging;
-+using BepInEx.Preloader.Core;
- 
- namespace BepInEx.Unity.IL2CPP.Hook;
- 
-@@ -102,16 +103,12 @@ internal static unsafe class ExportThunkResolver
- 
-     private static InstructionArchitecture GetInstructionArchitecture()
-     {
--        if (!OperatingSystem.IsAndroid() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() &&
--            !OperatingSystem.IsWindows())
--            return InstructionArchitecture.Unknown;
--
--        return System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
-+        return RuntimeInformation.ProcessArchitecture switch
-         {
--            System.Runtime.InteropServices.Architecture.Arm64 => InstructionArchitecture.Arm64,
--            System.Runtime.InteropServices.Architecture.X64   => InstructionArchitecture.X64,
--            System.Runtime.InteropServices.Architecture.X86   => InstructionArchitecture.X86,
--            _                                               => InstructionArchitecture.Unknown
-+            Architecture.Arm64 => InstructionArchitecture.Arm64,
-+            Architecture.X64   => InstructionArchitecture.X64,
-+            Architecture.X86   => InstructionArchitecture.X86,
-+            _                  => InstructionArchitecture.Unknown
-         };
-     }
- 
-@@ -130,7 +127,23 @@ internal static unsafe class ExportThunkResolver
+@@ -127,7 +127,23 @@ internal static unsafe class ExportThunkResolver
              if ((imm26 & 0x02000000) != 0)
                  imm26 -= 0x04000000;
  
@@ -97,6 +64,3 @@ index d00eb6f..34b96b5 100644
              return true;
          }
  
--- 
-2.53.0
-
