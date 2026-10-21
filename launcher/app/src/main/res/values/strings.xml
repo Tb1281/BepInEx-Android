@@ -83,6 +83,10 @@
     <string name="settings_clear_dotnet_desc">Delete the .NET runtime and copied game data. Files will be re-extracted on next launch.</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_language">Language</string>
+    <string name="settings_dynamic_color">Dynamic Color</string>
+    <string name="settings_dynamic_color_desc">Color the launcher from your wallpaper (Material You, Android 12 and later).</string>
+    <string name="settings_disable_animations">Disable Animations</string>
+    <string name="settings_disable_animations_desc">Turn off the launcher\'s screen transition animations.</string>
     <string name="settings_about">About</string>
 
     <!-- Confirm Dialogs -->

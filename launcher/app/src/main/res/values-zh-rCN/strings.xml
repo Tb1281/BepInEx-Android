@@ -81,6 +81,10 @@
     <string name="settings_clear_dotnet_desc">删除 .NET 运行时和复制的游戏数据。下次启动将重新解压。</string>
     <string name="settings_theme">主题</string>
     <string name="settings_language">语言</string>
+    <string name="settings_dynamic_color">动态取色</string>
+    <string name="settings_dynamic_color_desc">在 Android 12 及以上版本将壁纸颜色(Material You)应用到启动器。</string>
+    <string name="settings_disable_animations">禁用动画</string>
+    <string name="settings_disable_animations_desc">关闭启动器的界面切换动画。</string>
     <string name="settings_about">关于</string>
 
     <!-- Confirm Dialogs -->

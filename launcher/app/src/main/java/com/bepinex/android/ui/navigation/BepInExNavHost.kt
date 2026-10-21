@@ -67,6 +67,8 @@ fun BepInExNavHost(
     // Settings state
     themeMode: AppSettings.ThemeMode,
     language: AppSettings.Language,
+    dynamicColor: Boolean,
+    animationDisabled: Boolean,
     floatingLogInGame: Boolean,
     screenDimInGame: Boolean,
     // Callbacks
@@ -75,6 +77,8 @@ fun BepInExNavHost(
     onLaunch: (modpackNames: Set<String>) -> Unit,
     onThemeChanged: (AppSettings.ThemeMode) -> Unit,
     onLanguageChanged: (AppSettings.Language) -> Unit,
+    onDynamicColorChanged: (Boolean) -> Unit,
+    onAnimationDisabledChanged: (Boolean) -> Unit,
     onFloatingLogInGameChanged: (Boolean) -> Unit,
     onScreenDimInGameChanged: (Boolean) -> Unit,
     onClearBepInEx: (String) -> Unit,
@@ -195,14 +199,17 @@ fun BepInExNavHost(
                 .padding(bottom = innerPadding.calculateBottomPadding())
         ) {
             // Symmetric transitions defined once: every destination animates the
-            // same way, including the system predictive-back gesture.
+            // same way, including the system predictive-back gesture. The
+            // animation-disabled Launcher Setting zeroes the duration, which
+            // is what makes that setting take effect in the launcher UI.
+            val transitionMillis = if (animationDisabled) 0 else 300
             NavHost(
                 navController = navController,
                 startDestination = Games,
-                enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
-                exitTransition = { slideOutHorizontally(tween(300)) { -it } + fadeOut(tween(300)) },
-                popEnterTransition = { slideInHorizontally(tween(300)) { -it } + fadeIn(tween(300)) },
-                popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
+                enterTransition = { slideInHorizontally(tween(transitionMillis)) { it } + fadeIn(tween(transitionMillis)) },
+                exitTransition = { slideOutHorizontally(tween(transitionMillis)) { -it } + fadeOut(tween(transitionMillis)) },
+                popEnterTransition = { slideInHorizontally(tween(transitionMillis)) { -it } + fadeIn(tween(transitionMillis)) },
+                popExitTransition = { slideOutHorizontally(tween(transitionMillis)) { it } + fadeOut(tween(transitionMillis)) }
             ) {
                 // Main game screen
                 composable<Games> {
@@ -221,9 +228,9 @@ fun BepInExNavHost(
                         // before the game starts, so there is no save/start race.
                         onLaunch = { onLaunch(activeModpackNames) },
                         onNavigateToSettings = {
-                            selectedGame?.let {
-                                navController.navigateTab(Settings(it.packageName))
-                            }
+                            // Launcher Settings are global: reachable whether
+                            // or not a game is selected.
+                            navController.navigateTab(Settings)
                         },
                         onNavigateToModpacks = {
                             selectedGame?.let {
@@ -385,25 +392,33 @@ fun BepInExNavHost(
                     }
                 }
 
-                // Settings
-                composable<Settings> { backStackEntry ->
-                    val route = backStackEntry.toRoute<Settings>()
-                    val packageName = route.packageName
-                    val settingsContext = LocalContext.current
+                // Settings — a global destination (no route arguments).
+                // The per-game maintenance actions still shown on this
+                // screen target the currently selected game, exactly as
+                // they did when the route carried the package name; with
+                // no game selected the screen hides that card (see
+                // SettingsScreen). Maintenance moves to the per-game
+                // settings screen in #35.
+                composable<Settings> {
+                    val maintenancePackageName = selectedGame?.packageName
                     SettingsScreen(
-                        packageName = packageName,
+                        maintenancePackageName = maintenancePackageName,
                         themeMode = themeMode,
                         language = language,
+                        dynamicColor = dynamicColor,
+                        animationDisabled = animationDisabled,
                         floatingLogInGame = floatingLogInGame,
                         screenDimInGame = screenDimInGame,
                         onNavigateBack = { navController.popBackStack() },
                         onNavigateToAbout = { navController.navigate(About) },
                         onThemeChanged = onThemeChanged,
                         onLanguageChanged = onLanguageChanged,
+                        onDynamicColorChanged = onDynamicColorChanged,
+                        onAnimationDisabledChanged = onAnimationDisabledChanged,
                         onFloatingLogInGameChanged = onFloatingLogInGameChanged,
                         onScreenDimInGameChanged = onScreenDimInGameChanged,
-                        onClearBepInEx = { onClearBepInEx(packageName) },
-                        onClearDotnet = { onClearDotnet(packageName) }
+                        onClearBepInEx = { maintenancePackageName?.let(onClearBepInEx) },
+                        onClearDotnet = { maintenancePackageName?.let(onClearDotnet) }
                     )
                 }
 
@@ -528,12 +543,9 @@ private fun BottomNavBar(
         val isSettings = destination?.hasRoute<Settings>() == true
         NavigationBarItem(
             selected = isSettings,
-            onClick = {
-                selectedGame?.let { game ->
-                    navController.navigateTab(Settings(game.packageName))
-                }
-            },
-            enabled = selectedGame != null,
+            // Launcher Settings are global: this tab is always enabled,
+            // unlike Modpacks above which needs a selected game.
+            onClick = { navController.navigateTab(Settings) },
             icon = {
                 Icon(
                     if (isSettings) Icons.Filled.Settings else Icons.Outlined.Settings,

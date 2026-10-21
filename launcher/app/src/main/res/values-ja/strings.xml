@@ -81,6 +81,10 @@
     <string name="settings_clear_dotnet_desc">.NETランタイムとコピーされたゲームデータを削除します。次回起動時に再展開されます。</string>
     <string name="settings_theme">テーマ</string>
     <string name="settings_language">言語</string>
+    <string name="settings_dynamic_color">ダイナミックカラー</string>
+    <string name="settings_dynamic_color_desc">Android 12以降で壁紙の色(Material You)をランチャーに適用します。</string>
+    <string name="settings_disable_animations">アニメーションを無効化</string>
+    <string name="settings_disable_animations_desc">ランチャーの画面遷移アニメーションをオフにします。</string>
     <string name="settings_about">情報</string>
 
     <!-- Confirm Dialogs -->
