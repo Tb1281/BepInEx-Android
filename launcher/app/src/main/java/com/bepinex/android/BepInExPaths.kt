@@ -1,6 +1,7 @@
 package com.bepinex.android
 
 import android.content.Context
+import com.bepinex.android.fusion.GameResourceContext
 import java.io.File
 
 /**
@@ -28,9 +29,19 @@ object BepInExPaths {
     /**
      * Records the process context used for path resolution. Idempotent and
      * cheap, so calling it from every entry point is harmless.
+     *
+     * The context is unwrapped to the root ContextImpl on purpose: these are
+     * the launcher's own bookkeeping paths and must resolve identically in
+     * every process. In the `:game` process the Application's base is wrapped
+     * in a GameResourceContext so the *game's* storage lands per game;
+     * resolving launcher paths through that wrapper would re-root them under
+     * `<game>/gamedata/<game>/` — extraction, modpack apply and the fusion
+     * config's BepInEx root would then disagree with the launcher process
+     * about where anything lives. Per-game redirection belongs to the game's
+     * view of storage, not to the launcher's path bookkeeping.
      */
     fun install(context: Context) {
-        appContext = context.applicationContext
+        appContext = GameResourceContext.unwrapToRootContext(context.applicationContext)
     }
 
     /** The launcher package name, which is what distinguishes test from production. */
