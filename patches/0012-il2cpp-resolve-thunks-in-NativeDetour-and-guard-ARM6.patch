@@ -13,8 +13,7 @@ Depends-On: 0009-il2cpp-fix-the-arm64-export-thunk-target-arith
 ---
  .../Hook/ExportThunkResolver.cs               | 39 +++++++++++++++++++
  .../BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs |  7 +++-
- .../BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs |  2 +-
- 3 files changed, 46 insertions(+), 2 deletions(-)
+ 2 files changed, 45 insertions(+), 1 deletion(-)
 
 diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs
 index 34b96b5..ed6cd46 100644
@@ -84,19 +83,3 @@ index 90ac126..40989b6 100644
          Detour = Marshal.GetFunctionPointerForDelegate(detour);
          SpecialReturnBuffer = specialReturnBuffer;
          Apply();
-diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
-index 53aec30..e586940 100644
---- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
-+++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
-@@ -22,7 +22,7 @@ public class IL2CPPChainloader : BaseChainloader<BasePlugin>
- 
-     private static readonly ConfigEntry<bool> ConfigUnityLogging = ConfigFile.CoreConfig.Bind(
-      "Logging", "UnityLogListening",
--     true,
-+     false,
-      "Enables showing unity log messages in the BepInEx logging system.");
- 
-     private static readonly ConfigEntry<bool> ConfigDiskWriteUnityLog = ConfigFile.CoreConfig.Bind(
--- 
-2.53.0
-
