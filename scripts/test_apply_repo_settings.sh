@@ -14,6 +14,8 @@
 #     `verified` tag, and only admins/maintainers may bypass creation;
 #   - the release environment must allow only main and v* tags, and its four
 #     secret names must be present without reading values;
+#   - a missing secret name must fail before any mutation, not after settings
+#     have already changed;
 #   - a second apply must update, not duplicate, the tag rule or policies;
 #   - a token without admin permission must fail before any mutation.
 set -uo pipefail
@@ -278,6 +280,25 @@ check "Actions may create pull requests for the sync" \
 check "secret names are reported" \
     grep -q "release environment secret names present: RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD" "$WORK/output"
 check_absent_text "secret values are never printed" "dummy-secret-value" "$WORK/output"
+
+echo
+echo "== fail closed on missing secret names =="
+healthy_policies='[{"id":1,"name":"main","type":"branch"},{"id":2,"name":"v*","type":"tag"}]'
+set_state true 42 "$healthy_policies" '["RELEASE_KEYSTORE_BASE64"]'
+reset_calls
+if run_settings --apply; then
+    echo "FAIL  apply with missing secret names exited 0"
+    fails=$((fails + 1))
+else
+    echo "ok    apply with missing secret names fails"
+fi
+for missing_name in RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+    check "missing secret name $missing_name is reported" grep -q "$missing_name" "$WORK/output"
+done
+check "missing secret names make no mutating call" \
+    bash -c '[ ! -s "$1" ]' _ "$WORK/mutations"
+# Restore the full list so the second-apply cases start from a healthy state.
+set_state true 42 "$healthy_policies" "$secrets_json"
 
 echo
 echo "== second apply =="

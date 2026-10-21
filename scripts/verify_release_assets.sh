@@ -15,16 +15,17 @@
 #
 # This is the consumer half for releases: given a tag, download exactly what a
 # user would download and verify it the way a user should - the full asset set,
-# the checksum, the Sigstore statement, the signing certificate, the
-# stable/pre-release state, and the fact that the release is not a draft.
+# the checksum, the Sigstore attestations (APK, SBOM, and provenance), the
+# signing certificate, the stable/pre-release state, and the fact that the
+# release is not a draft.
 #
 # WHY IT FAILS CLOSED
 #
 # A missing asset, a checksum mismatch, a bundle that does not vouch for the
-# APK, an APK signed by a different certificate, a missing gh, apksigner, or
-# openssl, or a gh too old for `attestation` all fail loudly rather than
-# degrading to "unverified but continuing". There is no continue here: a
-# consumer that cannot verify must say so.
+# APK, SBOM, or provenance, an APK signed by a different certificate, a missing
+# gh, apksigner, or openssl, or a gh too old for `attestation` all fail loudly
+# rather than degrading to "unverified but continuing". There is no continue
+# here: a consumer that cannot verify must say so.
 #
 # USAGE
 #   scripts/verify_release_assets.sh <tag> [output-dir]
@@ -182,13 +183,28 @@ fi
 echo "  [OK]     checksum matches the published manifest"
 
 # --- 4. origin: the shipped bundle must vouch for these exact bytes ---------
-if gh attestation verify "$OUT/$EXPECTED_APK" --bundle "$OUT/$EXPECTED_BUNDLE" --repo "$REPO_NAME" >/dev/null 2>&1; then
-    echo "  [OK]     Sigstore bundle vouches for this APK (repo: $REPO_NAME)"
-else
-    echo "[FAIL]   attestation does not vouch for this APK" >&2
-    echo "         bundle: $EXPECTED_BUNDLE" >&2
-    exit 1
-fi
+# The producers attest the APK, the SBOM, and the provenance separately. One
+# valid statement for the APK says nothing about the other two, so each subject
+# is verified against the same bundle and a miss names the subject.
+ATTESTED_SUBJECTS=(
+    "$EXPECTED_APK"
+    "sbom.spdx.json"
+    "provenance.json"
+)
+for subject in "${ATTESTED_SUBJECTS[@]}"; do
+    case "$subject" in
+        "$EXPECTED_APK") subject_label="this APK" ;;
+        "sbom.spdx.json") subject_label="the SBOM (sbom.spdx.json)" ;;
+        "provenance.json") subject_label="the provenance (provenance.json)" ;;
+        *) subject_label="$subject" ;;
+    esac
+    if ! gh attestation verify "$OUT/$subject" --bundle "$OUT/$EXPECTED_BUNDLE" --repo "$REPO_NAME" >/dev/null 2>&1; then
+        echo "[FAIL]   attestation does not vouch for $subject_label" >&2
+        echo "         bundle: $EXPECTED_BUNDLE" >&2
+        exit 1
+    fi
+done
+echo "  [OK]     Sigstore bundle vouches for the APK, SBOM, and provenance (repo: $REPO_NAME)"
 
 # --- 5. signing identity -----------------------------------------------------
 if ! SIGNER_OUT="$(apksigner verify --print-certs "$OUT/$EXPECTED_APK" 2>&1)"; then

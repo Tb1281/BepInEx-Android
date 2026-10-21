@@ -9,7 +9,7 @@ with `scripts/apply_repo_settings.sh`; the script is the source of truth.
 
 - A release is a GitHub Release asset, never a git commit.
 - A stable release requires build-verified, release-verified, and device-verified.
-- Only `vMAJOR.MINOR.PATCH` and `vMAJOR.MINOR.PATCH-<label>.<number>` tags on `main` create releases.
+- Only `vMAJOR.MINOR.PATCH` and `vMAJOR.MINOR.PATCH-<label>` tags on `main` create releases. A pre-release label may end in a decimal ordinal, as in `v0.0.0-rc1`.
 - The private release key never enters git or a release asset.
 - `sync-upstream` artifacts are not releases.
 
@@ -34,7 +34,7 @@ with `scripts/apply_repo_settings.sh`; the script is the source of truth.
    ```
 
    The script is idempotent and fails closed before any mutation without admin
-   permission. It also requires the four secret names above to exist, sets the
+   permission or when a release secret name is missing. It also sets the
    default workflow token read-only, and allows Actions to create pull requests
    for the sync path. No workflow approves pull requests, and the required
    approval count is zero, so the approval capability does not satisfy a review
@@ -112,12 +112,13 @@ scripts/verify_release_assets.sh vX.Y.Z
 ```
 
 The script downloads what a user downloads and checks the complete asset set,
-the checksum manifest, the Sigstore bundle, the APK signer certificate against
-the repository trust anchor `provenance/release-cert.sha256`, the published
-certificate and fingerprint against the same anchor, and the GitHub Release
-state. It needs `gh`, `apksigner`, and `openssl` on `PATH`; `verify-release.yml`
-installs `build-tools;35.0.0` and runs this automatically after `ship-release`
-publishes. Releases created outside that path can be checked with a manual
+the checksum manifest, the Sigstore attestations for the APK, SBOM, and
+provenance, the APK signer certificate against the repository trust anchor
+`provenance/release-cert.sha256`, the published certificate and fingerprint
+against the same anchor, and the GitHub Release state. It needs `gh`,
+`apksigner`, and `openssl` on `PATH`; `verify-release.yml` installs
+`build-tools;35.0.0` and runs this automatically after `ship-release` publishes.
+Releases created outside that path can be checked with a manual
 `workflow_dispatch`.
 
 A normal run accepts a pre-release. Use `--require-stable` only after
@@ -135,8 +136,11 @@ the repository.
 ## Promote the release
 
 Device verification is recorded in the release issue using the matrix in
-`docs/progress.md`. Promotion is blocked while the Pine license review or any
-matrix row is unresolved.
+`docs/progress.md`. The workflow enforces only the stable tag, remote `verified`
+coverage, the full asset set, the certificate/fingerprint, and the recorded
+device-verification confirmation. The Pine license review and the device matrix
+are a maintainer checklist, not an automated gate: complete them before
+promotion, but a green workflow does not prove them.
 
 ```bash
 gh workflow run promote-release.yml \
@@ -165,8 +169,44 @@ scripts/verify_release_assets.sh --require-stable vX.Y.Z
   ```bash
   gh release edit vX.Y.Z --prerelease
   ```
-- **Malicious or compromised**: delete the release assets, publish an advisory, and rotate the key. Rotation requires a new applicationId or every user uninstalling and reinstalling.
-- **Key loss**: existing users cannot update. Publish the recovery procedure (new applicationId or reinstall).
+- **Malicious or compromised**: delete the release assets, publish an advisory, and rotate the key. See [Key rotation](#key-rotation).
+- **Key loss**: existing users cannot update. Follow [Key rotation](#key-rotation).
+
+## Key rotation
+
+Rotate when the release key is lost or believed compromised. Rotation changes
+the signing identity, so Android cannot update an existing install in place;
+plan for a reinstall, and never describe rotation as preserving app data.
+
+1. Generate a new RSA-4096 key and certificate outside the repository:
+
+   ```bash
+   keytool -genkeypair -v -keystore release-new.p12 -storetype PKCS12 \
+     -alias bepinex-release -keyalg RSA -keysize 4096 -validity 10000
+   ```
+
+   Use a new password. Keep the keystore and password files offline; GitHub
+   secrets are write-only and cannot be downloaded later.
+2. Register the four secrets in the `release` environment:
+   `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
+   and `RELEASE_KEY_PASSWORD`. Base64-encode the keystore without line breaks.
+3. Commit the new public certificate as `provenance/release-cert.pem` and its
+   SHA-256 fingerprint as `provenance/release-cert.sha256` in the same pull
+   request, then run `scripts/apply_repo_settings.sh --apply` so the environment
+   still has all four secret names.
+4. Bump the application ID (for example, to `com.bepinex.android.v2`) in the
+   launcher and every reference in the release path. The old key cannot update
+   in place, so users must uninstall the old package and install the new one;
+   app data is not migrated.
+5. Cut a pre-release (`vX.Y.Z-rc1`) and verify it with
+   `scripts/verify_release_assets.sh`. Keep the old releases and tags available
+   for existing users.
+6. Publish an advisory in the release notes and a tracking issue with the
+   uninstall/reinstall steps, the new application ID, and the new certificate
+   fingerprint.
+7. Back up the new keystore and passwords offline. Rehearse the whole path on
+   the rc, including the reinstall and consumer verification, before cutting a
+   stable release.
 
 ## Rehearsal record (2026-10-20)
 

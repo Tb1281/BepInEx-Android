@@ -21,6 +21,8 @@
 #   stable release already exists for the tag          -> FAIL
 #   pre-release below the highest stable tag           -> FAIL
 #   pre-release above the highest stable tag           -> PASS
+#   rc2 above rc1, and stable above both                -> PASS
+#   pre-release rank 0, rank 99+, or major above 20     -> FAIL
 #   missing release secret                             -> FAIL, names the value
 #   unreadable keystore / wrong alias or password       -> FAIL
 #   wrong key certificate                              -> FAIL
@@ -41,6 +43,11 @@ SCRIPT="$REPO/scripts/release_preflight.sh"
 TAG_SHA="1111111111111111111111111111111111111111"
 MAIN_SHA="2222222222222222222222222222222222222222"
 VERIFIED_SHA="3333333333333333333333333333333333333333"
+# Deliberately present, deliberately unrelated to the tag or remote verified
+# ref. A script that treats the local `verified` ref as authoritative reads this
+# value and fails coverage instead of passing on the remote result.
+LOCAL_VERIFIED_SHA="4444444444444444444444444444444444444444"
+export LOCAL_VERIFIED_SHA
 GOOD_FP="$(tr -d '[:space:]' < "$REPO/provenance/release-cert.sha256" | tr 'A-F' 'a-f')"
 GOOD_FP_COLON="$(printf '%s' "$GOOD_FP" | fold -w2 | paste -sd: | tr 'a-f' 'A-F')"
 BAD_FP_COLON="00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
@@ -57,6 +64,8 @@ case "\$*" in
     "rev-parse --verify --quiet \${tag}^{commit}")
         [ "\$mode" = "tagnotfound" ] && exit 1
         printf '%s\n' "$TAG_SHA"; exit 0 ;;
+    "rev-parse --verify --quiet verified^{commit}")
+        printf '%s\n' "$LOCAL_VERIFIED_SHA"; exit 0 ;;
     "ls-remote --heads origin main")
         printf '%s\trefs/heads/main\n' "$MAIN_SHA"; exit 0 ;;
     "ls-remote --tags origin refs/tags/verified")
@@ -74,6 +83,9 @@ case "\$*" in
         set -- \$*
         if [ "\$mode" = "notmain" ] && [ "\${4:-}" = "$MAIN_SHA" ]; then exit 1; fi
         if [ "\$mode" = "notverified" ] && [ "\${4:-}" = "$VERIFIED_SHA" ]; then exit 1; fi
+        # Reading the stale local ref would use this unrelated commit, which
+        # cannot cover a tag on main.
+        if [ "\${4:-}" = "$LOCAL_VERIFIED_SHA" ]; then exit 1; fi
         exit 0 ;;
     "fetch --quiet --no-tags origin refs/tags/verified")
         exit 0 ;;
@@ -217,38 +229,68 @@ run_case() { # run_case <label> <want-rc> <mode> <tag> <--build|--verify-only> [
 echo "== release_preflight.sh =="
 
 run_case "stable tag on main passes" 0 ok v1.2.3 --build
-[ "$(value_of version_name "$FIX/github-output-case-1")" = "1.2.3" ] \
+[ "$(value_of version_name "$LAST_OUT")" = "1.2.3" ] \
     && echo "ok    stable version_name" || { echo "FAIL  stable version_name"; fails=$((fails + 1)); }
-[ "$(value_of version_code "$FIX/github-output-case-1")" = "10020032" ] \
-    && echo "ok    stable version_code" || { echo "FAIL  stable version_code"; fails=$((fails + 1)); }
-[ "$(value_of is_prerelease "$FIX/github-output-case-1")" = "0" ] \
+stable_code="$(value_of version_code "$LAST_OUT")"
+[ "$stable_code" = "100200399" ] \
+    && echo "ok    stable version_code" || { echo "FAIL  stable version_code: $stable_code"; fails=$((fails + 1)); }
+[ "$(value_of is_prerelease "$LAST_OUT")" = "0" ] \
     && echo "ok    stable is_prerelease=0" || { echo "FAIL  stable is_prerelease"; fails=$((fails + 1)); }
-[ -n "$(value_of keystore_path "$FIX/github-output-case-1")" ] \
+[ -n "$(value_of keystore_path "$LAST_OUT")" ] \
     && echo "ok    stable keystore_path emitted" || { echo "FAIL  stable keystore_path"; fails=$((fails + 1)); }
 
 run_case "pre-release tag passes" 0 ok v1.3.0-rc1 --build
-[ "$(value_of version_name "$FIX/github-output-case-2")" = "1.3.0-rc1" ] \
+[ "$(value_of version_name "$LAST_OUT")" = "1.3.0-rc1" ] \
     && echo "ok    pre-release version_name" || { echo "FAIL  pre-release version_name"; fails=$((fails + 1)); }
-[ "$(value_of version_code "$FIX/github-output-case-2")" = "10030001" ] \
+[ "$(value_of version_code "$LAST_OUT")" = "100300001" ] \
     && echo "ok    pre-release version_code" || { echo "FAIL  pre-release version_code"; fails=$((fails + 1)); }
-[ "$(value_of is_prerelease "$FIX/github-output-case-2")" = "1" ] \
+[ "$(value_of is_prerelease "$LAST_OUT")" = "1" ] \
     && echo "ok    pre-release is_prerelease=1" || { echo "FAIL  pre-release is_prerelease"; fails=$((fails + 1)); }
 
 run_case "verified tag is not a release tag" 1 ok verified --build
 run_case "malformed tag fails" 1 ok v1.2 --build
 run_case "non-v tag fails" 1 ok 1.2.3 --build
 run_case "leading zero fails" 1 ok v01.2.3 --build
+run_case "major version above 20 fails" 1 ok v21.0.0 --build
 run_case "tag not on main fails" 1 notmain v1.2.3 --build
 run_case "tag not covered by verified fails" 1 notverified v1.2.3 --build
 run_case "tag not found fails" 1 tagnotfound v1.2.3 --build
 
-# v1.2.3-rc1 (10020031) must be newer than v1.2.2 stable (10020022) but older
-# than v1.2.3 stable (10020032). The old formula made the first and third
-# identical, which is the collision this fixture now pins.
+# v1.2.3-rc1 (100200301) must be newer than v1.2.2 stable (100200299) and
+# older than v1.2.3 stable (100200399). v1.2.3-rc2 (100200302) sits between
+# them, so the pre-release ordinal, not only the stable/pre-release channel,
+# is ordered.
 echo "v1.2.2" > "$FIX/releases"
 run_case "pre-release above last stable passes" 0 ok v1.2.3-rc1 --build
-[ "$(value_of version_code "$FIX/github-output-case-10")" = "10020031" ] \
-    && echo "ok    pre-release version_code" || { echo "FAIL  pre-release version_code"; fails=$((fails + 1)); }
+rc1_code="$(value_of version_code "$LAST_OUT")"
+[ "$rc1_code" = "100200301" ] \
+    && echo "ok    rc1 version_code" || { echo "FAIL  rc1 version_code: $rc1_code"; fails=$((fails + 1)); }
+
+run_case "pre-release rc2 passes" 0 ok v1.2.3-rc2 --build
+rc2_code="$(value_of version_code "$LAST_OUT")"
+[ "$rc2_code" = "100200302" ] \
+    && echo "ok    rc2 version_code" || { echo "FAIL  rc2 version_code: $rc2_code"; fails=$((fails + 1)); }
+[ "$rc2_code" -gt "$rc1_code" ] \
+    && echo "ok    rc2 is newer than rc1" || { echo "FAIL  rc2 is not newer than rc1"; fails=$((fails + 1)); }
+[ "$stable_code" -gt "$rc2_code" ] \
+    && echo "ok    stable is newer than rc2" || { echo "FAIL  stable is not newer than rc2"; fails=$((fails + 1)); }
+[ "$rc1_code" -lt "$stable_code" ] \
+    && echo "ok    rc1 is older than stable" || { echo "FAIL  rc1 is not older than stable"; fails=$((fails + 1)); }
+
+# The ordinal is the trailing decimal run, not a fixed rcN shape: a dot before
+# the number, a named label, or no number at all still derives a rank.
+run_case "dotted pre-release ordinal parses" 0 ok v1.2.3-rc.2 --build
+[ "$(value_of version_code "$LAST_OUT")" = "100200302" ] \
+    && echo "ok    rc.2 version_code" || { echo "FAIL  rc.2 version_code"; fails=$((fails + 1)); }
+run_case "named pre-release ordinal parses" 0 ok v1.2.3-beta10 --build
+[ "$(value_of version_code "$LAST_OUT")" = "100200310" ] \
+    && echo "ok    beta10 version_code" || { echo "FAIL  beta10 version_code"; fails=$((fails + 1)); }
+run_case "pre-release without a number is first" 0 ok v1.2.3-rc --build
+[ "$(value_of version_code "$LAST_OUT")" = "100200301" ] \
+    && echo "ok    unnumbered pre-release version_code" || { echo "FAIL  unnumbered pre-release version_code"; fails=$((fails + 1)); }
+
+run_case "pre-release rank 0 fails" 1 ok v1.2.3-rc0 --build
+run_case "pre-release rank 99 fails" 1 ok v1.2.3-rc99 --build
 
 echo "v1.2.3" > "$FIX/releases"
 run_case "non-monotonic stable fails" 1 nonmonotonic v1.2.2 --build
@@ -257,9 +299,9 @@ echo "v1.2.2" > "$FIX/releases"
 run_case "stable release already exists fails" 1 equalstable v1.2.3 --build
 printf '%s\n' "v1.2.2" "v1.1.0" > "$FIX/releases"
 
-# The remote is authoritative. The git stub does not answer a local
-# `rev-parse verified` call with the covering commit, so a script that used the
-# local ref would fail this case; the log assertion catches it explicitly.
+# The remote is authoritative. The local ref is deliberately present and points
+# at an unrelated commit, so a script that read it would fail coverage; the log
+# assertion catches the read explicitly even if the verdict happened to pass.
 run_case "stale local verified is never read" 0 ok v1.2.3 --build
 if grep -q "rev-parse.*verified" "$FIX/git-calls"; then
     echo "FAIL  stale local verified: preflight read a local verified ref"

@@ -35,7 +35,8 @@
 # REQUIREMENTS
 #   gh, a token with administration permission on GITHUB_REPOSITORY, and the
 #   `release` environment with its four secrets. The script fails closed before
-#   any mutation when the token is not an administrator.
+#   any mutation when the token is not an administrator or a secret name is
+#   missing.
 # ==============================================================================
 set -euo pipefail
 
@@ -111,6 +112,27 @@ admin="$(get "repos/$REPO" '.permissions.admin')" \
     || die "cannot read repository $REPO"
 [ "$admin" = "true" ] \
     || die "GH_TOKEN is not an administrator of $REPO; refusing to change protections"
+
+# Validate the release environment before the first mutation. Mutating first and
+# discovering an unbuildable environment afterwards leaves a half-applied
+# contract; this read-only check keeps a bad token or missing secret from
+# changing anything. The API exposes names, never values.
+secret_names="$(get "repos/$REPO/environments/release/secrets" '.secrets[]?.name')" \
+    || die "cannot read release environment secret names"
+missing=()
+for secret_name in \
+    RELEASE_KEYSTORE_BASE64 \
+    RELEASE_KEYSTORE_PASSWORD \
+    RELEASE_KEY_ALIAS \
+    RELEASE_KEY_PASSWORD; do
+    if ! printf '%s\n' "$secret_names" | grep -qx "$secret_name"; then
+        missing+=("$secret_name")
+    fi
+done
+if [ "${#missing[@]}" -ne 0 ]; then
+    die "release environment is missing secret names: ${missing[*]} (values are never read)"
+fi
+say "release environment secret names present: RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD"
 
 # GitHub reports check-run names, not the workflow name. These are the two jobs
 # in verify-provenance.yml that must pass before main can merge. Requiring the
@@ -251,25 +273,6 @@ for spec in "branch:main" "tag:v*"; do
         mutate POST "repos/$REPO/environments/release/deployment-branch-policies" "$policy_body"
     fi
 done
-
-# The API exposes names, never values. Checking the names catches an environment
-# that exists but cannot build a release, without putting any secret in output.
-secret_names="$(get "repos/$REPO/environments/release/secrets" '.secrets[]?.name')" \
-    || die "cannot read release environment secret names"
-missing=()
-for secret_name in \
-    RELEASE_KEYSTORE_BASE64 \
-    RELEASE_KEYSTORE_PASSWORD \
-    RELEASE_KEY_ALIAS \
-    RELEASE_KEY_PASSWORD; do
-    if ! printf '%s\n' "$secret_names" | grep -qx "$secret_name"; then
-        missing+=("$secret_name")
-    fi
-done
-if [ "${#missing[@]}" -ne 0 ]; then
-    die "release environment is missing secret names: ${missing[*]} (values are never read)"
-fi
-say "release environment secret names present: RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD"
 
 # The release-tag build already requests contents: read and the ship job
 # requests contents: write explicitly, so this default only closes the paths
