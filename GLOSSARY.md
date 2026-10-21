@@ -52,9 +52,9 @@ _Avoid_: release key
 A text file in `provenance/*.env` that fixes an upstream dependency to an immutable commit or package hash.
 _Avoid_: version, latest
 
-**Patch queue**:
-The ordered patches in `patches/` replayed onto the pinned BepInEx commit. Skipping one ships a missing adaptation.
-_Avoid_: fork, diff
+**Patch manifest**:
+The generated JSON interface of the patch queue (`patches/manifest.json`): purpose, touched files, depends-on, ADR references and compile-unit status per patch. It is regenerated from the patches and drift-tested, not authored by hand.
+_Avoid_: patch list, queue metadata
 
 **Patch conflict report**:
 The read-only diagnosis printed by `report_patch_conflict.sh` when a queue entry does not replay: the failing patch and its position, each touched file's pre-image blob and base commit, the conflict markers, and upstream's change. It never resolves the conflict.

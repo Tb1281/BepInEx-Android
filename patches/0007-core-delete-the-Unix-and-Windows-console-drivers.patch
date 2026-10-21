@@ -9,6 +9,8 @@ reachable from an app process. Both drivers P/Invoke into APIs that are absent
 there, so they are deleted rather than left to fail at probe time. The Android
 driver added earlier becomes the only implementation, together with the
 ConsoleWriter helper the Windows driver needed.
+
+Depends-On: 0002-logging-route-the-console-and-BepInEx-log-to-logcat
 ---
  BepInEx.Core/Console/Unix/ConsoleWriter.cs    |  55 -----
  .../Console/Unix/LinuxConsoleDriver.cs        | 113 ----------
