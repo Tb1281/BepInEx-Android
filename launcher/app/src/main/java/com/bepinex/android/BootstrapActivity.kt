@@ -488,7 +488,7 @@ class BootstrapActivity : Activity() {
             ?: intent.getStringExtra(EXTRA_ACTIVE_MODPACK)?.let { if (it.isNotEmpty()) arrayListOf(it) else null }
 
         if (activeModpacks.isNullOrEmpty()) {
-            BepInExLog.i("Vanilla mode  -- restoring vanilla cfg/logs")
+            BepInExLog.i("Vanilla mode  -- restoring vanilla state (logs)")
             modpackManager.clearActiveMods(targetPackage)
             runBlocking { AppSettings.setActiveModpack(this@BootstrapActivity, targetPackage, null) }
             runBlocking { AppSettings.setActiveModpacks(this@BootstrapActivity, targetPackage, emptyList()) }
