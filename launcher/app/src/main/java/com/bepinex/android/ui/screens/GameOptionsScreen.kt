@@ -141,7 +141,6 @@ fun GameOptionsScreen(
                 Text(
                     text = stringResource(R.string.settings_ingame_section),
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(start = 4.dp)
                 )
@@ -157,7 +156,7 @@ fun GameOptionsScreen(
                         // Floating Log in Game
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_floating_log), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_floating_log))
                             },
                             supportingContent = { Text(stringResource(R.string.settings_floating_log_desc)) },
                             leadingContent = {
@@ -180,7 +179,7 @@ fun GameOptionsScreen(
                         // Screen Dim on Idle
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_screen_dim), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_screen_dim))
                             },
                             supportingContent = { Text(stringResource(R.string.settings_screen_dim_desc)) },
                             leadingContent = {
