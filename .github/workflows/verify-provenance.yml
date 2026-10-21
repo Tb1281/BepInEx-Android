@@ -375,6 +375,9 @@ jobs:
       - name: The patch gate refuses a tampered tree
         run: ./scripts/test_verify_patches.sh
 
+      - name: The patch manifest stays in sync with the queue
+        run: ./scripts/test_patch_manifest.sh
+
       - name: The patch queue can be diagnosed and rebaselined
         run: ./scripts/test_patch_queue_workflow.sh
 

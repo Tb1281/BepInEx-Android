@@ -51,6 +51,7 @@ bytes read from the repository:
   `test_workflow_triggers.sh`, `test_generate_sbom.sh`,
   `test_emit_provenance.sh`, `test_mark_verified.sh`, `test_ci_failure_notice.sh`,
   `test_patch_queue_workflow.sh`,
+  `test_patch_manifest.sh`,
   `test_launcher_compile_gate.sh`, `test_release_preflight.sh`,
   `test_apply_repo_settings.sh`, `test_release_artifacts.sh`,
   `test_verify_release_assets.sh`).

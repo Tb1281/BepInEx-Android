@@ -12,6 +12,7 @@ makes reproducible builds impossible. Point it at the newest published
 prerelease instead; the transitive Disarm/Iced that come with it both
 exist upstream.
 
+Depends-On: 0011-build-pin-monomod-to-the-rebuilt-Android-package
 diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj b/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj
 index a6a6d51..ec9814e 100644
 --- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj

@@ -8,6 +8,8 @@ Subject: [PATCH] il2cpp: resolve thunks in NativeDetour and guard ARM64 inline
   to follow branch stubs (B) before installing inline hooks.
 - Guard AArch64 inline hooks against destinations that have RET within 16 bytes.
 - Default UnityLogListening to false to align with Android native logcat.
+
+Depends-On: 0009-il2cpp-fix-the-arm64-export-thunk-target-arith
 ---
  .../Hook/ExportThunkResolver.cs               | 39 +++++++++++++++++++
  .../BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs |  7 +++-

@@ -12,6 +12,8 @@ is a supply-chain risk; resolve them from the in-repo local-nuget directory
 rebuilt by scripts/build_il2cppinterop.sh instead. Backup copy from upstream's
 may-2026 feed is gone, so the Samboy reference stays dead — this makes the
 build self-contained.
+
+Depends-On: 0005-build-retarget-the-project-files-at-the-Android-IL2C
 ---
  .../Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj  | 6 +++---
  nuget.config                                                | 6 +++++-

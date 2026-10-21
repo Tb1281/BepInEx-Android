@@ -24,6 +24,8 @@ Release_NetFramework/Release_Unity configurations that existed for those
 desktop distributions, and drops a SharedMSBuildProjectFiles section that
 referenced a project file no longer present. Directory.Build.props is still
 picked up automatically by MSBuild.
+
+Depends-On: 0004-il2cpp-hook-through-libfusion-and-resolve-export-stu, 0006-core-delete-the-Mono-runtime
 ---
  BepInEx.sln                                   |  89 +----
  Runtimes/NET/BepInEx.NET.Common/BasePlugin.cs |  30 --
