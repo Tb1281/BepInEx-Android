@@ -48,8 +48,12 @@ class MainActivity : AppCompatActivity() {
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
+        // The result carries no game context; the toggle parked the package
+        // in the ViewModel. Consume it (read-and-clear) whichever way the
+        // user decided, so it cannot leak into a later enable.
+        val pkg = viewModel.takePendingFloatingLogPackage()
         if (Settings.canDrawOverlays(this)) {
-            enableFloatingLog()
+            if (pkg != null) enableFloatingLog(pkg)
         } else {
             Toast.makeText(this, getString(R.string.permission_denied), Toast.LENGTH_SHORT).show()
         }
@@ -60,32 +64,38 @@ class MainActivity : AppCompatActivity() {
     // silent — request once when the user enables the floating log, never gate.
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { _ -> enableFloatingLog() }
-
-    // The game a floating-log enable is in flight for (#36: the option is
-    // per game now). The overlay and notification permission results arrive
-    // asynchronously, after the toggle that started them, so the package
-    // name is carried here instead of being re-derived when they land.
-    private var pendingFloatingLogPackage: String? = null
-
-    private fun enableFloatingLog() {
-        val pkg = pendingFloatingLogPackage
-            ?: viewModel.uiState.value.selectedGame?.packageName
-        if (pkg != null) {
-            viewModel.setFloatingLogInGame(pkg, true)
-        }
-        ensureNotificationPermission()
-        if (pkg != null) {
-            com.bepinex.android.log.LogOverlayService.start(this, pkg)
-        }
+    ) { _ ->
+        // Same consumption as the overlay result: take the parked package
+        // exactly once. The result value itself is ignored by design (the
+        // permission never gates, see ensureNotificationPermission), but the
+        // enable it belongs to still continues — for the parked game only.
+        // A null package means the parked enable is gone (e.g. the process
+        // was recreated); abandon it rather than guessing a game.
+        val pkg = viewModel.takePendingFloatingLogPackage()
+        if (pkg != null) enableFloatingLog(pkg)
     }
 
-    private fun ensureNotificationPermission() {
+    // Enables the floating log for exactly [packageName]. Every caller
+    // either is the toggle itself (which knows its game) or a permission
+    // result that consumed the parked package — the game is never
+    // re-derived here (no selected-game fallback), so an enable can never
+    // be recorded for the wrong game.
+    private fun enableFloatingLog(packageName: String) {
+        viewModel.setFloatingLogInGame(packageName, true)
+        ensureNotificationPermission(packageName)
+        com.bepinex.android.log.LogOverlayService.start(this, packageName)
+    }
+
+    private fun ensureNotificationPermission(packageName: String) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         if (ContextCompat.checkSelfPermission(
                 this, android.Manifest.permission.POST_NOTIFICATIONS
             ) != PackageManager.PERMISSION_GRANTED
         ) {
+            // The result comes back without any game context; park the
+            // package in the ViewModel so the result is attributed to the
+            // game whose enable asked for it.
+            viewModel.parkPendingFloatingLogPackage(packageName)
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
@@ -130,25 +140,26 @@ class MainActivity : AppCompatActivity() {
                     onDynamicColorChanged = { viewModel.setDynamicColor(it) },
                     onAnimationDisabledChanged = { viewModel.setAnimationDisabled(it) },
                     onFloatingLogInGameChanged = { gamePackage, enabled ->
-                        if (enabled) {
-                            // The permission results come back without
-                            // any game context; remember whose toggle this
-                            // is before launching into them.
-                            pendingFloatingLogPackage = gamePackage
-                        }
                         if (enabled && !Settings.canDrawOverlays(this@MainActivity)) {
                             try {
                                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
                                     data = Uri.parse("package:$packageName")
                                 }
                                 overlayPermissionLauncher.launch(intent)
+                                // The overlay result comes back without
+                                // any game context; park whose toggle this
+                                // is (in the ViewModel, so it survives
+                                // recreation) for the result to consume.
+                                // Parked only after launch() succeeded, so
+                                // the failure path below leaves nothing parked.
+                                viewModel.parkPendingFloatingLogPackage(gamePackage)
                             } catch (e: Exception) {
                                 BepInExLog.e("Failed to open overlay permission settings", e)
                                 Toast.makeText(this@MainActivity, "Please grant 'Draw over other apps' in app settings", Toast.LENGTH_LONG).show()
                             }
                         } else {
                             if (enabled) {
-                                enableFloatingLog()
+                                enableFloatingLog(gamePackage)
                             } else {
                                 viewModel.setFloatingLogInGame(gamePackage, false)
                                 com.bepinex.android.log.LogOverlayService.stop(this@MainActivity)

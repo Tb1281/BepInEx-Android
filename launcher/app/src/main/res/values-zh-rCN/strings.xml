@@ -105,6 +105,8 @@
     <string name="settings_disable_animations">禁用动画</string>
     <string name="settings_disable_animations_desc">关闭启动器的界面切换动画。</string>
     <string name="settings_about">关于</string>
+    <string name="settings_application_section">应用</string>
+    <string name="settings_about_desc">许可证、架构和团队致谢</string>
 
     <!-- Confirm Dialogs -->
     <string name="confirm_clear_bepinex_title">清除 BepInEx 文件？</string>

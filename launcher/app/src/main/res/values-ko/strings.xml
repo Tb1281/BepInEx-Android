@@ -105,6 +105,8 @@
     <string name="settings_disable_animations">애니메이션 끄기</string>
     <string name="settings_disable_animations_desc">런처의 화면 전환 애니메이션을 끕니다.</string>
     <string name="settings_about">정보</string>
+    <string name="settings_application_section">애플리케이션</string>
+    <string name="settings_about_desc">라이선스, 아키텍처 및 팀 크레딧</string>
 
     <!-- Confirm Dialogs -->
     <string name="confirm_clear_bepinex_title">BepInEx 파일을 정리하시겠습니까?</string>

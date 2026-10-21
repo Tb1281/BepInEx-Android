@@ -173,6 +173,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // The game a floating-log enable is waiting on (#36). Enabling the
+    // floating log can detour through two system permission flows (overlay,
+    // then notifications), and their results arrive asynchronously with no
+    // game context attached, so the package name is parked here between the
+    // toggle and the result.
+    //
+    // It lives in the ViewModel, not the Activity, so it survives Activity
+    // recreation: changing the in-app language recreates MainActivity while
+    // a permission screen is up, and the result is delivered to the new
+    // instance, which must still attribute the enable to the right game.
+    // (Process death loses it — but then the parked enable is abandoned,
+    // which the consumers below treat as "no game", never as a guess.)
+    //
+    // Consumption is read-and-clear: every path that resolves a permission
+    // result takes the value exactly once, so a stale package can never
+    // leak into a later, unrelated enable. There is deliberately NO
+    // fallback to the selected game — writing "enabled" for whichever game
+    // happens to be selected could turn the overlay on for the wrong game.
+    var pendingFloatingLogPackage: String? = null
+        private set
+
+    fun parkPendingFloatingLogPackage(packageName: String) {
+        pendingFloatingLogPackage = packageName
+    }
+
+    /** Reads and clears the parked package; null when nothing is parked. */
+    fun takePendingFloatingLogPackage(): String? {
+        val pkg = pendingFloatingLogPackage
+        pendingFloatingLogPackage = null
+        return pkg
+    }
+
     // Floating log / screen dim are per-game Game Options (#36): the caller
     // (Game Options screen, via MainActivity's permission flow) always names
     // the game the value belongs to. The Game Options screen observes the
@@ -180,13 +212,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // not mirrored into MainUiState.
     fun setFloatingLogInGame(packageName: String, enabled: Boolean) {
         viewModelScope.launch {
-            AppSettings.setFloatingLogInGameEnabled(getApplication(), packageName, enabled)
+            AppSettings.setFloatingLogInGameEnabled(getApplication<Application>(), packageName, enabled)
         }
     }
 
     fun setScreenDimInGame(packageName: String, enabled: Boolean) {
         viewModelScope.launch {
-            AppSettings.setScreenDimInGameEnabled(getApplication(), packageName, enabled)
+            AppSettings.setScreenDimInGameEnabled(getApplication<Application>(), packageName, enabled)
         }
     }
 
