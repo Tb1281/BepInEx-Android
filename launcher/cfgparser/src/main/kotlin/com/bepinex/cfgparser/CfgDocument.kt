@@ -72,15 +72,31 @@ class CfgEntry internal constructor(
                 )
 
             CfgValueKind.INTEGER -> {
-                val parsed = candidate.toLongOrNull()
-                when {
-                    parsed == null -> ValidationResult.Invalid(
-                        "\"$candidate\" is not valid for $key: expected a whole number."
-                    )
-                    !inIntegerRange(parsed, m?.typeName) -> ValidationResult.Invalid(
-                        "\"$candidate\" is not valid for $key: outside the range of ${m?.typeName}."
-                    )
-                    else -> ValidationResult.Valid
+                if (m?.typeName.equals("UInt64", ignoreCase = true)) {
+                    // UInt64 needs an unsigned parse: a signed Long cannot
+                    // represent values above Long.MAX_VALUE, which are legal
+                    // here and must not be rejected as "not a whole number".
+                    val parsed = candidate.toULongOrNull()
+                    when {
+                        parsed == null -> ValidationResult.Invalid(
+                            "\"$candidate\" is not valid for $key: expected a whole number."
+                        )
+                        parsed !in ULong.MIN_VALUE..ULong.MAX_VALUE -> ValidationResult.Invalid(
+                            "\"$candidate\" is not valid for $key: outside the range of ${m?.typeName}."
+                        )
+                        else -> ValidationResult.Valid
+                    }
+                } else {
+                    val parsed = candidate.toLongOrNull()
+                    when {
+                        parsed == null -> ValidationResult.Invalid(
+                            "\"$candidate\" is not valid for $key: expected a whole number."
+                        )
+                        !inIntegerRange(parsed, m?.typeName) -> ValidationResult.Invalid(
+                            "\"$candidate\" is not valid for $key: outside the range of ${m?.typeName}."
+                        )
+                        else -> ValidationResult.Valid
+                    }
                 }
             }
 
@@ -119,14 +135,38 @@ class CfgEntry internal constructor(
 
     /**
      * Validates [candidate] and, if valid, makes it this entry's value.
-     * The owning document's line for this entry is rewritten in place —
-     * only the value part of the line changes. On [ValidationResult.Invalid]
-     * nothing is modified.
+     * The owning document's line for this entry is rewritten in place:
+     * everything from the value to the end of the line is replaced, the
+     * part before the value is untouched. For choice entries the value
+     * written is the declared spelling of the matched option(s), even
+     * when [candidate] matched only case-insensitively.
+     * On [ValidationResult.Invalid] nothing is modified.
      */
     fun setValue(candidate: String): ValidationResult {
         val result = validate(candidate)
-        if (result is ValidationResult.Valid) owner.applyValue(this, candidate)
+        if (result is ValidationResult.Valid) owner.applyValue(this, canonicalSpelling(candidate))
         return result
+    }
+
+    /**
+     * The spelling [candidate] is written with: for choice entries, each
+     * matched option's declared spelling from the acceptable values;
+     * for every other kind, [candidate] itself.
+     */
+    private fun canonicalSpelling(candidate: String): String {
+        val m = metadata ?: return candidate
+        return when (kind) {
+            CfgValueKind.SINGLE_CHOICE ->
+                m.acceptableValues.firstOrNull { it.equals(candidate, ignoreCase = true) }
+                    ?: candidate
+            CfgValueKind.MULTI_CHOICE ->
+                candidate.split(',').joinToString(", ") { token ->
+                    val trimmed = token.trim()
+                    m.acceptableValues.firstOrNull { it.equals(trimmed, ignoreCase = true) }
+                        ?: trimmed
+                }
+            else -> candidate
+        }
     }
 
     /**
@@ -207,6 +247,11 @@ class CfgDocument private constructor(
         return target.resetToDefault()
     }
 
+    /**
+     * Rewrites [entry]'s line in place: the text before the value is kept
+     * as-is, and the value together with everything after it on the line
+     * is replaced by [candidate].
+     */
     internal fun applyValue(entry: CfgEntry, candidate: String) {
         val line = lines[entry.lineIndex]
         line.text = line.text.substring(0, entry.valueStart) + candidate

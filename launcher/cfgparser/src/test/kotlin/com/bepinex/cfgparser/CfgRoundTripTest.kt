@@ -58,6 +58,20 @@ class CfgRoundTripTest {
     }
 
     @Test
+    fun `CRLF line endings round-trip byte-identically and survive an edit`() {
+        val text = "[S]\r\n" +
+            "\r\n" +
+            "## Desc.\r\n" +
+            "# Setting type: Boolean\r\n" +
+            "# Default value: true\r\n" +
+            "Flag = true\r\n"
+        val doc = CfgDocument.parse(text)
+        assertEquals(text, doc.serialize())
+        assertEquals(ValidationResult.Valid, doc.setValue("S", "Flag", "false"))
+        assertEquals(text.replace("Flag = true", "Flag = false"), doc.serialize())
+    }
+
+    @Test
     fun `document without trailing newline round-trips exactly`() {
         val text = "[S]\nKey = value"
         val doc = CfgDocument.parse(text)
