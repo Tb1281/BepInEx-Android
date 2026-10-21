@@ -351,7 +351,9 @@ class BootstrapActivity : Activity() {
             NativeLibraryManager.addDataLibrary("unity")
             NativeLibraryManager.setupLibraryHooks(config)
 
-            val stagedFile = FusionConfigStore.write(this, config)
+            val pkg = targetPackage
+                ?: throw IllegalStateException("No target package for fusion config staging")
+            val stagedFile = FusionConfigStore.write(this, pkg, config)
             BepInExLog.i("Fusion config staged: ${stagedFile.absolutePath}")
 
             // Start floating log overlay if enabled in settings
