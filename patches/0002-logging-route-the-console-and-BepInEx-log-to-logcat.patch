@@ -176,3 +176,5 @@ index 3aa95c2..40e460b 100644
 -     true,
 +     false,
       "Enables showing unity log messages in the BepInEx logging system.");
+
+     private static readonly ConfigEntry<bool> ConfigDiskWriteUnityLog = ConfigFile.CoreConfig.Bind(
