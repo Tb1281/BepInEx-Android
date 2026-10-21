@@ -15,7 +15,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -55,20 +54,16 @@ fun GameOptionsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = stringResource(R.string.game_options_title),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = gameLabel,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                    // Single-line title only: a two-line title cannot fit
+                    // the fixed-height TopAppBar at enlarged system font
+                    // scales. The game label already appears in the
+                    // identity block at the top of the content below.
+                    Text(
+                        text = stringResource(R.string.game_options_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
@@ -94,7 +89,6 @@ fun GameOptionsScreen(
                     Text(
                         text = gameLabel,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
@@ -118,7 +112,7 @@ fun GameOptionsScreen(
                 ) {
                     ListItem(
                         headlineContent = {
-                            Text(stringResource(R.string.game_options_framework_config), fontWeight = FontWeight.SemiBold)
+                            Text(stringResource(R.string.game_options_framework_config))
                         },
                         supportingContent = { Text(stringResource(R.string.game_options_framework_config_desc)) },
                         leadingContent = {
@@ -140,7 +134,6 @@ fun GameOptionsScreen(
                 Text(
                     text = stringResource(R.string.game_options_danger_zone),
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(start = 4.dp)
                 )
@@ -155,7 +148,7 @@ fun GameOptionsScreen(
                     Column {
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_clear_bepinex), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_clear_bepinex))
                             },
                             supportingContent = { Text(stringResource(R.string.settings_clear_bepinex_desc)) },
                             leadingContent = {
@@ -175,7 +168,7 @@ fun GameOptionsScreen(
 
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_clear_dotnet), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_clear_dotnet))
                             },
                             supportingContent = { Text(stringResource(R.string.settings_clear_dotnet_desc)) },
                             leadingContent = {
