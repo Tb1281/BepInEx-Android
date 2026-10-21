@@ -72,6 +72,12 @@
     <string name="config_editor_discard_msg">您有未保存的更改，确定要放弃吗？</string>
     <string name="config_editor_no_configs">无配置文件</string>
 
+    <!-- Game Options -->
+    <string name="game_options_title">游戏选项</string>
+    <string name="game_options_framework_config">框架配置</string>
+    <string name="game_options_framework_config_desc">编辑为此游戏保存的框架配置文件（BepInEx.cfg）</string>
+    <string name="game_options_danger_zone">危险操作</string>
+
     <!-- Settings -->
     <string name="settings_title">设置</string>
     <string name="settings_appearance_section">外观</string>

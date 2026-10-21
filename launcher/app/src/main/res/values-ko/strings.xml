@@ -72,6 +72,12 @@
     <string name="config_editor_discard_msg">저장되지 않은 변경사항이 있습니다. 취소하시겠습니까?</string>
     <string name="config_editor_no_configs">설정 파일 없음</string>
 
+    <!-- Game Options -->
+    <string name="game_options_title">게임 옵션</string>
+    <string name="game_options_framework_config">프레임워크 설정</string>
+    <string name="game_options_framework_config_desc">이 게임용으로 보관되는 프레임워크 설정 파일(BepInEx.cfg)을 편집합니다</string>
+    <string name="game_options_danger_zone">위험 구역</string>
+
     <!-- Settings -->
     <string name="settings_title">설정</string>
     <string name="settings_appearance_section">화면 및 모양</string>

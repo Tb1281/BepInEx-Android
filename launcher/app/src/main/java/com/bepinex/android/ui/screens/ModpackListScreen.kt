@@ -43,8 +43,7 @@ fun ModpackListScreen(
     onSelectModpack: (Set<String>) -> Unit,
     onOpenModpack: (String) -> Unit,
     onExportModpack: (String) -> Unit,
-    onImportModpack: () -> Unit,
-    onEditGlobalConfig: () -> Unit
+    onImportModpack: () -> Unit
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
@@ -77,13 +76,6 @@ fun ModpackListScreen(
                     }
                 },
                 actions = {
-                    FilledTonalIconButton(onClick = onEditGlobalConfig) {
-                        Icon(
-                            Icons.Filled.Tune,
-                            contentDescription = stringResource(R.string.global_config),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
                     FilledTonalIconButton(onClick = onImportModpack) {
                         Icon(
                             Icons.Filled.FileOpen,
