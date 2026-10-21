@@ -199,8 +199,10 @@ plan for a reinstall, and never describe rotation as preserving app data.
    in place, so users must uninstall the old package and install the new one;
    app data is not migrated.
 5. Cut a pre-release (`vX.Y.Z-rc1`) and verify it with
-   `scripts/verify_release_assets.sh`. Keep the old releases and tags available
-   for existing users.
+   `scripts/verify_release_assets.sh`. Keep the old tags for audit. If the key
+   was compromised, withdraw the old release assets and tell users not to
+   install them; if the key was lost, leave the old releases available for
+   existing users until they reinstall.
 6. Publish an advisory in the release notes and a tracking issue with the
    uninstall/reinstall steps, the new application ID, and the new certificate
    fingerprint.
