@@ -170,15 +170,23 @@ jobs:
 
       # The shipping path (ship-release.yml, the ship job below) runs on a
       # fresh runner: the APK, SBOM and provenance cross the job boundary as
-      # this artifact.
+      # this artifact. The artifact must be flat (all three files at its
+      # root): a multi-path upload preserves directory structure relative to
+      # the least common ancestor (the workspace root), which buries the APK
+      # under launcher/app/build/... and breaks the ship job. Stage into one
+      # directory first; a single-directory upload lands its contents at the
+      # artifact root.
+      - name: Stage the shipping inputs
+        run: |
+          rm -rf ship-inputs && mkdir -p ship-inputs
+          cp launcher/app/build/outputs/apk/release/app-release-aligned.apk ship-inputs/
+          cp sbom.spdx.json provenance.json ship-inputs/
+
       - name: Upload the shipping inputs
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: tag-ship-inputs
-          path: |
-            launcher/app/build/outputs/apk/release/app-release-aligned.apk
-            sbom.spdx.json
-            provenance.json
+          path: ship-inputs/
           retention-days: 1
 
       # Record failure to Issue or close open issue on success

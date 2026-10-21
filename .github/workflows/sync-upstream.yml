@@ -264,15 +264,28 @@ jobs:
       # which runs on a fresh runner: the APK, SBOM and provenance cross the
       # job boundary as this artifact. The attestation is minted there, so it
       # covers the exact bytes the release publishes.
+      #
+      # The artifact must be flat (all three files at its root): a multi-path
+      # upload preserves directory structure relative to the least common
+      # ancestor (the workspace root), which buried the APK under
+      # launcher/app/build/... — ship-release.yml then found no
+      # ship/app-release-aligned.apk, minted a 2-subject attestation instead
+      # of 3, and died in 'Publish Release with Checksums'. Stage into one
+      # directory first; a single-directory upload lands its contents at the
+      # artifact root.
+      - name: Stage the shipping inputs
+        if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
+        run: |
+          rm -rf ship-inputs && mkdir -p ship-inputs
+          cp launcher/app/build/outputs/apk/release/app-release-aligned.apk ship-inputs/
+          cp sbom.spdx.json provenance.json ship-inputs/
+
       - name: Upload the shipping inputs
         if: (steps.sync.outputs.moved == 'true' || inputs.force) && success()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: sync-ship-inputs
-          path: |
-            launcher/app/build/outputs/apk/release/app-release-aligned.apk
-            sbom.spdx.json
-            provenance.json
+          path: ship-inputs/
           retention-days: 1
 
 
