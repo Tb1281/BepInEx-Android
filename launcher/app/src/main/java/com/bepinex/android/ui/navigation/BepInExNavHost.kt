@@ -236,6 +236,11 @@ fun BepInExNavHost(
                             selectedGame?.let {
                                 navController.navigateTab(Modpacks(it.packageName))
                             }
+                        },
+                        onNavigateToGameOptions = {
+                            selectedGame?.let {
+                                navController.navigate(GameOptions(it.packageName))
+                            }
                         }
                     )
                 }
@@ -244,7 +249,6 @@ fun BepInExNavHost(
                 composable<Modpacks> { backStackEntry ->
                     val route = backStackEntry.toRoute<Modpacks>()
                     val packageName = route.packageName
-                    var editingGlobalConfig by remember { mutableStateOf<java.io.File?>(null) }
                     // Refresh modpacks (disk walk: off Main)
                     LaunchedEffect(packageName) {
                         withContext(Dispatchers.IO) {
@@ -301,35 +305,8 @@ fun BepInExNavHost(
                             exportTarget = ExportTarget(packageName, name)
                             exportLauncher.launch("$name.zip")
                         },
-                        onImportModpack = { importModpackLauncher.launch(arrayOf("application/zip", "*/*")) },
-                        onEditGlobalConfig = {
-                            val file = modpackManager.getFrameworkConfigFile(packageName)
-                            if (file.isFile) {
-                                editingGlobalConfig = file
-                            } else {
-                                android.widget.Toast.makeText(
-                                    context,
-                                    context.getString(R.string.global_config_not_created),
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
+                        onImportModpack = { importModpackLauncher.launch(arrayOf("application/zip", "*/*")) }
                     )
-
-                    // Global framework config editor (single copy in the
-                    // runtime config dir - see ModpackManager)
-                    editingGlobalConfig?.let { file ->
-                        ConfigEditorDialog(
-                            configFile = file,
-                            onDismiss = { editingGlobalConfig = null },
-                            onSave = { f, content ->
-                                coroutineScope.launch(Dispatchers.IO) {
-                                    f.writeText(content)
-                                    withContext(Dispatchers.Main) { editingGlobalConfig = null }
-                                }
-                            }
-                        )
-                    }
                 }
 
                 // Modpack detail
@@ -392,17 +369,11 @@ fun BepInExNavHost(
                     }
                 }
 
-                // Settings — a global destination (no route arguments).
-                // The per-game maintenance actions still shown on this
-                // screen target the currently selected game, exactly as
-                // they did when the route carried the package name; with
-                // no game selected the screen hides that card (see
-                // SettingsScreen). Maintenance moves to the per-game
-                // settings screen in #35.
+                // Settings — a global destination (no route arguments):
+                // Launcher Settings only. Per-game maintenance moved to
+                // the Game Options screen in #35.
                 composable<Settings> {
-                    val maintenancePackageName = selectedGame?.packageName
                     SettingsScreen(
-                        maintenancePackageName = maintenancePackageName,
                         themeMode = themeMode,
                         language = language,
                         dynamicColor = dynamicColor,
@@ -416,10 +387,55 @@ fun BepInExNavHost(
                         onDynamicColorChanged = onDynamicColorChanged,
                         onAnimationDisabledChanged = onAnimationDisabledChanged,
                         onFloatingLogInGameChanged = onFloatingLogInGameChanged,
-                        onScreenDimInGameChanged = onScreenDimInGameChanged,
-                        onClearBepInEx = { maintenancePackageName?.let(onClearBepInEx) },
-                        onClearDotnet = { maintenancePackageName?.let(onClearDotnet) }
+                        onScreenDimInGameChanged = onScreenDimInGameChanged
                     )
+                }
+
+                // Game Options — everything specific to one game: its
+                // Framework Config entry and its maintenance actions.
+                // Reached from the game's hero card on the Games screen;
+                // this is the only route into per-game settings now.
+                composable<GameOptions> { backStackEntry ->
+                    val route = backStackEntry.toRoute<GameOptions>()
+                    val packageName = route.packageName
+                    var editingFrameworkConfig by remember { mutableStateOf<java.io.File?>(null) }
+                    GameOptionsScreen(
+                        gameLabel = detectedGames.firstOrNull { it.packageName == packageName }?.label
+                            ?: packageName,
+                        packageName = packageName,
+                        onNavigateBack = { navController.popBackStack() },
+                        onEditFrameworkConfig = {
+                            val file = modpackManager.getFrameworkConfigFile(packageName)
+                            if (file.isFile) {
+                                editingFrameworkConfig = file
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(R.string.global_config_not_created),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        onClearBepInEx = { onClearBepInEx(packageName) },
+                        onClearDotnet = { onClearDotnet(packageName) }
+                    )
+
+                    // Framework config editor (single copy in the runtime
+                    // config dir - see ModpackManager). Whatever editor
+                    // exists is opened here; this destination only owns the
+                    // entry point.
+                    editingFrameworkConfig?.let { file ->
+                        ConfigEditorDialog(
+                            configFile = file,
+                            onDismiss = { editingFrameworkConfig = null },
+                            onSave = { f, content ->
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    f.writeText(content)
+                                    withContext(Dispatchers.Main) { editingFrameworkConfig = null }
+                                }
+                            }
+                        )
+                    }
                 }
 
                 // Log Viewer

@@ -21,12 +21,19 @@ data class ModpackDetail(val packageName: String, val modpackName: String)
 /**
  * Launcher Settings are global (they belong to the launcher app itself, not
  * to any one game), so this destination carries no package name: it must be
- * reachable with no game installed or selected. Per-game maintenance still
- * shown on that screen targets the currently selected game — see
- * BepInExNavHost — until the per-game settings screen (#35) takes it over.
+ * reachable with no game installed or selected. Everything specific to one
+ * game lives behind [GameOptions] instead.
  */
 @Serializable
 data object Settings
+
+/**
+ * Game Options for one installed game (see GLOSSARY.md): the single home
+ * for that game's Framework Config entry and its maintenance actions.
+ * Reached from the game's hero card on the Games screen.
+ */
+@Serializable
+data class GameOptions(val packageName: String)
 
 @Serializable
 data class LogViewer(val packageName: String, val modpackName: String)
