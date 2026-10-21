@@ -25,9 +25,10 @@ import com.bepinex.android.settings.AppSettings
 import com.bepinex.android.ui.theme.BepInExTheme
 
 /**
- * Launcher Settings screen: theme, language, and in-game experience options
- * grouped into M3 cards. Everything here is global to the launcher itself;
- * anything specific to one game lives on the Game Options screen (#35).
+ * Launcher Settings screen: theme and language grouped into M3 cards.
+ * Everything here is global to the launcher itself; anything specific to
+ * one game — including the in-game floating log / screen dim options,
+ * which are per game since #36 — lives on the Game Options screen (#35).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -36,16 +37,12 @@ fun SettingsScreen(
     language: AppSettings.Language,
     dynamicColor: Boolean,
     animationDisabled: Boolean,
-    floatingLogInGame: Boolean,
-    screenDimInGame: Boolean,
     onNavigateBack: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onThemeChanged: (AppSettings.ThemeMode) -> Unit,
     onLanguageChanged: (AppSettings.Language) -> Unit,
     onDynamicColorChanged: (Boolean) -> Unit,
-    onAnimationDisabledChanged: (Boolean) -> Unit,
-    onFloatingLogInGameChanged: (Boolean) -> Unit,
-    onScreenDimInGameChanged: (Boolean) -> Unit
+    onAnimationDisabledChanged: (Boolean) -> Unit
 ) {
     var showThemeMenu by remember { mutableStateOf(false) }
     var showLangMenu by remember { mutableStateOf(false) }
@@ -184,62 +181,6 @@ fun SettingsScreen(
                                 Switch(
                                     checked = animationDisabled,
                                     onCheckedChange = onAnimationDisabledChanged
-                                )
-                            },
-                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
-                        )
-                    }
-                }
-            }
-
-            // In-Game Experience Card
-            item {
-                SettingsSectionHeader(stringResource(R.string.settings_ingame_section))
-                Spacer(Modifier.height(6.dp))
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
-                ) {
-                    Column {
-                        // Floating Log in Game
-                        ListItem(
-                            headlineContent = {
-                                Text(stringResource(R.string.settings_floating_log), fontWeight = FontWeight.SemiBold)
-                            },
-                            supportingContent = { Text(stringResource(R.string.settings_floating_log_desc)) },
-                            leadingContent = {
-                                Icon(Icons.Outlined.Terminal, null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = floatingLogInGame,
-                                    onCheckedChange = onFloatingLogInGameChanged
-                                )
-                            },
-                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
-                        )
-
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
-                        )
-
-                        // Screen Dim on Idle
-                        ListItem(
-                            headlineContent = {
-                                Text(stringResource(R.string.settings_screen_dim), fontWeight = FontWeight.SemiBold)
-                            },
-                            supportingContent = { Text(stringResource(R.string.settings_screen_dim_desc)) },
-                            leadingContent = {
-                                Icon(Icons.Outlined.Brightness4, null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = screenDimInGame,
-                                    onCheckedChange = onScreenDimInGameChanged
                                 )
                             },
                             colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
@@ -401,16 +342,12 @@ private fun SettingsScreenPreviewContent(themeMode: AppSettings.ThemeMode) {
             language = AppSettings.Language.SYSTEM,
             dynamicColor = true,
             animationDisabled = false,
-            floatingLogInGame = true,
-            screenDimInGame = false,
             onNavigateBack = {},
             onNavigateToAbout = {},
             onThemeChanged = {},
             onLanguageChanged = {},
             onDynamicColorChanged = {},
-            onAnimationDisabledChanged = {},
-            onFloatingLogInGameChanged = {},
-            onScreenDimInGameChanged = {}
+            onAnimationDisabledChanged = {}
         )
     }
 }

@@ -31,8 +31,6 @@ object AppSettings {
 
     private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
     private val KEY_LANGUAGE = stringPreferencesKey("language")
-    private val KEY_FLOATING_LOG_IN_GAME = booleanPreferencesKey("floating_log_in_game")
-    private val KEY_SCREEN_DIM_IN_GAME = booleanPreferencesKey("screen_dim_in_game")
     private val KEY_LAST_LAUNCHED_GAME = stringPreferencesKey("last_launched_game")
 
     enum class ThemeMode {
@@ -98,27 +96,44 @@ object AppSettings {
         }
     }
 
-    // Floating Log in Game
+    // Floating Log in Game / Screen Dim in Game — per-game Game Options (#36).
+    //
+    // These used to be single app-wide values under the keys
+    // "floating_log_in_game" / "screen_dim_in_game". They are now stored per
+    // game under package-suffixed keys, like the other per-game options
+    // below. There is deliberately NO migration (decided in #31/#36): the
+    // legacy keys are never read again — they only linger as inert values in
+    // existing store files — and because the per-game keys are new names,
+    // the first read for every game misses and yields the default (off),
+    // whatever the old app-wide value was. Isolation is by construction:
+    // a value written for one package name can never be read back for
+    // another.
 
-    fun getFloatingLogInGameEnabledFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_FLOATING_LOG_IN_GAME] ?: false
-    }
+    internal fun floatingLogInGameKey(packageName: String) =
+        booleanPreferencesKey("floating_log_in_game_$packageName")
 
-    suspend fun setFloatingLogInGameEnabled(context: Context, enabled: Boolean) {
+    internal fun screenDimInGameKey(packageName: String) =
+        booleanPreferencesKey("screen_dim_in_game_$packageName")
+
+    fun getFloatingLogInGameEnabledFlow(context: Context, packageName: String): Flow<Boolean> =
+        context.dataStore.data.map { prefs ->
+            prefs[floatingLogInGameKey(packageName)] ?: false
+        }
+
+    suspend fun setFloatingLogInGameEnabled(context: Context, packageName: String, enabled: Boolean) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_FLOATING_LOG_IN_GAME] = enabled
+            prefs[floatingLogInGameKey(packageName)] = enabled
         }
     }
 
-    // Screen Dim in Game
+    fun getScreenDimInGameEnabledFlow(context: Context, packageName: String): Flow<Boolean> =
+        context.dataStore.data.map { prefs ->
+            prefs[screenDimInGameKey(packageName)] ?: false
+        }
 
-    fun getScreenDimInGameEnabledFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_SCREEN_DIM_IN_GAME] ?: false
-    }
-
-    suspend fun setScreenDimInGameEnabled(context: Context, enabled: Boolean) {
+    suspend fun setScreenDimInGameEnabled(context: Context, packageName: String, enabled: Boolean) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_SCREEN_DIM_IN_GAME] = enabled
+            prefs[screenDimInGameKey(packageName)] = enabled
         }
     }
 
