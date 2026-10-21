@@ -171,9 +171,14 @@ run_with_index "$HALF/index" | grep -q "no gitlinks" \
     && echo "ok    pristine index: no gitlinks, cross-check reports it" \
     || { echo "FAIL  pristine index did not report 'no gitlinks'"; fails=$((fails + 1)); }
 
-# gitlink indexed with no .gitmodules -> must refuse
+# gitlink indexed with no .gitmodules -> must refuse.
+# Derive the gitlink from the live provenance pin: a hard-coded SHA turns this
+# into a pin-disagreement test whenever BepInEx moves, hiding the half-removed
+# submodule refusal this case exists to exercise.
+BEPINEX_PIN="$(sed -n 's/^UPSTREAM_COMMIT=//p' "$REPO/provenance/bepinex.env")"
+[ -n "$BEPINEX_PIN" ] || { echo "FAIL  could not read BepInEx pin"; fails=$((fails + 1)); }
 GIT_INDEX_FILE="$HALF/index" git update-index --add \
-    --cacheinfo 160000,5b766a3b7f6c164d4798924a93f3acf4db769d06,third_party/BepInEx 2>/dev/null
+    --cacheinfo 160000,"$BEPINEX_PIN",third_party/BepInEx 2>/dev/null
 # Deliberately not $out: that name holds the --print-table result that case 7
 # still needs, and overwriting it here made a passing case fail two steps later.
 half_out="$(run_with_index "$HALF/index")"

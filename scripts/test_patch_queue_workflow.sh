@@ -90,11 +90,11 @@ OLD_DESCRIBE="$(g -C "$UPSTREAM" describe --tags --always "$OLD")"
 PINREPO="$WORK/pinrepo"
 mkdir -p "$PINREPO/provenance"
 g -C "$PINREPO" init -q
-write_pin_to() { # write_pin_to <pin-repo> <commit> <describe>
+write_pin_to() { # write_pin_to <pin-repo> <commit> <describe> [upstream-url]
     local pinrepo="$1"
     cat > "$pinrepo/provenance/bepinex.env" <<EOF
 # synthetic BepInEx pin for the fixture
-UPSTREAM_URL=$UPSTREAM
+UPSTREAM_URL=${4:-$UPSTREAM}
 UPSTREAM_REF=main
 UPSTREAM_COMMIT=$2
 UPSTREAM_DESCRIBE=$3
@@ -432,6 +432,121 @@ else
         "before $FULL_HASH_BEFORE" "after $(cat "$FULL_RECORD")"
 fi
 rm -f "$FULL_SCRATCH/stray.bin"
+
+echo "== deletion patch: stale deletion fails, rebaselined deletion records =="
+# Upstream edits a file the port removes. A deletion patch generated at the old
+# pin cannot be carried across that move: the file's content changed on the
+# upstream side while the patch still wants it gone. The queue must fail, and
+# the recovery is to regenerate the deletion at the new pin, replay the whole
+# queue, and only then record its tree.
+DEL_UPSTREAM="$WORK/deletion-upstream"
+mkdir -p "$DEL_UPSTREAM"
+g -C "$DEL_UPSTREAM" init -q
+printf 'desktop launcher\nconfiguration line\n' > "$DEL_UPSTREAM/desktop.txt"
+printf 'shared\n' > "$DEL_UPSTREAM/shared.txt"
+g -C "$DEL_UPSTREAM" add desktop.txt shared.txt
+g -C "$DEL_UPSTREAM" commit -qm "deletion upstream base"
+DEL_OLD="$(g -C "$DEL_UPSTREAM" rev-parse HEAD)"
+
+DEL_QUEUE="$WORK/deletion-queue"
+mkdir -p "$DEL_QUEUE"
+DEL_PATCHGEN="$WORK/deletion-patchgen"
+g clone -q "$DEL_UPSTREAM" "$DEL_PATCHGEN"
+g -C "$DEL_PATCHGEN" checkout -q "$DEL_OLD"
+rm "$DEL_PATCHGEN/desktop.txt"
+g -C "$DEL_PATCHGEN" commit -qam "port: remove desktop launcher"
+g -C "$DEL_PATCHGEN" format-patch -1 HEAD --stdout > "$DEL_QUEUE/0001-remove-desktop.patch"
+sed -i 's/^shared$/shared-patched/' "$DEL_PATCHGEN/shared.txt"
+g -C "$DEL_PATCHGEN" commit -qam "port: adapt shared"
+g -C "$DEL_PATCHGEN" format-patch -1 HEAD --stdout > "$DEL_QUEUE/0002-adapt-shared.patch"
+
+sed -i 's/^configuration line$/configuration line, revised upstream/' "$DEL_UPSTREAM/desktop.txt"
+g -C "$DEL_UPSTREAM" commit -qam "upstream: revise desktop launcher"
+DEL_NEW="$(g -C "$DEL_UPSTREAM" rev-parse HEAD)"
+DEL_NEW_DESCRIBE="$(g -C "$DEL_UPSTREAM" describe --tags --always "$DEL_NEW")"
+
+DEL_PINREPO="$WORK/deletion-pinrepo"
+mkdir -p "$DEL_PINREPO/provenance"
+g -C "$DEL_PINREPO" init -q
+write_pin_to "$DEL_PINREPO" "$DEL_NEW" "$DEL_NEW_DESCRIBE" "$DEL_UPSTREAM"
+g -C "$DEL_PINREPO" add provenance/bepinex.env
+g -C "$DEL_PINREPO" commit -qm "pin deletion case at new"
+DEL_PIN_FILE="$DEL_PINREPO/provenance/bepinex.env"
+
+DEL_STALE_SCRATCH="$WORK/deletion-stale-scratch"
+if env BEPINEX_PIN_FILE="$DEL_PIN_FILE" BEPINEX_SRC="$DEL_STALE_SCRATCH" \
+    BEPINEX_PATCH_GLOB="$DEL_QUEUE/*.patch" \
+    BEPINEX_PATCHED_TREE_FILE="$WORK/deletion-stale-tree.sha256" \
+    BEPINEX_SKIP_TREE_GATE=1 \
+    "$REPO/scripts/apply_patches.sh" >"$WORK/deletion-stale.out" 2>&1; then
+    DEL_STALE_RC=0
+else
+    DEL_STALE_RC=$?
+fi
+if [ "$DEL_STALE_RC" -eq 1 ]; then
+    pass "stale deletion patch fails on the moved pin"
+else
+    fail "stale deletion patch fails on the moved pin" \
+        "exit $DEL_STALE_RC" "$(cat "$WORK/deletion-stale.out")"
+fi
+contains "stale deletion failure names the queue" "$WORK/deletion-stale.out" \
+    "Android patch queue could not be replayed"
+contains "stale deletion failure names the failed patch" "$WORK/deletion-stale.out" \
+    "0001-remove-desktop.patch"
+contains "stale deletion failure names the deleted file" "$WORK/deletion-stale.out" \
+    "desktop.txt"
+
+# Rebaseline only the deletion, at the new pin, while keeping the rest of the
+# queue intact. The complete queue must then replay and record as one unit.
+DEL_REBASEGEN="$WORK/deletion-rebasegen"
+g clone -q "$DEL_UPSTREAM" "$DEL_REBASEGEN"
+g -C "$DEL_REBASEGEN" checkout -q "$DEL_NEW"
+rm "$DEL_REBASEGEN/desktop.txt"
+g -C "$DEL_REBASEGEN" commit -qam "port: remove desktop launcher (rebaselined)"
+g -C "$DEL_REBASEGEN" format-patch -1 HEAD --stdout > "$DEL_QUEUE/0001-remove-desktop.patch"
+
+DEL_SCRATCH="$WORK/deletion-scratch"
+DEL_RECORD="$WORK/deletion-tree.sha256"
+if env BEPINEX_PIN_FILE="$DEL_PIN_FILE" BEPINEX_SRC="$DEL_SCRATCH" \
+    BEPINEX_PATCH_GLOB="$DEL_QUEUE/*.patch" \
+    BEPINEX_PATCHED_TREE_FILE="$DEL_RECORD" BEPINEX_SKIP_TREE_GATE=1 \
+    "$REPO/scripts/apply_patches.sh" >"$WORK/deletion-apply.out" 2>&1; then
+    DEL_APPLY_RC=0
+else
+    DEL_APPLY_RC=$?
+fi
+if [ "$DEL_APPLY_RC" -eq 0 ]; then
+    pass "rebaselined deletion patch applies"
+else
+    fail "rebaselined deletion patch applies" \
+        "exit $DEL_APPLY_RC" "$(cat "$WORK/deletion-apply.out")"
+fi
+if [ ! -e "$DEL_SCRATCH/desktop.txt" ]; then
+    pass "the replayed tree no longer has the deleted file"
+else
+    fail "the replayed tree no longer has the deleted file"
+fi
+if env BEPINEX_PIN_FILE="$DEL_PIN_FILE" BEPINEX_SRC="$DEL_SCRATCH" \
+    BEPINEX_PATCH_GLOB="$DEL_QUEUE/*.patch" \
+    BEPINEX_PATCHED_TREE_FILE="$DEL_RECORD" \
+    "$REPO/scripts/record_patched_tree.sh" >"$WORK/deletion-record.out" 2>&1; then
+    DEL_RECORD_RC=0
+else
+    DEL_RECORD_RC=$?
+fi
+if [ "$DEL_RECORD_RC" -eq 0 ]; then
+    pass "record accepts the complete rebaselined queue"
+else
+    fail "record accepts the complete rebaselined queue" \
+        "exit $DEL_RECORD_RC" "$(cat "$WORK/deletion-record.out")"
+fi
+DEL_EXPECTED_TREE="$(g -C "$DEL_SCRATCH" rev-parse "HEAD^{tree}")"
+if [ "$(cat "$DEL_RECORD" 2>/dev/null || true)" = "$DEL_EXPECTED_TREE" ]; then
+    pass "record writes the rebaselined replay tree"
+else
+    fail "record writes the rebaselined replay tree" \
+        "expected $DEL_EXPECTED_TREE" "got $(cat "$DEL_RECORD" 2>/dev/null || true)"
+fi
 
 if [ "$fails" -ne 0 ]; then
     echo ""

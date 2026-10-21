@@ -14,7 +14,7 @@ against it. The pins plus the manifest are the baseline.
 
 | Artifact | Source | Pin |
 |---|---|---|
-| BepInEx framework (`BepInEx.Android.zip`) | [BepInEx/BepInEx](https://github.com/BepInEx/BepInEx), master + `patches/*.patch` via `build-bepinex` | `5b766a3b7f6c164d4798924a93f3acf4db769d06` |
+| BepInEx framework (`BepInEx.Android.zip`) | [BepInEx/BepInEx](https://github.com/BepInEx/BepInEx), master + `patches/*.patch` via `build-bepinex` | `4e98359b51c48f103f948c57faca3be20027407a` |
 | `libdobby.so` | [canyie/dobby](https://github.com/canyie/dobby), master via `build-native-deps` | `6813ca76ddeafcaece525bf8c6cde7ff4c21d3ce` |
 | `libpine.so` | [canyie/Pine](https://github.com/canyie/Pine), master via `build-native-deps` | `216d910f18b18430a5d21c510affb221a9833a55`, nested xz-embedded `d4a9bc83c72d8087fe36ff388e89599626da7873` |
 | MonoMod packages (`25.3.7-android.1`) | [MonoMod/MonoMod](https://github.com/MonoMod/MonoMod), reorganize + `references/monomod-android.patch` | `d2f2fd91f0daababe41b81239b3d53a4be77cd43` |
