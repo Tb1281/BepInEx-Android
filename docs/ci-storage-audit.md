@@ -45,7 +45,7 @@ alone (accepted data cost, not a regression).
 | `fetch-runtime` | `contents: read`; `issues`, `attestations` write; `id-token` write | Runtime pack and drift notices. |
 | `build-bepinex`, `build-native-deps`, `build-launcher-apk` | `contents: read`; `attestations`, `id-token` write | Build inputs and attest them. |
 | `release-tag:build` | `contents: read`; `issues: write` | Builds the tag release; reads the release key from the `release` environment; failure notices. |
-| `release-tag:ship` / `ship-release:ship` | `contents`, `attestations`, `id-token` write | Downloads the tag artifact, attests it, and creates the release; no release key. |
+| `release-tag:ship` / `ship-release:ship` | `contents`, `attestations`, `id-token`, `actions` write | Downloads the tag artifact, attests it, creates the release, and dispatches consumer verification; no release key. |
 | `verify-release:consumer-verify` | `contents: read`; `issues: write` | Downloads and verifies the published release; failure notices. |
 | `promote-release:promote` | `contents`, `issues` write | Clears the pre-release flag; failure notices; no release key. |
 

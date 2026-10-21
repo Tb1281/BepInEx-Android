@@ -2,11 +2,12 @@ name: verify-provenance
 on:
   workflow_dispatch:
   push:
-    # Every path here is an input to one of the two jobs below, and nothing
-    # else, except `docs/**`: docs changes cannot affect provenance, but branch
-    # protection requires these checks on every pull request, and the two trigger
-    # lists must match so the gate cannot be skipped for one kind of change.
-    # The previous list omitted the patch queue's own inputs, so `patches/**` -
+    # Every path here is either an input to one of the two jobs below or one of
+    # the root docs/metadata files listed at the end for branch-protection
+    # parity: those files cannot affect provenance, but branch protection
+    # requires these checks on every pull request, and the two trigger lists
+    # must match so the gate cannot be skipped for one kind of change. The
+    # previous list omitted the patch queue's own inputs, so `patches/**` -
     # the one thing this repository exists to keep honest - was only verified on
     # pull_request, and this repository works by pushing to a branch. `global.json`
     # and `.github/workflows/**` were omitted too, so pinning the SDK or editing
@@ -53,6 +54,15 @@ on:
       # the workflows rather than inside them, so `.github/workflows/**` does not
       # cover it, and a change to it would otherwise re-run nothing.
       - '.github/actions/**'
+      # These are job inputs too: the launcher compile uses the Gradle wrapper
+      # and R8 rules, the patch queue restores through nuget.config, and the
+      # release preflight is exercised by this gate's fixture.
+      - 'scripts/release_preflight.sh'
+      - 'nuget.config'
+      - 'launcher/app/proguard-rules.pro'
+      - 'launcher/gradle/wrapper/**'
+      - 'launcher/gradlew'
+      - 'launcher/gradlew.bat'
       # job `patch-queue`: replay the queue from pristine upstream and build it
       - 'patches/**'
       - 'references/**'
@@ -63,6 +73,15 @@ on:
       - 'scripts/report_patch_conflict.sh'
       - 'provenance/bepinex.env'
       - 'scripts/bepinex_paths.sh'
+      # Root metadata and docs are not read by either job. They are included so
+      # every pull request runs the required checks: branch protection requires
+      # the `provenance` and `patch-queue` jobs, and a path-filter miss leaves
+      # them pending instead of green.
+      - 'README.md'
+      - 'GLOSSARY.md'
+      - 'LICENSE'
+      - 'launcher/README.md'
+      - 'launcher/THIRDPARTY_NATIVE.md'
       - 'docs/**'
   pull_request:
     paths:
@@ -101,6 +120,15 @@ on:
       - 'global.json'
       - '.github/workflows/**'
       - '.github/actions/**'
+      # These are job inputs too: the launcher compile uses the Gradle wrapper
+      # and R8 rules, the patch queue restores through nuget.config, and the
+      # release preflight is exercised by this gate's fixture.
+      - 'scripts/release_preflight.sh'
+      - 'nuget.config'
+      - 'launcher/app/proguard-rules.pro'
+      - 'launcher/gradle/wrapper/**'
+      - 'launcher/gradlew'
+      - 'launcher/gradlew.bat'
       - 'patches/**'
       - 'references/**'
       - 'scripts/apply_patches.sh'
@@ -110,9 +138,15 @@ on:
       - 'scripts/report_patch_conflict.sh'
       - 'provenance/bepinex.env'
       - 'scripts/bepinex_paths.sh'
-      # Docs are included for branch-protection parity: the jobs do not read
-      # docs, but a docs-only PR still needs the required checks. The push list
-      # carries the same path so the trigger-path test stays exact.
+      # Root metadata and docs are not read by either job. They are included so
+      # every pull request runs the required checks: branch protection requires
+      # the `provenance` and `patch-queue` jobs, and a path-filter miss leaves
+      # them pending instead of green.
+      - 'README.md'
+      - 'GLOSSARY.md'
+      - 'LICENSE'
+      - 'launcher/README.md'
+      - 'launcher/THIRDPARTY_NATIVE.md'
       - 'docs/**'
 
 # Gate: nothing reaches the APK unless every shipped binary matches the CI

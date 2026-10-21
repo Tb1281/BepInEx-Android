@@ -51,6 +51,7 @@ bytes read from the repository:
   `test_workflow_triggers.sh`, `test_generate_sbom.sh`,
   `test_emit_provenance.sh`, `test_mark_verified.sh`, `test_ci_failure_notice.sh`,
   `test_launcher_compile_gate.sh`, `test_release_preflight.sh`,
+  `test_apply_repo_settings.sh`, `test_release_artifacts.sh`,
   `test_verify_release_assets.sh`).
 - Asserts push and pull-request path filters agree
   (`test_workflow_triggers.sh`); when adding a path, add it to both triggers.
@@ -136,7 +137,8 @@ fails closed unless all of the following hold:
 - The tag commit is an ancestor of remote `main`.
 - The tag commit is covered by the **remote** `verified` tag.
 - The tag-derived `versionCode` is greater than the highest stable tag on the
-  remote, and the tag does not already have a stable GitHub Release.
+  remote, and the tag does not already have a stable GitHub Release. The
+  pre-release ordinal is encoded in the code, so `rc1` < `rc2` < stable.
 - The four release-key secrets are present, the keystore opens, and its
   certificate matches the committed `provenance/release-cert.sha256`.
 
@@ -185,9 +187,9 @@ a release created with `GITHUB_TOKEN` does not emit a workflow-triggering
 `release` event. It checks out the default branch so the verifier and trust
 anchor are the current repository's, then installs `build-tools;35.0.0` (the
 runner image does not ship `apksigner`) and runs
-`scripts/verify_release_assets.sh`. That
-checks the complete asset set, the checksum manifest, the Sigstore bundle, the
-APK signer and the published certificate/fingerprint against the repository
+`scripts/verify_release_assets.sh`. That checks the complete asset set, the
+checksum manifest, the Sigstore attestations for the APK, SBOM, and provenance,
+the APK signer and the published certificate/fingerprint against the repository
 trust anchor `provenance/release-cert.sha256`, and the release state. It has
 `contents: read` and no release key; it only downloads and verifies what is
 already public.
@@ -294,7 +296,8 @@ loudly instead of building silently against the wrong tree.
   Gradle and fails closed on any unsigned input. Producers require
   `attestations: write` and `id-token: write`. Consumer example for a
   release: `scripts/verify_release_assets.sh <tag>` checks the full asset set,
-  checksum, attestation, signer, and release state; the underlying command is
+  checksum, the attestations for the APK, SBOM, and provenance, signer, and
+  release state; the underlying command is
   `gh attestation verify app-release-aligned.apk --repo <owner>/<repo>`.
   CI artifacts use `app-artifact-aligned.apk`. Attestation proves origin;
   hashes prove byte identity; the signer check proves the APK is the one the

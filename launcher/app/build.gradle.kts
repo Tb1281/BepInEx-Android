@@ -19,8 +19,11 @@ val releaseKeystorePath: String? = providers.environmentVariable("RELEASE_KEYSTO
 // Mirrors scripts/release_preflight.sh. The workflow passes both values, but the
 // build independently derives the code from the name so a mismatched handoff is
 // rejected here instead of shipping an APK that claims the wrong version.
+// versionCode = major*100,000,000 + minor*100,000 + patch*100 + rank; rank 99
+// is stable and pre-releases use 1..98 from their trailing ordinal, so
+// rc1 < rc2 < stable.
 fun derivedVersionCode(versionName: String): Int? {
-    val match = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$")
+    val match = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)(-([0-9A-Za-z][0-9A-Za-z.-]*))?$")
         .matchEntire(versionName) ?: return null
     val (majorText, minorText, patchText) = match.destructured
     val components = listOf(majorText, minorText, patchText)
@@ -30,9 +33,14 @@ fun derivedVersionCode(versionName: String): Int? {
     val major = majorText.toInt()
     val minor = minorText.toInt()
     val patch = patchText.toInt()
-    if (major > 200 || minor > 999 || patch > 999) return null
-    val channel = if (match.groups[4] != null) 1 else 2
-    return major * 10_000_000 + minor * 10_000 + patch * 10 + channel
+    if (major > 20 || minor > 999 || patch > 999) return null
+    val rank = match.groups[5]?.value?.let { suffix ->
+        val trailing = Regex("(\\d+)$").find(suffix)?.groupValues?.get(1)
+        val ordinal = if (trailing == null) 1 else trailing.toIntOrNull() ?: return null
+        if (ordinal !in 1..98) return null
+        ordinal
+    } ?: 99
+    return major * 100_000_000 + minor * 100_000 + patch * 100 + rank
 }
 
 android {
@@ -304,6 +312,9 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
         val versionCode = releaseVersionCode!!
         check(versionCode > 0) {
             "Release versionCode must be positive."
+        }
+        check(versionCode <= 2_100_000_000) {
+            "Release versionCode must stay below Android's 2,100,000,000 limit."
         }
         val expectedVersionCode = derivedVersionCode(versionName)
         check(expectedVersionCode != null) {

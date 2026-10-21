@@ -24,11 +24,14 @@
 # is a no-op) but additions and removals are not. A workflow with only one
 # trigger, or with no `paths:` filter at all, is not this fixture's business.
 #
-# It also asserts the release contract's trigger shape: the tag release is
-# `v[0-9]*` on a tag push only, `sync-upstream` is schedule/manual only,
-# `ship-release` is call-only, consumer verification is release/manual, and
-# promotion is manual only. Those are the triggers that would broaden a
-# release path or reintroduce a sync release without any host-side change.
+# It also asserts the release contract's trigger and job shape: the tag release
+# is `v[0-9]*` on a tag push only, `sync-upstream` is schedule/manual only and
+# has exactly one job (no ship job) that never runs `gh release create`,
+# `ship-release` is call-only and verifies the pushed tag, consumer verification
+# is release/manual, promotion is manual only, and every job that reads
+# `secrets.RELEASE_` declares the `release` environment. Those are the triggers
+# and job boundaries that would broaden a release path or reintroduce a sync
+# release without any host-side change.
 #
 # WHAT IT DELIBERATELY DOES NOT CHECK
 #
@@ -112,6 +115,7 @@ echo "== release contract triggers =="
 echo
 
 python3 - <<'PY'
+import json
 import pathlib
 import sys
 
@@ -170,6 +174,19 @@ check(
 )
 
 sync_doc = yaml.safe_load((ROOT / "sync-upstream.yml").read_text())
+sync_jobs = sync_doc.get("jobs", {})
+check(
+    "sync-upstream has exactly one job, named sync",
+    set(sync_jobs) == {"sync"},
+    sorted(sync_jobs),
+)
+sync_text = (ROOT / "sync-upstream.yml").read_text()
+check(
+    "sync-upstream does not create releases",
+    "gh release create" not in sync_text,
+    "gh release create present",
+)
+
 sync_steps = sync_doc.get("jobs", {}).get("sync", {}).get("steps", [])
 pr_steps = [s for s in sync_steps if s.get("name") == "Create PR for pin update"]
 check(
@@ -189,6 +206,30 @@ check(
 
 ship = load("ship-release.yml")
 check("ship-release is call-only", set(ship) == {"workflow_call"}, sorted(ship))
+ship_text = (ROOT / "ship-release.yml").read_text()
+check(
+    "ship-release verifies the pushed tag",
+    "--verify-tag" in ship_text,
+    "--verify-tag missing",
+)
+
+# The release environment is the secret boundary. A job that references a
+# release secret without declaring it reads nothing at runtime, so the failure
+# would surface only on a tag push; assert the boundary statically instead.
+for wf in sorted(ROOT.glob("*.yml")):
+    doc = yaml.safe_load(wf.read_text())
+    jobs = doc.get("jobs") or {}
+    for job_name, job in jobs.items():
+        if "secrets.RELEASE_" not in json.dumps(job):
+            continue
+        env = job.get("environment")
+        if isinstance(env, dict):
+            env = env.get("name")
+        check(
+            f"{wf.name}:{job_name} reads release secrets in the release environment",
+            env == "release",
+            env,
+        )
 
 verify = load("verify-release.yml")
 check(
