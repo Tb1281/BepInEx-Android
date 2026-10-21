@@ -242,9 +242,12 @@ drift reporting above is the detector.
 
 Every upstream dependency is pinned by a text file in `provenance/`,
 consumed identically by scripts and CI. A URL clone always asserts
-`rev-parse HEAD` equals the pin and fails closed on mismatch. Values live in
-the env files and in `provenance/SOURCES.md`; they are not repeated here so
-the two tables cannot disagree.
+`rev-parse HEAD` equals the pin and fails closed on mismatch. The Pin Table in
+`provenance/SOURCES.md` is a generated projection of those env files, rendered
+from `provenance/pin-table.template.md`.
+`scripts/render_sources_pin_table.py --check` fails if the committed projection
+drifts. The sync workflow regenerates the table after a pin bump, so the two
+cannot disagree.
 
 Text pins (not submodule gitlinks) so a rewritten upstream branch fails
 loudly instead of building silently against the wrong tree.

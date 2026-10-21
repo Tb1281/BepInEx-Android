@@ -52,6 +52,10 @@ _Avoid_: release key
 A text file in `provenance/*.env` that fixes an upstream dependency to an immutable commit or package hash.
 _Avoid_: version, latest
 
+**Pin Table**:
+The human-readable table in `provenance/SOURCES.md`, generated from the Source pins by `scripts/render_sources_pin_table.py`. It is a projection, never hand-edited.
+_Avoid_: second pin source, manually maintained table
+
 **Patch manifest**:
 The generated JSON interface of the patch queue (`patches/manifest.json`): purpose, touched files, depends-on, ADR references and compile-unit status per patch. It is regenerated from the patches and drift-tested, not authored by hand.
 _Avoid_: patch list, queue metadata
