@@ -168,6 +168,35 @@ scripts/verify_release_assets.sh --require-stable vX.Y.Z
 - **Malicious or compromised**: delete the release assets, publish an advisory, and rotate the key. Rotation requires a new applicationId or every user uninstalling and reinstalling.
 - **Key loss**: existing users cannot update. Publish the recovery procedure (new applicationId or reinstall).
 
+## Rehearsal record (2026-10-20)
+
+`v0.0.0-rc1` was cut from verified `main` at
+`c55bb667923542909cb02d0f356dad00c211ad41` and published as a pre-release with
+all nine assets: https://github.com/Tb1281/BepInEx-Android/releases/tag/v0.0.0-rc1.
+The `release-tag` run
+[39514214797](https://github.com/Tb1281/BepInEx-Android/actions/runs/39514214797)
+passed, including the align-then-sign gate, and explicitly dispatched the
+consumer verifier. Run
+[39515310557](https://github.com/Tb1281/BepInEx-Android/actions/runs/39515310557)
+passed the checksum, Sigstore bundle, signer fingerprint, and pre-release-state
+checks. The local verifier also passed.
+
+Promotion was exercised with `device_verification=recorded`; run
+[39515478824](https://github.com/Tb1281/BepInEx-Android/actions/runs/39515478824)
+correctly rejected the pre-release because it is not a stable
+`vMAJOR.MINOR.PATCH` tag. The generated failure issue was closed as an expected
+rejection. The rollback drill kept the release pre-release, appended an advisory
+to the release notes, and confirmed the tag remains; the release stays available
+for consumer verification.
+
+The first attempt (`release-tag` run 39455631443) exposed two release-path
+defects, both fixed before the successful run: `zipalign` ran after Gradle's
+signature and published an unsigned APK (PR #21), and a release created with
+`GITHUB_TOKEN` did not trigger the `release: published` verifier (PR #21). The
+failed release and tag were withdrawn. A third fix grants `actions: write` to
+the `release-tag` ship job so the explicit verifier dispatch is permitted
+(PR #22). Stable promotion remains blocked by the Pine license review.
+
 ## Known issues
 
 - **The Tower**: the production Firebase RTDB path still aborts in `DeleteInternal` on the pinned Firebase C++ SDK. See `docs/release-crash-investigation.md`. Publish as a known issue until resolved.
