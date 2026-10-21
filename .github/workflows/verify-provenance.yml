@@ -31,6 +31,7 @@ on:
       - 'launcher/app/src/main/java/net/dot/android/**'
       - 'scripts/verify_*.sh'
       - 'scripts/check_*.sh'
+      - 'scripts/render_sources_pin_table.py'
       - 'scripts/generate_sbom.py'
       - 'scripts/verify_apk_entries.sh'
       - 'scripts/zip_deterministic.py'
@@ -102,6 +103,7 @@ on:
       - 'launcher/app/src/main/java/net/dot/android/**'
       - 'scripts/verify_*.sh'
       - 'scripts/check_*.sh'
+      - 'scripts/render_sources_pin_table.py'
       - 'scripts/generate_sbom.py'
       - 'scripts/verify_apk_entries.sh'
       - 'scripts/zip_deterministic.py'
@@ -299,11 +301,18 @@ jobs:
         run: ./scripts/test_runtime_pin.sh
 
       # scripts/check_upstream_pins.sh has the same contract - an upstream it
-      # cannot ask must read as unknown, never as current - and its derivation
-      # path (.gitmodules parse, gitlink ls-tree, env sourcing) is exactly what
-      # a stub would not exercise.
+      # cannot ask must read as unknown, never as current - and its env
+      # derivation plus index-based gitlink refusal are exactly what a stub
+      # would not exercise.
       - name: The upstream pin check claims nothing it cannot support
         run: ./scripts/test_upstream_pins.sh
+
+      # The Pin Table in provenance/SOURCES.md is generated from the env pins.
+      # The fixture runs --check on the real tree and then proves the failure
+      # directions: a hand-edited pin, a missing marker, a missing env value,
+      # and an unknown template placeholder.
+      - name: The human-readable pin table is generated from the source pins
+        run: ./scripts/test_sources_pin_table.sh
 
       # This workflow lists its push and pull_request paths twice, because GitHub
       # Actions cannot share one list between them. The copies are identical

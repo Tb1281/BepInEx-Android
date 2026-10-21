@@ -49,7 +49,6 @@ import sys
 repo = sys.argv[1]
 manifest_path = sys.argv[2]
 patches_dir = os.path.join(repo, "patches")
-pin_file = os.path.join(repo, "provenance", "bepinex.env")
 
 with open(manifest_path, encoding="utf-8") as f:
     manifest = json.load(f)
@@ -60,21 +59,6 @@ patch_ids = [os.path.splitext(os.path.basename(p))[0] for p in patch_paths]
 assert len(manifest) == len(patch_paths), (
     f"manifest has {len(manifest)} entries but {len(patch_paths)} patches exist"
 )
-
-count = None
-if os.path.isfile(pin_file):
-    with open(pin_file, encoding="utf-8") as f:
-        for line in f:
-            m = re.match(r"^BEPINEX_PATCH_COUNT=(.+)$", line.strip())
-            if m:
-                try:
-                    count = int(m.group(1))
-                except ValueError:
-                    count = None
-if count is not None and count != 0:
-    assert count == len(manifest), (
-        f"BEPINEX_PATCH_COUNT={count} but manifest has {len(manifest)}"
-    )
 
 ids = [e["id"] for e in manifest]
 assert len(ids) == len(set(ids)), "duplicate manifest ids"

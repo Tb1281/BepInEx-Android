@@ -13,7 +13,16 @@ Upstream changes live as serialized patches in `patches/`, replayed with
 
 `sync_upstream.sh` derives the repository from the pin file, so a fixture can
 point `BEPINEX_PIN_FILE` at a throwaway repository. It refuses to run when
-the pin has uncommitted changes.
+the pin has uncommitted changes. The sync workflow also regenerates the
+human-readable Pin Table and commits it with the pin:
+
+```bash
+./scripts/render_sources_pin_table.py          # rewrite provenance/SOURCES.md
+./scripts/render_sources_pin_table.py --check  # CI drift gate
+```
+
+The Pin Table is a projection of `provenance/*.env`; edit the env pin or
+`provenance/pin-table.template.md`, never the generated block.
 
 ## 1a. Patch manifest
 

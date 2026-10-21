@@ -2,8 +2,9 @@
 
 Every `.so` in `app/src/main/jniLibs/arm64-v8a/` is either compiled from source in
 this repository or built by a workflow in this repository from a pinned upstream.
-The authoritative, detailed table lives in [`provenance/SOURCES.md`](../provenance/SOURCES.md);
-the machine-checked checksums live in [`provenance/sha256sums.txt`](../provenance/sha256sums.txt)
+The detailed table is generated in [`provenance/SOURCES.md`](../provenance/SOURCES.md)
+from the Source pins in `provenance/*.env`; the machine-checked checksums live in
+[`provenance/sha256sums.txt`](../provenance/sha256sums.txt)
 and are enforced by `scripts/verify_prebuilts.sh` before any APK is produced.
 
 There is no default remote for downloading staged artifacts. CI producers build
