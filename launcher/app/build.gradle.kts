@@ -162,6 +162,12 @@ dependencies {
     // Pine — ART Java hook framework (FusionCore approach)
     implementation(libs.pine.core)
 
+    // Pure cfg parser (metadata model + round-trip editing) behind the
+    // Framework Config form editor — see ADR-0001.
+    implementation(project(":cfgparser"))
+
+    testImplementation(libs.junit)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
 
