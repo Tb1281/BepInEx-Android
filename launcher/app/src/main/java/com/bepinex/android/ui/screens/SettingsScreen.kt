@@ -191,7 +191,7 @@ fun SettingsScreen(
 
             // About Card
             item {
-                SettingsSectionHeader("Application")
+                SettingsSectionHeader(stringResource(R.string.settings_application_section))
                 Spacer(Modifier.height(6.dp))
                 Card(
                     shape = RoundedCornerShape(16.dp),
@@ -204,7 +204,7 @@ fun SettingsScreen(
                         headlineContent = {
                             Text(stringResource(R.string.settings_about))
                         },
-                        supportingContent = { Text("Licenses, architecture, and team credits") },
+                        supportingContent = { Text(stringResource(R.string.settings_about_desc)) },
                         leadingContent = {
                             Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.primary)
                         },

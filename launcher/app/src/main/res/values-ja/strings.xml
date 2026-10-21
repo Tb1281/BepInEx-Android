@@ -105,6 +105,8 @@
     <string name="settings_disable_animations">アニメーションを無効化</string>
     <string name="settings_disable_animations_desc">ランチャーの画面遷移アニメーションをオフにします。</string>
     <string name="settings_about">情報</string>
+    <string name="settings_application_section">アプリケーション</string>
+    <string name="settings_about_desc">ライセンス、アーキテクチャ、チームクレジット</string>
 
     <!-- Confirm Dialogs -->
     <string name="confirm_clear_bepinex_title">BepInExファイルを消去しますか？</string>

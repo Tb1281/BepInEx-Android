@@ -116,23 +116,42 @@ object AppSettings {
         booleanPreferencesKey("screen_dim_in_game_$packageName")
 
     fun getFloatingLogInGameEnabledFlow(context: Context, packageName: String): Flow<Boolean> =
-        context.dataStore.data.map { prefs ->
+        floatingLogInGameEnabledFlow(context.dataStore, packageName)
+
+    suspend fun setFloatingLogInGameEnabled(context: Context, packageName: String, enabled: Boolean) {
+        setFloatingLogInGameEnabled(context.dataStore, packageName, enabled)
+    }
+
+    fun getScreenDimInGameEnabledFlow(context: Context, packageName: String): Flow<Boolean> =
+        screenDimInGameEnabledFlow(context.dataStore, packageName)
+
+    suspend fun setScreenDimInGameEnabled(context: Context, packageName: String, enabled: Boolean) {
+        setScreenDimInGameEnabled(context.dataStore, packageName, enabled)
+    }
+
+    // Store-taking cores of the four functions above. The Context versions
+    // delegate with the app's settings store; tests pass a temporary store
+    // (PreferenceDataStoreFactory) so the DataStore-level contract — legacy
+    // keys never surface as per-game values, games stay isolated — is
+    // verifiable on the JVM. Production behavior is unchanged.
+    internal fun floatingLogInGameEnabledFlow(store: DataStore<Preferences>, packageName: String): Flow<Boolean> =
+        store.data.map { prefs ->
             prefs[floatingLogInGameKey(packageName)] ?: false
         }
 
-    suspend fun setFloatingLogInGameEnabled(context: Context, packageName: String, enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+    internal suspend fun setFloatingLogInGameEnabled(store: DataStore<Preferences>, packageName: String, enabled: Boolean) {
+        store.edit { prefs ->
             prefs[floatingLogInGameKey(packageName)] = enabled
         }
     }
 
-    fun getScreenDimInGameEnabledFlow(context: Context, packageName: String): Flow<Boolean> =
-        context.dataStore.data.map { prefs ->
+    internal fun screenDimInGameEnabledFlow(store: DataStore<Preferences>, packageName: String): Flow<Boolean> =
+        store.data.map { prefs ->
             prefs[screenDimInGameKey(packageName)] ?: false
         }
 
-    suspend fun setScreenDimInGameEnabled(context: Context, packageName: String, enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+    internal suspend fun setScreenDimInGameEnabled(store: DataStore<Preferences>, packageName: String, enabled: Boolean) {
+        store.edit { prefs ->
             prefs[screenDimInGameKey(packageName)] = enabled
         }
     }
