@@ -3,6 +3,8 @@ package com.bepinex.android.ui.screens
 import android.content.res.Configuration
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,7 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.bepinex.android.R
@@ -58,8 +59,7 @@ fun SettingsScreen(
                 title = {
                     Text(
                         text = stringResource(R.string.settings_title),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleLarge
                     )
                 },
                 navigationIcon = {
@@ -95,7 +95,7 @@ fun SettingsScreen(
                         // Theme item
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_theme), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_theme))
                             },
                             supportingContent = {
                                 Text(when (themeMode) {
@@ -122,7 +122,7 @@ fun SettingsScreen(
                         // Language item
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_language), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_language))
                             },
                             supportingContent = {
                                 Text(when (language) {
@@ -151,7 +151,7 @@ fun SettingsScreen(
                         // Dynamic Color (Material You)
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_dynamic_color), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_dynamic_color))
                             },
                             supportingContent = { Text(stringResource(R.string.settings_dynamic_color_desc)) },
                             leadingContent = {
@@ -174,7 +174,7 @@ fun SettingsScreen(
                         // Disable Animations
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_disable_animations), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_disable_animations))
                             },
                             supportingContent = { Text(stringResource(R.string.settings_disable_animations_desc)) },
                             leadingContent = {
@@ -207,7 +207,7 @@ fun SettingsScreen(
                         // Floating Log in Game
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_floating_log), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_floating_log))
                             },
                             supportingContent = { Text(stringResource(R.string.settings_floating_log_desc)) },
                             leadingContent = {
@@ -230,7 +230,7 @@ fun SettingsScreen(
                         // Screen Dim on Idle
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_screen_dim), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_screen_dim))
                             },
                             supportingContent = { Text(stringResource(R.string.settings_screen_dim_desc)) },
                             leadingContent = {
@@ -261,7 +261,7 @@ fun SettingsScreen(
                 ) {
                     ListItem(
                         headlineContent = {
-                            Text(stringResource(R.string.settings_about), fontWeight = FontWeight.SemiBold)
+                            Text(stringResource(R.string.settings_about))
                         },
                         supportingContent = { Text("Licenses, architecture, and team credits") },
                         leadingContent = {
@@ -284,7 +284,13 @@ fun SettingsScreen(
             onDismissRequest = { showThemeMenu = false },
             title = { Text(stringResource(R.string.settings_theme)) },
             text = {
-                Column(Modifier.padding(vertical = 4.dp)) {
+                // Scrollable so the options stay reachable at enlarged
+                // system font scales instead of pushing the button away.
+                Column(
+                    Modifier
+                        .padding(vertical = 4.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     ThemeOption(stringResource(R.string.theme_dark), AppSettings.ThemeMode.DARK, themeMode) {
                         onThemeChanged(it); showThemeMenu = false
                     }
@@ -308,7 +314,13 @@ fun SettingsScreen(
             onDismissRequest = { showLangMenu = false },
             title = { Text(stringResource(R.string.settings_language)) },
             text = {
-                Column(Modifier.padding(vertical = 4.dp)) {
+                // Scrollable so the options stay reachable at enlarged
+                // system font scales instead of pushing the button away.
+                Column(
+                    Modifier
+                        .padding(vertical = 4.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     LangOption(stringResource(R.string.lang_english), AppSettings.Language.ENGLISH, language) {
                         onLanguageChanged(it); showLangMenu = false
                     }
@@ -339,7 +351,6 @@ private fun SettingsSectionHeader(title: String) {
     Text(
         text = title,
         style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 4.dp)
     )
