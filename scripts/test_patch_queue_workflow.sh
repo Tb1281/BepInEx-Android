@@ -447,7 +447,6 @@ printf 'shared\n' > "$DEL_UPSTREAM/shared.txt"
 g -C "$DEL_UPSTREAM" add desktop.txt shared.txt
 g -C "$DEL_UPSTREAM" commit -qm "deletion upstream base"
 DEL_OLD="$(g -C "$DEL_UPSTREAM" rev-parse HEAD)"
-DEL_OLD_DESCRIBE="$(g -C "$DEL_UPSTREAM" describe --tags --always "$DEL_OLD")"
 
 DEL_QUEUE="$WORK/deletion-queue"
 mkdir -p "$DEL_QUEUE"
