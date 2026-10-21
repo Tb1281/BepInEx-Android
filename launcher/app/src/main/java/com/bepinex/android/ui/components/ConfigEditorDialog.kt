@@ -4,6 +4,8 @@ import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -91,7 +93,10 @@ internal fun ConfigEditorScreen(
 
     val hasChanges = !saved && when (mode) {
         ConfigEditorMode.FORM -> session.hasUnsavedChanges()
-        ConfigEditorMode.RAW -> rawText != session.serialize()
+        // Judged against the file the editor was opened with — not the
+        // current document, which already holds any form edit carried
+        // over by the mode switch and would mask it.
+        ConfigEditorMode.RAW -> session.isModified(rawText)
     }
 
     fun attemptSave() {
@@ -125,7 +130,7 @@ internal fun ConfigEditorScreen(
             ConfigEditorMode.RAW -> {
                 // Carry the form state over, but never silently drop an
                 // invalid draft: surface why and stay in the form.
-                val errors = session.commitDrafts()
+                val errors = session.switchToRaw()
                 if (errors.isNotEmpty()) {
                     blockedReasons = errors.map { it.second }
                     mutated()
@@ -137,7 +142,7 @@ internal fun ConfigEditorScreen(
             }
 
             ConfigEditorMode.FORM -> {
-                session.reload(rawText)
+                session.switchToForm(rawText)
                 mode = ConfigEditorMode.FORM
                 mutated()
             }
@@ -227,7 +232,9 @@ internal fun ConfigEditorScreen(
             onDismissRequest = { choicePickerIndex = null },
             title = { Text(entry.key) },
             text = {
-                Column {
+                // Acceptable-value lists can run to dozens of entries;
+                // without scrolling the dialog would overflow the screen.
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     options.forEach { option ->
                         Row(
                             Modifier.fillMaxWidth(),

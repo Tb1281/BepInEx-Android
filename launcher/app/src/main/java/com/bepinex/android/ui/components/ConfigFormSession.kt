@@ -141,11 +141,46 @@ class ConfigFormSession(text: String) {
         }
     }
 
+    // -- Mode switches -----------------------------------------------------------
+
+    /**
+     * True when [text] differs from the file content this session was
+     * opened with. This is the raw editor's change test: its text lives
+     * outside the session, so it is judged against the same baseline as
+     * the form. Comparing it with the *current* document instead would go
+     * blind the moment a form edit is carried into the raw editor,
+     * because both sides of that comparison would then hold the edit —
+     * the guard would report "no changes" and the save action would stay
+     * disabled even though the file on disk differs.
+     */
+    fun isModified(text: String): Boolean = text != baseline
+
+    /**
+     * The form → raw switch decision: commits pending drafts so the raw
+     * editor starts from the document's current state. Returns the
+     * blocking errors (same shape as [commitDrafts]); when it is empty
+     * the switch may proceed and [serialize] is the text the raw editor
+     * shows. An invalid draft aborts the switch — input is never
+     * silently dropped on the way over.
+     */
+    fun switchToRaw(): List<Pair<CfgEntry, String>> = commitDrafts()
+
+    /**
+     * The raw → form switch decision: the raw text becomes the document.
+     * Drafts and action errors described the old document, so they are
+     * discarded (that is what [reload] does); afterwards
+     * [hasUnsavedChanges] still judges the result against the file the
+     * session was opened with.
+     */
+    fun switchToForm(rawText: String) {
+        reload(rawText)
+    }
+
     // -- Saving --------------------------------------------------------------------
 
     /** True when the document or a pending draft differs from the opened file. */
     fun hasUnsavedChanges(): Boolean =
-        serialize() != baseline ||
+        isModified(serialize()) ||
             drafts.any { (index, draft) -> draft != entries[index].value }
 
     /** Drafts that cannot be saved, with the reason for each. */
