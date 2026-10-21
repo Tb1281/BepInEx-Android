@@ -106,6 +106,29 @@ jobs:
           name: ${{ inputs.artifact_name }}
           path: ship/
 
+      # Fail fast on a layout regression: the callers must upload a flat
+      # artifact (APK, SBOM and provenance at the root). A multi-path upload
+      # preserves directory structure and once buried the APK under
+      # launcher/app/build/..., which let the attest step below mint a
+      # 2-subject statement missing the APK before 'Publish Release with
+      # Checksums' died. Verify all three subjects before anything signs.
+      - name: Verify the shipping inputs
+        env:
+          APK_PATH: ${{ inputs.apk_path }}
+          SBOM_PATH: ${{ inputs.sbom_path }}
+          PROV_PATH: ${{ inputs.provenance_path }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in "ship/$APK_PATH" "ship/$SBOM_PATH" "ship/$PROV_PATH"; do
+            if [ ! -f "$f" ]; then echo "::error::missing shipping input: $f"; missing=1; fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "--- artifact layout (ship/) ---"
+            find ship -type f | head -30
+            exit 1
+          fi
+
       # Attest the shipping APK itself, not just its inputs (see
       # build-launcher-apk.yml for why the APK gets its own statement), plus
       # the SBOM and the build provenance, in one statement. Minted here so

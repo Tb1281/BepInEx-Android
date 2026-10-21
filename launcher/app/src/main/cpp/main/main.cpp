@@ -174,9 +174,53 @@ static std::string jstring_to_string(JNIEnv *env, jstring value)
     return result;
 }
 
+/* Unwrap a Context to its root ContextImpl.
+ *
+ * The staged fusion config is launcher-global state: FusionConfigStore
+ * writes it under the launcher's own files dir, and a single "active"
+ * config exists no matter which game is hosted. In the :game process the
+ * Application's base context is wrapped (GameResourceContext) so the
+ * *game's* storage resolves per game; asking that Application for
+ * getFilesDir() would resolve the staged path under <game>/gamedata,
+ * where the writer never puts it. Walk the ContextWrapper chain to the
+ * root context — the native mirror of GameResourceContext's
+ * unwrapToRootContext — and resolve launcher paths from there. */
+static jobject unwrap_to_root_context(JNIEnv *env, jobject context)
+{
+    jclass wrapperClass = env->FindClass("android/content/ContextWrapper");
+    if (!wrapperClass) {
+        LOGE("unwrap_to_root_context: ContextWrapper class not found; using original context");
+        env->ExceptionClear();
+        return context;
+    }
+    jmethodID getBaseContext = env->GetMethodID(wrapperClass, "getBaseContext",
+        "()Landroid/content/Context;");
+    if (!getBaseContext) {
+        LOGE("unwrap_to_root_context: getBaseContext method not found; using original context");
+        env->ExceptionClear();
+        return context;
+    }
+
+    jobject current = context;
+    for (int depth = 0; depth < 10; depth++) {
+        if (!env->IsInstanceOf(current, wrapperClass)) break;
+        jobject base = env->CallObjectMethod(current, getBaseContext);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            break;
+        }
+        if (!base || env->IsSameObject(base, current)) break;
+        current = base;
+    }
+    return current;
+}
+
 static std::string resolve_staged_config_path(JNIEnv *env)
 {
-    /* Resolve app's internal files dir via ActivityThread.currentApplication() */
+    /* Resolve the launcher's internal files dir via
+     * ActivityThread.currentApplication(), unwrapped to the root context:
+     * the Application in this process is wrapped per game for the game's
+     * own storage, but the staged config lives at the launcher root. */
     jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
     if (!activityThreadClass) {
         LOGE("ActivityThread class not found");
@@ -196,10 +240,12 @@ static std::string resolve_staged_config_path(JNIEnv *env)
         return {};
     }
 
+    jobject root = unwrap_to_root_context(env, app);
+
     jclass contextClass = env->FindClass("android/content/Context");
     jmethodID getFilesDir = env->GetMethodID(contextClass, "getFilesDir",
         "()Ljava/io/File;");
-    jobject filesDirObj = env->CallObjectMethod(app, getFilesDir);
+    jobject filesDirObj = env->CallObjectMethod(root, getFilesDir);
     if (!filesDirObj) {
         LOGE("getFilesDir returned null");
         return {};

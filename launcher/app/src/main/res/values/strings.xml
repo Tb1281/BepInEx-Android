@@ -45,6 +45,7 @@
     <string name="modpack_rename">Rename</string>
     <string name="modpack_export">Export</string>
     <string name="modpack_import">Import Modpack</string>
+    <string name="global_config_not_created">BepInEx.cfg is created when the game is launched for the first time</string>
     <string name="modpack_select_active">Activate</string>
     <string name="modpack_vanilla">Vanilla (No Mods)</string>
     <string name="modpack_name_hint">Modpack name</string>
@@ -68,9 +69,28 @@
     <string name="config_editor_title">Config Editor</string>
     <string name="config_editor_save">Save</string>
     <string name="config_editor_unsaved">Unsaved changes</string>
+    <string name="config_editor_mode_form">Form</string>
+    <string name="config_editor_mode_raw">Raw text</string>
+    <string name="config_editor_search_hint">Search settings</string>
+    <string name="config_editor_reset_default">Reset to default</string>
+    <string name="config_editor_default_value">Default: %1$s</string>
+    <string name="config_editor_empty_default">(empty)</string>
+    <string name="config_editor_no_results">No settings match your search</string>
+    <string name="config_editor_invalid_title">Some values are invalid</string>
+    <string name="config_editor_invalid_msg">These values don\'t match the types declared in the file, so they can\'t be saved yet. Fix them first:</string>
+    <string name="config_editor_raw_warning_title">Values don\'t match their declared types</string>
+    <string name="config_editor_raw_warning_msg">You can save anyway, but the game may ignore or reject these values:</string>
+    <string name="config_editor_save_anyway">Save anyway</string>
+    <string name="config_editor_ok">OK</string>
     <string name="config_editor_discard_title">Discard Changes?</string>
     <string name="config_editor_discard_msg">You have unsaved changes. Discard them?</string>
     <string name="config_editor_no_configs">No config files</string>
+
+    <!-- Game Options -->
+    <string name="game_options_title">Game Options</string>
+    <string name="game_options_framework_config">Framework Config</string>
+    <string name="game_options_framework_config_desc">Edit BepInEx.cfg, the framework settings kept for this game</string>
+    <string name="game_options_danger_zone">Danger Zone</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
@@ -81,7 +101,13 @@
     <string name="settings_clear_dotnet_desc">Delete the .NET runtime and copied game data. Files will be re-extracted on next launch.</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_language">Language</string>
+    <string name="settings_dynamic_color">Dynamic Color</string>
+    <string name="settings_dynamic_color_desc">Color the launcher from your wallpaper (Material You, Android 12 and later).</string>
+    <string name="settings_disable_animations">Disable Animations</string>
+    <string name="settings_disable_animations_desc">Turn off the launcher\'s screen transition animations.</string>
     <string name="settings_about">About</string>
+    <string name="settings_application_section">Application</string>
+    <string name="settings_about_desc">Licenses, architecture, and team credits</string>
 
     <!-- Confirm Dialogs -->
     <string name="confirm_clear_bepinex_title">Clear BepInEx Files?</string>

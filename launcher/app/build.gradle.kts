@@ -45,7 +45,7 @@ fun derivedVersionCode(versionName: String): Int? {
 
 android {
     namespace = "com.bepinex.android"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         // The release is com.bepinex.android. Debug and CI artifact builds carry
@@ -55,7 +55,7 @@ android {
         applicationId = "com.bepinex.android"
         manifestPlaceholders["appLabel"] = "BepInEx"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 36
         versionCode = releaseVersionCode ?: defaultVersionCode
         versionName = releaseVersionName ?: defaultVersionName
 
@@ -76,6 +76,22 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    signingConfigs {
+        // Fixed debug keystore checked into the repo (launcher/debug.keystore).
+        // The default ~/.android/debug.keystore is per-machine - and on the
+        // Muse VM it regenerates whenever the VM is replaced - which made
+        // every rebuild signature-incompatible with the installed app
+        // (INSTALL_FAILED_UPDATE_INCOMPATIBLE) and forced full reinstalls.
+        // Debug keys are public by design; this one is the standard
+        // androiddebugkey/android pair.
+        getByName("debug") {
+            storeFile = file("../debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     externalNativeBuild {
@@ -211,6 +227,12 @@ dependencies {
 
     // Pine — ART Java hook framework (FusionCore approach)
     implementation(libs.pine.core)
+
+    // Pure cfg parser (metadata model + round-trip editing) behind the
+    // Framework Config form editor — see ADR-0001.
+    implementation(project(":cfgparser"))
+
+    testImplementation(libs.junit)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

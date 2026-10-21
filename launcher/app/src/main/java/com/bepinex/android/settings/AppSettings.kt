@@ -31,8 +31,6 @@ object AppSettings {
 
     private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
     private val KEY_LANGUAGE = stringPreferencesKey("language")
-    private val KEY_FLOATING_LOG_IN_GAME = booleanPreferencesKey("floating_log_in_game")
-    private val KEY_SCREEN_DIM_IN_GAME = booleanPreferencesKey("screen_dim_in_game")
     private val KEY_LAST_LAUNCHED_GAME = stringPreferencesKey("last_launched_game")
 
     enum class ThemeMode {
@@ -98,27 +96,63 @@ object AppSettings {
         }
     }
 
-    // Floating Log in Game
+    // Floating Log in Game / Screen Dim in Game — per-game Game Options (#36).
+    //
+    // These used to be single app-wide values under the keys
+    // "floating_log_in_game" / "screen_dim_in_game". They are now stored per
+    // game under package-suffixed keys, like the other per-game options
+    // below. There is deliberately NO migration (decided in #31/#36): the
+    // legacy keys are never read again — they only linger as inert values in
+    // existing store files — and because the per-game keys are new names,
+    // the first read for every game misses and yields the default (off),
+    // whatever the old app-wide value was. Isolation is by construction:
+    // a value written for one package name can never be read back for
+    // another.
 
-    fun getFloatingLogInGameEnabledFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_FLOATING_LOG_IN_GAME] ?: false
+    internal fun floatingLogInGameKey(packageName: String) =
+        booleanPreferencesKey("floating_log_in_game_$packageName")
+
+    internal fun screenDimInGameKey(packageName: String) =
+        booleanPreferencesKey("screen_dim_in_game_$packageName")
+
+    fun getFloatingLogInGameEnabledFlow(context: Context, packageName: String): Flow<Boolean> =
+        floatingLogInGameEnabledFlow(context.dataStore, packageName)
+
+    suspend fun setFloatingLogInGameEnabled(context: Context, packageName: String, enabled: Boolean) {
+        setFloatingLogInGameEnabled(context.dataStore, packageName, enabled)
     }
 
-    suspend fun setFloatingLogInGameEnabled(context: Context, enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_FLOATING_LOG_IN_GAME] = enabled
+    fun getScreenDimInGameEnabledFlow(context: Context, packageName: String): Flow<Boolean> =
+        screenDimInGameEnabledFlow(context.dataStore, packageName)
+
+    suspend fun setScreenDimInGameEnabled(context: Context, packageName: String, enabled: Boolean) {
+        setScreenDimInGameEnabled(context.dataStore, packageName, enabled)
+    }
+
+    // Store-taking cores of the four functions above. The Context versions
+    // delegate with the app's settings store; tests pass a temporary store
+    // (PreferenceDataStoreFactory) so the DataStore-level contract — legacy
+    // keys never surface as per-game values, games stay isolated — is
+    // verifiable on the JVM. Production behavior is unchanged.
+    internal fun floatingLogInGameEnabledFlow(store: DataStore<Preferences>, packageName: String): Flow<Boolean> =
+        store.data.map { prefs ->
+            prefs[floatingLogInGameKey(packageName)] ?: false
+        }
+
+    internal suspend fun setFloatingLogInGameEnabled(store: DataStore<Preferences>, packageName: String, enabled: Boolean) {
+        store.edit { prefs ->
+            prefs[floatingLogInGameKey(packageName)] = enabled
         }
     }
 
-    // Screen Dim in Game
+    internal fun screenDimInGameEnabledFlow(store: DataStore<Preferences>, packageName: String): Flow<Boolean> =
+        store.data.map { prefs ->
+            prefs[screenDimInGameKey(packageName)] ?: false
+        }
 
-    fun getScreenDimInGameEnabledFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_SCREEN_DIM_IN_GAME] ?: false
-    }
-
-    suspend fun setScreenDimInGameEnabled(context: Context, enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_SCREEN_DIM_IN_GAME] = enabled
+    internal suspend fun setScreenDimInGameEnabled(store: DataStore<Preferences>, packageName: String, enabled: Boolean) {
+        store.edit { prefs ->
+            prefs[screenDimInGameKey(packageName)] = enabled
         }
     }
 
@@ -140,9 +174,14 @@ object AppSettings {
     private fun keyBlockUnityKill(packageName: String) = booleanPreferencesKey("block_unity_kill_$packageName")
     private fun keyUseUnstrippedLibUnity(packageName: String) = booleanPreferencesKey("use_unstripped_libunity_$packageName")
     private fun keyActiveModpack(packageName: String) = stringPreferencesKey("active_modpack_$packageName")
+    private fun keyActiveModpacks(packageName: String) = stringPreferencesKey("active_modpacks_$packageName")
 
     fun getDynamicColorFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_DYNAMIC_COLOR] ?: false
+        // Default ON: this must agree with the theme's dynamicColor default
+        // (and MainUiState's initial value). It used to default to false,
+        // which silently overrode the theme default on first run, so a
+        // fresh install started with dynamic color off.
+        prefs[KEY_DYNAMIC_COLOR] ?: true
     }
 
     suspend fun setDynamicColorEnabled(context: Context, enabled: Boolean) {
@@ -197,6 +236,29 @@ object AppSettings {
     suspend fun setActiveModpack(context: Context, packageName: String, modpackName: String?) {
         context.gameStateDataStore.edit { prefs ->
             prefs[keyActiveModpack(packageName)] = modpackName ?: ""
+        }
+    }
+
+    /**
+     * Full modpack list of the previous run. The single-name key above only
+     * remembers the first pack, which made multi-pack runs persist every
+     * pack's runtime config into that first pack. Persist now iterates this
+     * list and each pack receives only its own plugins' config files.
+     */
+    fun getActiveModpacksFlow(context: Context, packageName: String): Flow<List<String>> =
+        context.gameStateDataStore.data.map { prefs ->
+            val joined = prefs[keyActiveModpacks(packageName)]?.ifEmpty { null }
+            if (joined != null) {
+                joined.split('\n').filter { it.isNotEmpty() }
+            } else {
+                // Upgrade fallback: only the legacy single-name key exists.
+                listOfNotNull(prefs[keyActiveModpack(packageName)]?.ifEmpty { null })
+            }
+        }
+
+    suspend fun setActiveModpacks(context: Context, packageName: String, modpackNames: List<String>) {
+        context.gameStateDataStore.edit { prefs ->
+            prefs[keyActiveModpacks(packageName)] = modpackNames.joinToString("\n")
         }
     }
 

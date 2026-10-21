@@ -106,7 +106,7 @@ jobs:
           sudo apt-get update -y >/dev/null
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
+          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-36" "build-tools;35.0.0" 2>&1 | tail -1
 
       # The APK is assembled from CI outputs. Nothing is pulled from a third-party
       # release feed. The runtime is fetched as a pinned Microsoft package by

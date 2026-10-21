@@ -181,11 +181,21 @@ class GameResourceContext(
      */
     override fun getClassLoader(): ClassLoader = gameContext.classLoader
 
-    // --- Storage redirection: always point to launcher sandbox ---
+    // --- Storage redirection: launcher sandbox, scoped per game ---
+    // The hosted game must not see the launcher's raw storage roots: every
+    // game would share one files/external dir and their files would mix
+    // (playerInfo.dat, Unity/ at the launcher root). PerGameStorage scopes
+    // the game-visible roots to <game>/gamedata (external)
+    // and filesDir/<game>/gamedata (internal). App-private areas that are
+    // already per-app plumbing (dataDir, databases, shared prefs, code cache)
+    // keep resolving to the launcher sandbox unchanged.
 
-    override fun getFilesDir(): File = storageContext.filesDir
+    private val gamePackage: String
+        get() = gameContext.packageName
 
-    override fun getCacheDir(): File = storageContext.cacheDir
+    override fun getFilesDir(): File = PerGameStorage.filesDir(storageContext, gamePackage)
+
+    override fun getCacheDir(): File = PerGameStorage.cacheDir(storageContext, gamePackage)
 
     override fun getCodeCacheDir(): File = storageContext.codeCacheDir
 
@@ -207,30 +217,38 @@ class GameResourceContext(
         storageContext.moveSharedPreferencesFrom(sourceContext, name)
 
     override fun getExternalFilesDir(type: String?): File? =
-        storageContext.getExternalFilesDir(type)
+        PerGameStorage.externalFilesDir(storageContext, gamePackage, type)
 
     override fun getExternalFilesDirs(type: String?): Array<File> =
-        storageContext.getExternalFilesDirs(type)
+        PerGameStorage.externalFilesDir(storageContext, gamePackage, type)
+            ?.let { arrayOf(it) }
+            ?: storageContext.getExternalFilesDirs(type)
 
-    override fun getExternalCacheDir(): File? = storageContext.externalCacheDir
+    override fun getExternalCacheDir(): File? =
+        PerGameStorage.externalCacheDir(storageContext, gamePackage)
 
-    override fun getExternalCacheDirs(): Array<File> = storageContext.externalCacheDirs
+    override fun getExternalCacheDirs(): Array<File> =
+        PerGameStorage.externalCacheDir(storageContext, gamePackage)
+            ?.let { arrayOf(it) }
+            ?: storageContext.getExternalCacheDirs()
 
     override fun getObbDir(): File? = storageContext.obbDir
 
     override fun getObbDirs(): Array<File> = storageContext.obbDirs
 
+    // File APIs are filesDir-relative in Context; keep them consistent with
+    // the per-game getFilesDir() above instead of the launcher's root.
     override fun openFileInput(name: String?): FileInputStream =
-        storageContext.openFileInput(name)
+        FileInputStream(File(getFilesDir(), name ?: ""))
 
     override fun openFileOutput(name: String?, mode: Int): FileOutputStream =
-        storageContext.openFileOutput(name, mode)
+        FileOutputStream(File(getFilesDir(), name ?: ""), (mode and MODE_APPEND) != 0)
 
     override fun deleteFile(name: String?): Boolean =
-        storageContext.deleteFile(name)
+        File(getFilesDir(), name ?: "").delete()
 
     override fun fileList(): Array<String> =
-        storageContext.fileList()
+        getFilesDir().list() ?: emptyArray()
 
     /**
      * Returns the process [Application] instance.

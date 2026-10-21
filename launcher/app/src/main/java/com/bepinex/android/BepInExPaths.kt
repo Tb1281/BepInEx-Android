@@ -1,22 +1,19 @@
 package com.bepinex.android
 
 import android.content.Context
-import android.os.Environment
+import com.bepinex.android.fusion.GameResourceContext
 import java.io.File
 
 /**
  * Resolves BepInEx paths for any game package.
  *
- * Production: /storage/emulated/0/BepInEx_Android/{gamePackage}/BepInEx/
- * Test APKs:  {filesDir}/BepInEx_Android/{gamePackage}/BepInEx/
- * Internal:   {filesDir}/{gamePackage}/   (dotnet, Data_copy, libunity cache)
+ * External: {externalFilesDir}/{gamePackage}/BepInEx/
+ * Internal: {filesDir}/{gamePackage}/   (dotnet, Data_copy, gamedata)
  *
- * A test launcher (`applicationId` ending in `.test`) must never overwrite the
- * production install's core, plugins or configs, so it resolves into the
- * app-private internal storage instead of the shared public directory. That
- * also removes its dependency on MANAGE_EXTERNAL_STORAGE. Production builds
- * keep the public layout unchanged, because that is where users manage their
- * mods with a file manager.
+ * Per-game directories sit directly under the app storage roots - there is
+ * no intermediate namespace folder. Package names cannot collide with the
+ * engine/runtime entries that share the external root (Unity/, il2cpp/,
+ * logs, tombstones), and the internal root already used this flat layout.
  *
  * The launcher's applicationId and filesDir are read from the process context
  * installed by [install]. Every process that touches these paths must install
@@ -26,22 +23,25 @@ import java.io.File
  */
 object BepInExPaths {
 
-    /** Shared root of the public layout, and the subdirectory test builds use
-     *  inside internal storage. */
-    private const val ROOT_DIR = "BepInEx_Android"
-
-    /** Suffix that distinguishes a test launcher from the production one. */
-    private const val TEST_SUFFIX = ".test"
-
     @Volatile
     private var appContext: Context? = null
 
     /**
      * Records the process context used for path resolution. Idempotent and
      * cheap, so calling it from every entry point is harmless.
+     *
+     * The context is unwrapped to the root ContextImpl on purpose: these are
+     * the launcher's own bookkeeping paths and must resolve identically in
+     * every process. In the `:game` process the Application's base is wrapped
+     * in a GameResourceContext so the *game's* storage lands per game;
+     * resolving launcher paths through that wrapper would re-root them under
+     * `<game>/gamedata/<game>/` — extraction, modpack apply and the fusion
+     * config's BepInEx root would then disagree with the launcher process
+     * about where anything lives. Per-game redirection belongs to the game's
+     * view of storage, not to the launcher's path bookkeeping.
      */
     fun install(context: Context) {
-        appContext = context.applicationContext
+        appContext = GameResourceContext.unwrapToRootContext(context.applicationContext)
     }
 
     /** The launcher package name, which is what distinguishes test from production. */
@@ -61,7 +61,7 @@ object BepInExPaths {
      */
     fun getGameRootDir(packageName: String): File {
         val baseDir = requireContext().getExternalFilesDir(null) ?: requireContext().filesDir
-        return File(baseDir, "$ROOT_DIR/$packageName")
+        return File(baseDir, packageName)
     }
 
     fun getBepInExDir(packageName: String): File =

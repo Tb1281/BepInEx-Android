@@ -67,16 +67,20 @@ fun BepInExNavHost(
     // Settings state
     themeMode: AppSettings.ThemeMode,
     language: AppSettings.Language,
-    floatingLogInGame: Boolean,
-    screenDimInGame: Boolean,
+    dynamicColor: Boolean,
+    animationDisabled: Boolean,
     // Callbacks
     onSelectGame: (GameDetector.DetectedGame) -> Unit,
     onRescan: () -> Unit,
     onLaunch: (modpackNames: Set<String>) -> Unit,
     onThemeChanged: (AppSettings.ThemeMode) -> Unit,
     onLanguageChanged: (AppSettings.Language) -> Unit,
-    onFloatingLogInGameChanged: (Boolean) -> Unit,
-    onScreenDimInGameChanged: (Boolean) -> Unit,
+    onDynamicColorChanged: (Boolean) -> Unit,
+    onAnimationDisabledChanged: (Boolean) -> Unit,
+    // Per-game Game Options (#36): the package name travels with the change
+    // because the floating-log permission flow in MainActivity is keyed by it.
+    onFloatingLogInGameChanged: (packageName: String, enabled: Boolean) -> Unit,
+    onScreenDimInGameChanged: (packageName: String, enabled: Boolean) -> Unit,
     onClearBepInEx: (String) -> Unit,
     onClearDotnet: (String) -> Unit
 ) {
@@ -195,14 +199,17 @@ fun BepInExNavHost(
                 .padding(bottom = innerPadding.calculateBottomPadding())
         ) {
             // Symmetric transitions defined once: every destination animates the
-            // same way, including the system predictive-back gesture.
+            // same way, including the system predictive-back gesture. The
+            // animation-disabled Launcher Setting zeroes the duration, which
+            // is what makes that setting take effect in the launcher UI.
+            val transitionMillis = if (animationDisabled) 0 else 300
             NavHost(
                 navController = navController,
                 startDestination = Games,
-                enterTransition = { slideInHorizontally(tween(300)) { it } + fadeIn(tween(300)) },
-                exitTransition = { slideOutHorizontally(tween(300)) { -it } + fadeOut(tween(300)) },
-                popEnterTransition = { slideInHorizontally(tween(300)) { -it } + fadeIn(tween(300)) },
-                popExitTransition = { slideOutHorizontally(tween(300)) { it } + fadeOut(tween(300)) }
+                enterTransition = { slideInHorizontally(tween(transitionMillis)) { it } + fadeIn(tween(transitionMillis)) },
+                exitTransition = { slideOutHorizontally(tween(transitionMillis)) { -it } + fadeOut(tween(transitionMillis)) },
+                popEnterTransition = { slideInHorizontally(tween(transitionMillis)) { -it } + fadeIn(tween(transitionMillis)) },
+                popExitTransition = { slideOutHorizontally(tween(transitionMillis)) { it } + fadeOut(tween(transitionMillis)) }
             ) {
                 // Main game screen
                 composable<Games> {
@@ -221,13 +228,18 @@ fun BepInExNavHost(
                         // before the game starts, so there is no save/start race.
                         onLaunch = { onLaunch(activeModpackNames) },
                         onNavigateToSettings = {
-                            selectedGame?.let {
-                                navController.navigateTab(Settings(it.packageName))
-                            }
+                            // Launcher Settings are global: reachable whether
+                            // or not a game is selected.
+                            navController.navigateTab(Settings)
                         },
                         onNavigateToModpacks = {
                             selectedGame?.let {
                                 navController.navigateTab(Modpacks(it.packageName))
+                            }
+                        },
+                        onNavigateToGameOptions = {
+                            selectedGame?.let {
+                                navController.navigate(GameOptions(it.packageName))
                             }
                         }
                     )
@@ -357,26 +369,90 @@ fun BepInExNavHost(
                     }
                 }
 
-                // Settings
-                composable<Settings> { backStackEntry ->
-                    val route = backStackEntry.toRoute<Settings>()
-                    val packageName = route.packageName
-                    val settingsContext = LocalContext.current
+                // Settings — a global destination (no route arguments):
+                // Launcher Settings only. Per-game maintenance moved to
+                // the Game Options screen in #35.
+                composable<Settings> {
                     SettingsScreen(
-                        packageName = packageName,
                         themeMode = themeMode,
                         language = language,
-                        floatingLogInGame = floatingLogInGame,
-                        screenDimInGame = screenDimInGame,
+                        dynamicColor = dynamicColor,
+                        animationDisabled = animationDisabled,
                         onNavigateBack = { navController.popBackStack() },
                         onNavigateToAbout = { navController.navigate(About) },
                         onThemeChanged = onThemeChanged,
                         onLanguageChanged = onLanguageChanged,
-                        onFloatingLogInGameChanged = onFloatingLogInGameChanged,
-                        onScreenDimInGameChanged = onScreenDimInGameChanged,
+                        onDynamicColorChanged = onDynamicColorChanged,
+                        onAnimationDisabledChanged = onAnimationDisabledChanged
+                    )
+                }
+
+                // Game Options — everything specific to one game: its
+                // Framework Config entry, its in-game options (floating
+                // log / screen dim, #36), and its maintenance actions.
+                // Reached from the game's hero card on the Games screen;
+                // this is the only route into per-game settings now.
+                composable<GameOptions> { backStackEntry ->
+                    val route = backStackEntry.toRoute<GameOptions>()
+                    val packageName = route.packageName
+                    var editingFrameworkConfig by remember { mutableStateOf<java.io.File?>(null) }
+                    // This game's own floating log / screen dim values (#36),
+                    // read straight from the per-game store entries — the
+                    // flows are remembered per package so recompositions do
+                    // not restart collection.
+                    val floatingLogFlow = remember(packageName) {
+                        AppSettings.getFloatingLogInGameEnabledFlow(context, packageName)
+                    }
+                    val floatingLogInGame by floatingLogFlow.collectAsStateWithLifecycle(initialValue = false)
+                    val screenDimFlow = remember(packageName) {
+                        AppSettings.getScreenDimInGameEnabledFlow(context, packageName)
+                    }
+                    val screenDimInGame by screenDimFlow.collectAsStateWithLifecycle(initialValue = false)
+                    GameOptionsScreen(
+                        gameLabel = detectedGames.firstOrNull { it.packageName == packageName }?.label
+                            ?: packageName,
+                        packageName = packageName,
+                        floatingLogInGame = floatingLogInGame,
+                        screenDimInGame = screenDimInGame,
+                        onFloatingLogInGameChanged = { enabled ->
+                            onFloatingLogInGameChanged(packageName, enabled)
+                        },
+                        onScreenDimInGameChanged = { enabled ->
+                            onScreenDimInGameChanged(packageName, enabled)
+                        },
+                        onNavigateBack = { navController.popBackStack() },
+                        onEditFrameworkConfig = {
+                            val file = modpackManager.getFrameworkConfigFile(packageName)
+                            if (file.isFile) {
+                                editingFrameworkConfig = file
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(R.string.global_config_not_created),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
                         onClearBepInEx = { onClearBepInEx(packageName) },
                         onClearDotnet = { onClearDotnet(packageName) }
                     )
+
+                    // Framework config editor (single copy in the runtime
+                    // config dir - see ModpackManager). Whatever editor
+                    // exists is opened here; this destination only owns the
+                    // entry point.
+                    editingFrameworkConfig?.let { file ->
+                        ConfigEditorDialog(
+                            configFile = file,
+                            onDismiss = { editingFrameworkConfig = null },
+                            onSave = { f, content ->
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    f.writeText(content)
+                                    withContext(Dispatchers.Main) { editingFrameworkConfig = null }
+                                }
+                            }
+                        )
+                    }
                 }
 
                 // Log Viewer
@@ -500,12 +576,9 @@ private fun BottomNavBar(
         val isSettings = destination?.hasRoute<Settings>() == true
         NavigationBarItem(
             selected = isSettings,
-            onClick = {
-                selectedGame?.let { game ->
-                    navController.navigateTab(Settings(game.packageName))
-                }
-            },
-            enabled = selectedGame != null,
+            // Launcher Settings are global: this tab is always enabled,
+            // unlike Modpacks above which needs a selected game.
+            onClick = { navController.navigateTab(Settings) },
             icon = {
                 Icon(
                     if (isSettings) Icons.Filled.Settings else Icons.Outlined.Settings,
