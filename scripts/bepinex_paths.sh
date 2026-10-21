@@ -36,3 +36,8 @@ BEPINEX_PIN_FILE="${BEPINEX_PIN_FILE:-$BEPINEX_ROOT/provenance/bepinex.env}"
 # The patch queue replayed onto that clone, as a glob (see provenance/bepinex.env
 # for why this is a pattern and not a list of twelve filenames).
 BEPINEX_PATCH_GLOB="${BEPINEX_PATCH_GLOB:-$BEPINEX_ROOT/patches/*.patch}"
+
+# The recorded tree-object hash of a complete replay. apply_patches.sh checks
+# it, record_patched_tree.sh writes it, and a fixture can point both at a
+# throwaway file instead of the repository's record.
+BEPINEX_PATCHED_TREE_FILE="${BEPINEX_PATCHED_TREE_FILE:-$BEPINEX_ROOT/references/patched-tree.sha256}"

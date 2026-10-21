@@ -19,6 +19,8 @@ on:
       - 'provenance/**'
       - 'references/**'
       - 'scripts/apply_patches.sh'
+      - 'scripts/sync_upstream.sh'
+      - 'scripts/record_patched_tree.sh'
       - 'scripts/bepinex_paths.sh'
       - 'scripts/build_native_deps.sh'
       - 'scripts/build_monomod.sh'
@@ -88,6 +90,8 @@ on:
       - 'provenance/**'
       - 'references/**'
       - 'scripts/apply_patches.sh'
+      - 'scripts/sync_upstream.sh'
+      - 'scripts/record_patched_tree.sh'
       - 'scripts/bepinex_paths.sh'
       - 'scripts/build_native_deps.sh'
       - 'scripts/build_monomod.sh'
@@ -370,6 +374,9 @@ jobs:
       # hash cannot see, a tree not built on the pin, and a missing record.
       - name: The patch gate refuses a tampered tree
         run: ./scripts/test_verify_patches.sh
+
+      - name: The patch queue can be diagnosed and rebaselined
+        run: ./scripts/test_patch_queue_workflow.sh
 
       # Both APK-assembling workflows used to run assembleDebug, so the
       # release build type - R8 with the crypto PAL keep rules plus resource

@@ -7,9 +7,13 @@ Upstream changes live as serialized patches in `patches/`, replayed with
 
 ```bash
 ./scripts/apply_patches.sh       # apply queue onto pinned commit; conflict aborts build
-./scripts/sync_upstream.sh       # replay queue onto a new upstream tip
-./scripts/report_patch_conflict.sh  # print failing patch, files, markers
+./scripts/sync_upstream.sh       # advance the pin and update UPSTREAM_DESCRIBE
+./scripts/report_patch_conflict.sh  # print failing patch, files, markers, upstream diff
 ```
+
+`sync_upstream.sh` derives the repository from the pin file, so a fixture can
+point `BEPINEX_PIN_FILE` at a throwaway repository. It refuses to run when
+the pin has uncommitted changes.`
 
 Patches `0001`-`0013` cover: Android paths, logcat logging, the
 `AndroidEntrypoint` native entrypoint, libfusion detour routing with export
@@ -77,10 +81,14 @@ Re-recording is deliberate, like a manifest rebaseline:
 ./scripts/record_patched_tree.sh   # writes references/patched-tree.sha256
 ```
 
-Commit the updated hash alongside the patch change. The fixture
-`scripts/test_verify_patches.sh` proves the refusals (tampered tree,
-untracked file, wrong pin, missing record). Never re-record as part of a
-normal build.
+`record_patched_tree.sh` refuses anything that is not a complete, clean
+replay onto the pin: an open `git am` session, a dirty tree, a tree not
+built on the pinned commit, or a replay whose commit count does not match
+the current queue glob. The fixture
+`scripts/test_patch_queue_workflow.sh` proves those refusals together with
+the conflict report. The fixture `scripts/test_verify_patches.sh` proves
+the tree-gate refusals (tampered tree, untracked file, wrong pin,
+missing record). Never re-record as part of a normal build.
 
 The one flow that legitimately changes the tree is the daily upstream sync:
 `sync-upstream.yml` advances the pin first, so the replay runs with
