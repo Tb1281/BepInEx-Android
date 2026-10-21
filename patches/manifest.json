@@ -216,34 +216,19 @@
     "compile_unit": true
   },
   {
-    "id": "0010-build-pin-il2cppinterop-1.5.2-and-local-feed",
+    "id": "0010-build-pin-Android-packages",
     "number": 10,
-    "subject": "build: pin Il2CppInterop 1.5.2 and resolve from the local feed",
-    "purpose": "build: pin Il2CppInterop 1.5.2 and resolve from the local feed",
-    "description": "MIME-Version: 1.0 Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: 8bit",
+    "subject": "build: pin the Android package set (Il2CppInterop, MonoMod, Cpp2IL)",
+    "purpose": "build: pin the Android package set (Il2CppInterop, MonoMod, Cpp2IL)",
+    "description": "",
     "files": [
+      "BepInEx.Core/BepInEx.Core.csproj",
+      "BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj",
       "Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj",
       "nuget.config"
     ],
     "depends_on": [
       "0005-build-retarget-the-project-files-at-the-Android-IL2C"
-    ],
-    "adr": [],
-    "compile_unit": true
-  },
-  {
-    "id": "0011-build-pin-monomod-to-the-rebuilt-Android-package",
-    "number": 11,
-    "subject": "build: pin MonoMod to the locally rebuilt Android package",
-    "purpose": "build: pin MonoMod to the locally rebuilt Android package",
-    "description": "",
-    "files": [
-      "BepInEx.Core/BepInEx.Core.csproj",
-      "BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj",
-      "Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj"
-    ],
-    "depends_on": [
-      "0010-build-pin-il2cppinterop-1.5.2-and-local-feed"
     ],
     "adr": [],
     "compile_unit": true
@@ -261,21 +246,6 @@
     ],
     "depends_on": [
       "0009-il2cpp-fix-the-arm64-export-thunk-target-arith"
-    ],
-    "adr": [],
-    "compile_unit": true
-  },
-  {
-    "id": "0013-il2cpp-pin-cpp2il-to-published-prerelease",
-    "number": 13,
-    "subject": "il2cpp: pin Cpp2IL to a published prerelease",
-    "purpose": "il2cpp: pin Cpp2IL to a published prerelease",
-    "description": "",
-    "files": [
-      "Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj"
-    ],
-    "depends_on": [
-      "0011-build-pin-monomod-to-the-rebuilt-Android-package"
     ],
     "adr": [],
     "compile_unit": true
