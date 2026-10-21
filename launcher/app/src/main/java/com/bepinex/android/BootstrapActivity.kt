@@ -474,9 +474,15 @@ class BootstrapActivity : Activity() {
         val modpackManager = com.bepinex.android.modpack.ModpackManager()
         // Background bootstrap thread: runBlocking bridges cannot ANR.
         val previousActive = runBlocking { AppSettings.getActiveModpackFlow(this@BootstrapActivity, targetPackage).first() }
+        val previousActiveList = runBlocking { AppSettings.getActiveModpacksFlow(this@BootstrapActivity, targetPackage).first() }
 
-        // Save whatever runtime generated from previous run back to its owner
-        modpackManager.persistRuntimeState(targetPackage, previousActive)
+        // Save whatever runtime generated from previous run back to its owners:
+        // every previously active modpack gets only its own plugins' configs.
+        if (previousActiveList.isEmpty()) {
+            modpackManager.persistRuntimeState(targetPackage, previousActive)
+        } else {
+            previousActiveList.forEach { modpackManager.persistRuntimeState(targetPackage, it) }
+        }
 
         val activeModpacks = intent.getStringArrayListExtra(EXTRA_ACTIVE_MODPACKS)
             ?: intent.getStringExtra(EXTRA_ACTIVE_MODPACK)?.let { if (it.isNotEmpty()) arrayListOf(it) else null }
@@ -485,10 +491,12 @@ class BootstrapActivity : Activity() {
             BepInExLog.i("Vanilla mode  -- restoring vanilla cfg/logs")
             modpackManager.clearActiveMods(targetPackage)
             runBlocking { AppSettings.setActiveModpack(this@BootstrapActivity, targetPackage, null) }
+            runBlocking { AppSettings.setActiveModpacks(this@BootstrapActivity, targetPackage, emptyList()) }
         } else {
             BepInExLog.i("Applying modpacks: ${activeModpacks.joinToString(", ")}")
             modpackManager.applyModpacks(targetPackage, activeModpacks)
             runBlocking { AppSettings.setActiveModpack(this@BootstrapActivity, targetPackage, activeModpacks.firstOrNull()) }
+            runBlocking { AppSettings.setActiveModpacks(this@BootstrapActivity, targetPackage, activeModpacks) }
         }
 
         // Register game native libraries (match FusionCore: no exclusions)

@@ -140,6 +140,7 @@ object AppSettings {
     private fun keyBlockUnityKill(packageName: String) = booleanPreferencesKey("block_unity_kill_$packageName")
     private fun keyUseUnstrippedLibUnity(packageName: String) = booleanPreferencesKey("use_unstripped_libunity_$packageName")
     private fun keyActiveModpack(packageName: String) = stringPreferencesKey("active_modpack_$packageName")
+    private fun keyActiveModpacks(packageName: String) = stringPreferencesKey("active_modpacks_$packageName")
 
     fun getDynamicColorFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_DYNAMIC_COLOR] ?: false
@@ -197,6 +198,29 @@ object AppSettings {
     suspend fun setActiveModpack(context: Context, packageName: String, modpackName: String?) {
         context.gameStateDataStore.edit { prefs ->
             prefs[keyActiveModpack(packageName)] = modpackName ?: ""
+        }
+    }
+
+    /**
+     * Full modpack list of the previous run. The single-name key above only
+     * remembers the first pack, which made multi-pack runs persist every
+     * pack's runtime config into that first pack. Persist now iterates this
+     * list and each pack receives only its own plugins' config files.
+     */
+    fun getActiveModpacksFlow(context: Context, packageName: String): Flow<List<String>> =
+        context.gameStateDataStore.data.map { prefs ->
+            val joined = prefs[keyActiveModpacks(packageName)]?.ifEmpty { null }
+            if (joined != null) {
+                joined.split('\n').filter { it.isNotEmpty() }
+            } else {
+                // Upgrade fallback: only the legacy single-name key exists.
+                listOfNotNull(prefs[keyActiveModpack(packageName)]?.ifEmpty { null })
+            }
+        }
+
+    suspend fun setActiveModpacks(context: Context, packageName: String, modpackNames: List<String>) {
+        context.gameStateDataStore.edit { prefs ->
+            prefs[keyActiveModpacks(packageName)] = modpackNames.joinToString("\n")
         }
     }
 

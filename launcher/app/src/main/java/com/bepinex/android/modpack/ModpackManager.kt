@@ -343,20 +343,74 @@ class ModpackManager {
         // the modpack's copy (or the modpack has no copy). An unconditional copy
         // would silently clobber edits the user made in the launcher UI between
         // runs with stale runtime state.
-        copyNewerDirContents(BepInExPaths.getConfigDir(packageName), File(destRoot, "config"))
+        // Ownership filter: the runtime config dir is merged from every active
+        // modpack, so copying it back wholesale would stuff one pack with the
+        // other packs' plugin configs. Only persist files that belong to this
+        // pack (BepInEx.cfg is shared framework config and always persists).
+        val owned = ownedConfigFileNames(packageName, modpackName)
+        copyNewerDirContents(BepInExPaths.getConfigDir(packageName), File(destRoot, "config"), owned)
         copyRuntimeLogs(packageName, File(destRoot, "logs"))
         BepInExLog.i("Persisted runtime cfg/logs -> ${destRoot.absolutePath}")
     }
 
     /**
+     * Config file names that belong to [modpackName]: "BepInEx.cfg" plus, for
+     * each plugin DLL in the pack, any "<guid>.cfg" whose guid string appears
+     * inside the DLL (BepInEx names plugin config files after the plugin GUID,
+     * and the GUID literal is embedded in the DLL metadata). Returns null for
+     * the vanilla state (no filtering - it is the shared base state).
+     */
+    private fun ownedConfigFileNames(packageName: String, modpackName: String?): Set<String>? {
+        if (modpackName.isNullOrEmpty()) return null
+        val result = mutableSetOf("BepInEx.cfg")
+        val pluginsDir = getModpackPluginsDir(packageName, modpackName)
+        if (!pluginsDir.isDirectory) return result
+        val runtimeConfig = BepInExPaths.getConfigDir(packageName)
+        val candidates = runtimeConfig.listFiles()
+            ?.filter { it.isFile && it.extension == "cfg" && it.name != "BepInEx.cfg" }
+            ?.map { it.name }
+            ?: return result
+        if (candidates.isEmpty()) return result
+        val dllBytes = pluginsDir.walkTopDown()
+            .filter { it.isFile && it.extension.equals("dll", ignoreCase = true) }
+            .map { runCatching { it.readBytes() }.getOrNull() }
+            .filterNotNull()
+            .toList()
+        for (name in candidates) {
+            val guid = name.removeSuffix(".cfg")
+            val utf8 = guid.toByteArray(Charsets.UTF_8)
+            val utf16 = guid.toByteArray(Charsets.UTF_16LE)
+            if (dllBytes.any { containsSubarray(it, utf8) || containsSubarray(it, utf16) }) {
+                result.add(name)
+            }
+        }
+        return result
+    }
+
+    private fun containsSubarray(haystack: ByteArray, needle: ByteArray): Boolean {
+        if (needle.isEmpty() || haystack.size < needle.size) return false
+        outer@ for (i in 0..haystack.size - needle.size) {
+            for (j in needle.indices) {
+                if (haystack[i + j] != needle[j]) continue@outer
+            }
+            return true
+        }
+        return false
+    }
+
+    /**
      * Copies source -> dest, but only for files that do not exist at the
      * destination or are newer than the destination copy. Source timestamps are
-     * preserved so the next comparison stays meaningful.
+     * preserved so the next comparison stays meaningful. When [onlyNames] is
+     * non-null, only files whose name is in the set are copied.
      */
-    private fun copyNewerDirContents(source: File, dest: File) {
+    private fun copyNewerDirContents(source: File, dest: File, onlyNames: Set<String>? = null) {
         dest.mkdirs()
         if (!source.isDirectory) return
         source.listFiles()?.forEach { child ->
+            if (onlyNames != null && !child.isDirectory && child.name !in onlyNames) {
+                return@forEach
+            }
             val target = File(dest, child.name)
             if (child.isDirectory) {
                 copyNewerDirContents(child, target)
