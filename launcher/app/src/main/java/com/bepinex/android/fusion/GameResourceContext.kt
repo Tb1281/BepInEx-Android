@@ -185,7 +185,7 @@ class GameResourceContext(
     // The hosted game must not see the launcher's raw storage roots: every
     // game would share one files/external dir and their files would mix
     // (playerInfo.dat, Unity/ at the launcher root). PerGameStorage scopes
-    // the game-visible roots to BepInEx_Android/<game>/gamedata (external)
+    // the game-visible roots to <game>/gamedata (external)
     // and filesDir/<game>/gamedata (internal). App-private areas that are
     // already per-app plumbing (dataDir, databases, shared prefs, code cache)
     // keep resolving to the launcher sandbox unchanged.

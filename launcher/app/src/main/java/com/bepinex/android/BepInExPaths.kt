@@ -1,22 +1,18 @@
 package com.bepinex.android
 
 import android.content.Context
-import android.os.Environment
 import java.io.File
 
 /**
  * Resolves BepInEx paths for any game package.
  *
- * Production: /storage/emulated/0/BepInEx_Android/{gamePackage}/BepInEx/
- * Test APKs:  {filesDir}/BepInEx_Android/{gamePackage}/BepInEx/
- * Internal:   {filesDir}/{gamePackage}/   (dotnet, Data_copy, libunity cache)
+ * External: {externalFilesDir}/{gamePackage}/BepInEx/
+ * Internal: {filesDir}/{gamePackage}/   (dotnet, Data_copy, gamedata)
  *
- * A test launcher (`applicationId` ending in `.test`) must never overwrite the
- * production install's core, plugins or configs, so it resolves into the
- * app-private internal storage instead of the shared public directory. That
- * also removes its dependency on MANAGE_EXTERNAL_STORAGE. Production builds
- * keep the public layout unchanged, because that is where users manage their
- * mods with a file manager.
+ * Per-game directories sit directly under the app storage roots - there is
+ * no intermediate namespace folder. Package names cannot collide with the
+ * engine/runtime entries that share the external root (Unity/, il2cpp/,
+ * logs, tombstones), and the internal root already used this flat layout.
  *
  * The launcher's applicationId and filesDir are read from the process context
  * installed by [install]. Every process that touches these paths must install
@@ -25,13 +21,6 @@ import java.io.File
  * from one does not cover the others.
  */
 object BepInExPaths {
-
-    /** Shared root of the public layout, and the subdirectory test builds use
-     *  inside internal storage. */
-    private const val ROOT_DIR = "BepInEx_Android"
-
-    /** Suffix that distinguishes a test launcher from the production one. */
-    private const val TEST_SUFFIX = ".test"
 
     @Volatile
     private var appContext: Context? = null
@@ -61,7 +50,7 @@ object BepInExPaths {
      */
     fun getGameRootDir(packageName: String): File {
         val baseDir = requireContext().getExternalFilesDir(null) ?: requireContext().filesDir
-        return File(baseDir, "$ROOT_DIR/$packageName")
+        return File(baseDir, packageName)
     }
 
     fun getBepInExDir(packageName: String): File =

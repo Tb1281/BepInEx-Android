@@ -17,8 +17,8 @@
           - GameLogOverlay        BepInExPaths.getLogFile()  <external files>/...
           - LogViewerScreen       the same log file, by path string
 
-        The in-game log sits under BepInEx_Android/<gamePackage>/BepInEx/, one
-        level deeper than the BepInEx_Android segment, because the game package
+        The in-game log sits under <gamePackage>/BepInEx/, directly
+        under the external files root, because the game package
         name is part of the path (BepInExPaths.getGameRootDir).
     -->
     <external-files-path name="external_files" path="." />
