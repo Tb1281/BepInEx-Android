@@ -189,12 +189,14 @@ static jobject unwrap_to_root_context(JNIEnv *env, jobject context)
 {
     jclass wrapperClass = env->FindClass("android/content/ContextWrapper");
     if (!wrapperClass) {
+        LOGE("unwrap_to_root_context: ContextWrapper class not found; using original context");
         env->ExceptionClear();
         return context;
     }
     jmethodID getBaseContext = env->GetMethodID(wrapperClass, "getBaseContext",
         "()Landroid/content/Context;");
     if (!getBaseContext) {
+        LOGE("unwrap_to_root_context: getBaseContext method not found; using original context");
         env->ExceptionClear();
         return context;
     }
