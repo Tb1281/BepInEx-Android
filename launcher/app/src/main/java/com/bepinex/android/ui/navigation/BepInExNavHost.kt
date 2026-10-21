@@ -69,8 +69,6 @@ fun BepInExNavHost(
     language: AppSettings.Language,
     dynamicColor: Boolean,
     animationDisabled: Boolean,
-    floatingLogInGame: Boolean,
-    screenDimInGame: Boolean,
     // Callbacks
     onSelectGame: (GameDetector.DetectedGame) -> Unit,
     onRescan: () -> Unit,
@@ -79,8 +77,10 @@ fun BepInExNavHost(
     onLanguageChanged: (AppSettings.Language) -> Unit,
     onDynamicColorChanged: (Boolean) -> Unit,
     onAnimationDisabledChanged: (Boolean) -> Unit,
-    onFloatingLogInGameChanged: (Boolean) -> Unit,
-    onScreenDimInGameChanged: (Boolean) -> Unit,
+    // Per-game Game Options (#36): the package name travels with the change
+    // because the floating-log permission flow in MainActivity is keyed by it.
+    onFloatingLogInGameChanged: (packageName: String, enabled: Boolean) -> Unit,
+    onScreenDimInGameChanged: (packageName: String, enabled: Boolean) -> Unit,
     onClearBepInEx: (String) -> Unit,
     onClearDotnet: (String) -> Unit
 ) {
@@ -378,31 +378,48 @@ fun BepInExNavHost(
                         language = language,
                         dynamicColor = dynamicColor,
                         animationDisabled = animationDisabled,
-                        floatingLogInGame = floatingLogInGame,
-                        screenDimInGame = screenDimInGame,
                         onNavigateBack = { navController.popBackStack() },
                         onNavigateToAbout = { navController.navigate(About) },
                         onThemeChanged = onThemeChanged,
                         onLanguageChanged = onLanguageChanged,
                         onDynamicColorChanged = onDynamicColorChanged,
-                        onAnimationDisabledChanged = onAnimationDisabledChanged,
-                        onFloatingLogInGameChanged = onFloatingLogInGameChanged,
-                        onScreenDimInGameChanged = onScreenDimInGameChanged
+                        onAnimationDisabledChanged = onAnimationDisabledChanged
                     )
                 }
 
                 // Game Options — everything specific to one game: its
-                // Framework Config entry and its maintenance actions.
+                // Framework Config entry, its in-game options (floating
+                // log / screen dim, #36), and its maintenance actions.
                 // Reached from the game's hero card on the Games screen;
                 // this is the only route into per-game settings now.
                 composable<GameOptions> { backStackEntry ->
                     val route = backStackEntry.toRoute<GameOptions>()
                     val packageName = route.packageName
                     var editingFrameworkConfig by remember { mutableStateOf<java.io.File?>(null) }
+                    // This game's own floating log / screen dim values (#36),
+                    // read straight from the per-game store entries — the
+                    // flows are remembered per package so recompositions do
+                    // not restart collection.
+                    val floatingLogFlow = remember(packageName) {
+                        AppSettings.getFloatingLogInGameEnabledFlow(context, packageName)
+                    }
+                    val floatingLogInGame by floatingLogFlow.collectAsStateWithLifecycle(initialValue = false)
+                    val screenDimFlow = remember(packageName) {
+                        AppSettings.getScreenDimInGameEnabledFlow(context, packageName)
+                    }
+                    val screenDimInGame by screenDimFlow.collectAsStateWithLifecycle(initialValue = false)
                     GameOptionsScreen(
                         gameLabel = detectedGames.firstOrNull { it.packageName == packageName }?.label
                             ?: packageName,
                         packageName = packageName,
+                        floatingLogInGame = floatingLogInGame,
+                        screenDimInGame = screenDimInGame,
+                        onFloatingLogInGameChanged = { enabled ->
+                            onFloatingLogInGameChanged(packageName, enabled)
+                        },
+                        onScreenDimInGameChanged = { enabled ->
+                            onScreenDimInGameChanged(packageName, enabled)
+                        },
                         onNavigateBack = { navController.popBackStack() },
                         onEditFrameworkConfig = {
                             val file = modpackManager.getFrameworkConfigFile(packageName)

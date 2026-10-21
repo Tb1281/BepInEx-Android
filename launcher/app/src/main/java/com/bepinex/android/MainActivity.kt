@@ -62,10 +62,19 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { _ -> enableFloatingLog() }
 
+    // The game a floating-log enable is in flight for (#36: the option is
+    // per game now). The overlay and notification permission results arrive
+    // asynchronously, after the toggle that started them, so the package
+    // name is carried here instead of being re-derived when they land.
+    private var pendingFloatingLogPackage: String? = null
+
     private fun enableFloatingLog() {
-        viewModel.setFloatingLogInGame(true)
+        val pkg = pendingFloatingLogPackage
+            ?: viewModel.uiState.value.selectedGame?.packageName
+        if (pkg != null) {
+            viewModel.setFloatingLogInGame(pkg, true)
+        }
         ensureNotificationPermission()
-        val pkg = viewModel.uiState.value.selectedGame?.packageName
         if (pkg != null) {
             com.bepinex.android.log.LogOverlayService.start(this, pkg)
         }
@@ -109,8 +118,6 @@ class MainActivity : AppCompatActivity() {
                     language = uiState.language,
                     dynamicColor = uiState.dynamicColor,
                     animationDisabled = uiState.animationDisabled,
-                    floatingLogInGame = uiState.floatingLogInGame,
-                    screenDimInGame = uiState.screenDimInGame,
                     onSelectGame = { viewModel.selectGame(it) },
                     onRescan = { viewModel.rescan() },
                     onLaunch = { modpackNames -> launchGame(uiState.selectedGame, modpackNames, uiState.isFrameworkReady, uiState.isExtracting) },
@@ -122,7 +129,13 @@ class MainActivity : AppCompatActivity() {
                     },
                     onDynamicColorChanged = { viewModel.setDynamicColor(it) },
                     onAnimationDisabledChanged = { viewModel.setAnimationDisabled(it) },
-                    onFloatingLogInGameChanged = { enabled ->
+                    onFloatingLogInGameChanged = { gamePackage, enabled ->
+                        if (enabled) {
+                            // The permission results come back without
+                            // any game context; remember whose toggle this
+                            // is before launching into them.
+                            pendingFloatingLogPackage = gamePackage
+                        }
                         if (enabled && !Settings.canDrawOverlays(this@MainActivity)) {
                             try {
                                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
@@ -137,13 +150,13 @@ class MainActivity : AppCompatActivity() {
                             if (enabled) {
                                 enableFloatingLog()
                             } else {
-                                viewModel.setFloatingLogInGame(false)
+                                viewModel.setFloatingLogInGame(gamePackage, false)
                                 com.bepinex.android.log.LogOverlayService.stop(this@MainActivity)
                             }
                         }
                     },
-                    onScreenDimInGameChanged = { enabled ->
-                        viewModel.setScreenDimInGame(enabled)
+                    onScreenDimInGameChanged = { gamePackage, enabled ->
+                        viewModel.setScreenDimInGame(gamePackage, enabled)
                     },
                     onClearBepInEx = { 
                         viewModel.clearBepInEx(it)
@@ -245,10 +258,10 @@ class MainActivity : AppCompatActivity() {
                 AppSettings.isUnityKillBlockEnabledFlow(this@MainActivity, game.packageName).first()
             }
             val screenDimEnabled = withContext(Dispatchers.IO) {
-                AppSettings.getScreenDimInGameEnabledFlow(this@MainActivity).first()
+                AppSettings.getScreenDimInGameEnabledFlow(this@MainActivity, game.packageName).first()
             }
             val floatingLogEnabled = withContext(Dispatchers.IO) {
-                AppSettings.getFloatingLogInGameEnabledFlow(this@MainActivity).first()
+                AppSettings.getFloatingLogInGameEnabledFlow(this@MainActivity, game.packageName).first()
             }
             // Persist the selection before starting: sequential in this coroutine,
             // so the game can never start before the save completes.

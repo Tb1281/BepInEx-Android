@@ -24,8 +24,6 @@ data class MainUiState(
     val isFrameworkReady: Boolean = false,
     val themeMode: AppSettings.ThemeMode = AppSettings.ThemeMode.SYSTEM,
     val language: AppSettings.Language = AppSettings.Language.SYSTEM,
-    val floatingLogInGame: Boolean = false,
-    val screenDimInGame: Boolean = false,
     val dynamicColor: Boolean = true,
     val animationDisabled: Boolean = false,
     val pendingCrash: CrashDiagnostics.PendingLaunch? = null
@@ -48,16 +46,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             AppSettings.getLanguageFlow(application).collect { lang ->
                 _uiState.update { it.copy(language = lang) }
-            }
-        }
-        viewModelScope.launch {
-            AppSettings.getFloatingLogInGameEnabledFlow(application).collect { enabled ->
-                _uiState.update { it.copy(floatingLogInGame = enabled) }
-            }
-        }
-        viewModelScope.launch {
-            AppSettings.getScreenDimInGameEnabledFlow(application).collect { enabled ->
-                _uiState.update { it.copy(screenDimInGame = enabled) }
             }
         }
         viewModelScope.launch {
@@ -185,15 +173,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setFloatingLogInGame(enabled: Boolean) {
+    // Floating log / screen dim are per-game Game Options (#36): the caller
+    // (Game Options screen, via MainActivity's permission flow) always names
+    // the game the value belongs to. The Game Options screen observes the
+    // values straight from AppSettings for its route's package, so they are
+    // not mirrored into MainUiState.
+    fun setFloatingLogInGame(packageName: String, enabled: Boolean) {
         viewModelScope.launch {
-            AppSettings.setFloatingLogInGameEnabled(getApplication(), enabled)
+            AppSettings.setFloatingLogInGameEnabled(getApplication(), packageName, enabled)
         }
     }
 
-    fun setScreenDimInGame(enabled: Boolean) {
+    fun setScreenDimInGame(packageName: String, enabled: Boolean) {
         viewModelScope.launch {
-            AppSettings.setScreenDimInGameEnabled(getApplication(), enabled)
+            AppSettings.setScreenDimInGameEnabled(getApplication(), packageName, enabled)
         }
     }
 

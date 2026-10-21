@@ -25,8 +25,9 @@ import com.bepinex.android.ui.theme.BepInExTheme
 /**
  * Game Options screen: the single home for everything specific to one game
  * (see GLOSSARY.md). It hosts the entry point for editing the game's
- * Framework Config and, grouped at the bottom in a danger zone, the per-game
- * maintenance actions with their confirmation dialogs.
+ * Framework Config, this game's in-game options (floating log, screen
+ * dim — stored per game since #36), and, grouped at the bottom in a danger
+ * zone, the per-game maintenance actions with their confirmation dialogs.
  *
  * Before #35 those maintenance actions lived on the Launcher Settings
  * screen (targeting whichever game was selected) and the Framework Config
@@ -41,6 +42,10 @@ private enum class MaintenanceAction { BEPINEX, DOTNET }
 fun GameOptionsScreen(
     gameLabel: String,
     packageName: String,
+    floatingLogInGame: Boolean,
+    screenDimInGame: Boolean,
+    onFloatingLogInGameChanged: (Boolean) -> Unit,
+    onScreenDimInGameChanged: (Boolean) -> Unit,
     onNavigateBack: () -> Unit,
     onEditFrameworkConfig: () -> Unit,
     onClearBepInEx: () -> Unit,
@@ -124,6 +129,72 @@ fun GameOptionsScreen(
                         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                         modifier = Modifier.clickable { onEditFrameworkConfig() }
                     )
+                }
+            }
+
+            // In-game options — this game's floating log and screen dim
+            // values (#36). They lived on the Launcher Settings screen as
+            // app-wide values before; the toggles, strings, and the
+            // permission flow behind the floating log toggle are unchanged,
+            // only the scope is per game now.
+            item {
+                Text(
+                    text = stringResource(R.string.settings_ingame_section),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+                Spacer(Modifier.height(6.dp))
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+                ) {
+                    Column {
+                        // Floating Log in Game
+                        ListItem(
+                            headlineContent = {
+                                Text(stringResource(R.string.settings_floating_log), fontWeight = FontWeight.SemiBold)
+                            },
+                            supportingContent = { Text(stringResource(R.string.settings_floating_log_desc)) },
+                            leadingContent = {
+                                Icon(Icons.Outlined.Terminal, null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = floatingLogInGame,
+                                    onCheckedChange = onFloatingLogInGameChanged
+                                )
+                            },
+                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+                        )
+
+                        // Screen Dim on Idle
+                        ListItem(
+                            headlineContent = {
+                                Text(stringResource(R.string.settings_screen_dim), fontWeight = FontWeight.SemiBold)
+                            },
+                            supportingContent = { Text(stringResource(R.string.settings_screen_dim_desc)) },
+                            leadingContent = {
+                                Icon(Icons.Outlined.Brightness4, null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = screenDimInGame,
+                                    onCheckedChange = onScreenDimInGameChanged
+                                )
+                            },
+                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                        )
+                    }
                 }
             }
 
@@ -231,6 +302,10 @@ private fun GameOptionsScreenPreviewContent(themeMode: AppSettings.ThemeMode) {
         GameOptionsScreen(
             gameLabel = "The Tower",
             packageName = "com.example.game",
+            floatingLogInGame = true,
+            screenDimInGame = false,
+            onFloatingLogInGameChanged = {},
+            onScreenDimInGameChanged = {},
             onNavigateBack = {},
             onEditFrameworkConfig = {},
             onClearBepInEx = {},
@@ -239,7 +314,7 @@ private fun GameOptionsScreenPreviewContent(themeMode: AppSettings.ThemeMode) {
     }
 }
 
-@Preview(name = "Game Options - Light", showBackground = true, heightDp = 700)
+@Preview(name = "Game Options - Light", showBackground = true, heightDp = 850)
 @Composable
 private fun GameOptionsScreenLightPreview() {
     GameOptionsScreenPreviewContent(themeMode = AppSettings.ThemeMode.LIGHT)
@@ -248,7 +323,7 @@ private fun GameOptionsScreenLightPreview() {
 @Preview(
     name = "Game Options - Dark",
     showBackground = true,
-    heightDp = 700,
+    heightDp = 850,
     uiMode = Configuration.UI_MODE_NIGHT_YES
 )
 @Composable
@@ -256,7 +331,7 @@ private fun GameOptionsScreenDarkPreview() {
     GameOptionsScreenPreviewContent(themeMode = AppSettings.ThemeMode.DARK)
 }
 
-@Preview(name = "Game Options - Enlarged font", showBackground = true, heightDp = 900, fontScale = 2f)
+@Preview(name = "Game Options - Enlarged font", showBackground = true, heightDp = 1100, fontScale = 2f)
 @Composable
 private fun GameOptionsScreenLargeFontPreview() {
     GameOptionsScreenPreviewContent(themeMode = AppSettings.ThemeMode.LIGHT)
