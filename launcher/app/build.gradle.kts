@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.bepinex.android"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         // Debug and release install side by side: release carries an
@@ -17,7 +17,7 @@ android {
         applicationId = "com.bepinex.android"
         manifestPlaceholders["appLabel"] = "BepInEx Debug"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 184
         versionName = "0.184"
 

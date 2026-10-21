@@ -81,7 +81,7 @@ jobs:
         run: |
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -1
+          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1" "platforms;android-36" "build-tools;35.0.0" 2>&1 | tail -1
 
       - name: Fetch the pinned .NET runtime pack
         run: scripts/fetch_dotnet_runtime.sh out/runtime
