@@ -81,6 +81,10 @@
     <string name="settings_clear_dotnet_desc">.NET 런타임 및 복사된 게임 데이터를 삭제합니다. 다음 실행 시 다시 추출됩니다.</string>
     <string name="settings_theme">테마</string>
     <string name="settings_language">언어</string>
+    <string name="settings_dynamic_color">다이내믹 컬러</string>
+    <string name="settings_dynamic_color_desc">Android 12 이상에서 배경화면 색상(Material You)을 런처에 적용합니다.</string>
+    <string name="settings_disable_animations">애니메이션 끄기</string>
+    <string name="settings_disable_animations_desc">런처의 화면 전환 애니메이션을 끕니다.</string>
     <string name="settings_about">정보</string>
 
     <!-- Confirm Dialogs -->
