@@ -242,7 +242,7 @@ the `release-tag` ship job so the explicit verifier dispatch is permitted
 ## Known issues
 
 - **The Tower**: the production Firebase RTDB path still aborts in `DeleteInternal` on the pinned Firebase C++ SDK. See `docs/release-crash-investigation.md`. Publish as a known issue until resolved.
-- **Pine license**: the GPL-3.0 launcher and Anti-996 Pine compatibility review is unresolved. Stable promotion is blocked until it closes.
+- **Pine license**: the GPL-3.0 launcher and Anti-996 Pine compatibility review is unresolved. Stable promotion is blocked until it closes; the status-quo decision is recorded in [ADR-0019](adr/0019-retain-gpl-and-pine.md).
 
 ## Assets expected on a release
 
