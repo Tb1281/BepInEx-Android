@@ -518,7 +518,9 @@ class BootstrapActivity : Activity() {
             unityDataDirectory = copiedData.absolutePath,
             unityVersion = unityVersion,
             useOriginalLibUnity = useOriginalLibUnity,
-            externalFilesDirectory = getExternalFilesDir(null)?.absolutePath ?: filesDir.absolutePath
+            externalFilesDirectory = com.bepinex.android.fusion.PerGameStorage
+                .externalFilesDir(this, targetPackage, null)?.absolutePath
+                ?: (getExternalFilesDir(null)?.absolutePath ?: filesDir.absolutePath)
         )
     }
 
