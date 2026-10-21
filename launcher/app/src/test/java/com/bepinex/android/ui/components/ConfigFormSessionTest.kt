@@ -9,7 +9,8 @@ import org.junit.Test
 
 /**
  * Behaviour tests for the Framework Config form's edit session, at its
- * public seam: drafts, control edits, resets, search and save blocking.
+ * public seam: drafts, control edits, resets, search, save blocking and
+ * the form↔raw mode switches.
  * The expected serialised texts are independent literals — the form's
  * contract is that saving touches only the edited value lines.
  */
@@ -145,6 +146,89 @@ class ConfigFormSessionTest {
         assertFalse(session.hasUnsavedChanges())
         session.setDraft(retries, "6")
         assertTrue(session.hasUnsavedChanges())
+    }
+
+    @Test
+    fun `form edits are still modified after switching to raw`() {
+        val session = ConfigFormSession(SAMPLE)
+        val retries = indexOf(session, "MaxRetries")
+        session.setDraft(retries, "7")
+
+        // The switch commits the draft; the raw editor opens on the result.
+        assertTrue(session.switchToRaw().isEmpty())
+        val rawText = session.serialize()
+        assertEquals(SAMPLE.replace("MaxRetries = 5", "MaxRetries = 7"), rawText)
+
+        // Judged against the opened file the carried-over edit is still an
+        // unsaved change, so the raw-mode guard and save stay live. (The
+        // old rawText != serialize() test compared the edit with itself
+        // and saw nothing.)
+        assertTrue(session.isModified(rawText))
+        // Saving that raw text is exactly saving the form edit.
+        assertFalse(session.isModified(SAMPLE))
+        assertEquals(rawText, session.serialize())
+    }
+
+    @Test
+    fun `control edits are still modified after switching to raw`() {
+        val session = ConfigFormSession(SAMPLE)
+        val enabled = indexOf(session, "Enabled")
+        assertTrue(session.applyValue(enabled, "false") is ValidationResult.Valid)
+
+        assertTrue(session.switchToRaw().isEmpty())
+        assertTrue(session.isModified(session.serialize()))
+    }
+
+    @Test
+    fun `switching to raw without edits is not a modification`() {
+        val session = ConfigFormSession(SAMPLE)
+        assertTrue(session.switchToRaw().isEmpty())
+        assertFalse(session.isModified(session.serialize()))
+        assertFalse(session.hasUnsavedChanges())
+    }
+
+    @Test
+    fun `an invalid draft blocks switching to raw and keeps the draft`() {
+        val session = ConfigFormSession(SAMPLE)
+        val retries = indexOf(session, "MaxRetries")
+        session.setDraft(retries, "abc")
+
+        val errors = session.switchToRaw()
+        assertEquals(1, errors.size)
+        assertEquals("MaxRetries", errors[0].first.key)
+
+        // Nothing was committed and the input survives for fixing.
+        assertEquals(SAMPLE, session.serialize())
+        assertEquals("abc", session.draft(retries))
+    }
+
+    @Test
+    fun `switching back to the form re-parses raw edits and discards drafts`() {
+        val session = ConfigFormSession(SAMPLE)
+        val retries = indexOf(session, "MaxRetries")
+        session.setDraft(retries, "9")
+
+        val rawEdited = SAMPLE.replace("Enabled = true", "Enabled = false")
+        session.switchToForm(rawEdited)
+
+        // Drafts described the old document: gone, not applied on top.
+        assertNull(session.draft(retries))
+        assertEquals("5", session.entries[retries].value)
+        // The document is the raw text now, re-parsed.
+        val enabled = indexOf(session, "Enabled")
+        assertEquals("false", session.entries[enabled].value)
+        assertEquals(rawEdited, session.serialize())
+        // Still judged against the file the session was opened with.
+        assertTrue(session.hasUnsavedChanges())
+    }
+
+    @Test
+    fun `switching back to the form with the original text is clean`() {
+        val session = ConfigFormSession(SAMPLE)
+        assertTrue(session.switchToRaw().isEmpty())
+        session.switchToForm(SAMPLE)
+        assertEquals(SAMPLE, session.serialize())
+        assertFalse(session.hasUnsavedChanges())
     }
 
     private companion object {

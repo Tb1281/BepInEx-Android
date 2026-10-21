@@ -34,6 +34,9 @@ import com.bepinex.android.ui.theme.BepInExTheme
  * was reached from a shortcut button on the modpack list. Both routes are
  * gone; this screen is the only way in.
  */
+
+/** A destructive maintenance action awaiting confirmation, if any. */
+private enum class MaintenanceAction { BEPINEX, DOTNET }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GameOptionsScreen(
@@ -44,7 +47,7 @@ fun GameOptionsScreen(
     onClearBepInEx: () -> Unit,
     onClearDotnet: () -> Unit
 ) {
-    var confirmAction by remember { mutableStateOf<String?>(null) }
+    var confirmAction by remember { mutableStateOf<MaintenanceAction?>(null) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -162,7 +165,7 @@ fun GameOptionsScreen(
                                 Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-                            modifier = Modifier.clickable { confirmAction = "bepinex" }
+                            modifier = Modifier.clickable { confirmAction = MaintenanceAction.BEPINEX }
                         )
 
                         HorizontalDivider(
@@ -182,7 +185,7 @@ fun GameOptionsScreen(
                                 Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             },
                             colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-                            modifier = Modifier.clickable { confirmAction = "dotnet" }
+                            modifier = Modifier.clickable { confirmAction = MaintenanceAction.DOTNET }
                         )
                     }
                 }
@@ -193,18 +196,19 @@ fun GameOptionsScreen(
     // Confirmation dialogs — identical to the ones these actions had on
     // the Launcher Settings screen before the move.
     confirmAction?.let { action ->
+        // Exhaustive over MaintenanceAction: every value that can reach
+        // here has a real title/message, so no empty-dialog fallback.
         val (title, message, onConfirm) = when (action) {
-            "bepinex" -> Triple(
+            MaintenanceAction.BEPINEX -> Triple(
                 stringResource(R.string.confirm_clear_bepinex_title),
                 stringResource(R.string.confirm_clear_bepinex_msg),
                 { onClearBepInEx(); confirmAction = null }
             )
-            "dotnet" -> Triple(
+            MaintenanceAction.DOTNET -> Triple(
                 stringResource(R.string.confirm_clear_dotnet_title),
                 stringResource(R.string.confirm_clear_dotnet_msg),
                 { onClearDotnet(); confirmAction = null }
             )
-            else -> Triple("", "", { confirmAction = null })
         }
         AlertDialog(
             onDismissRequest = { confirmAction = null },
