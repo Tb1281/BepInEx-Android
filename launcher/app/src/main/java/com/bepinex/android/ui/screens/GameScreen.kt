@@ -50,7 +50,8 @@ fun GameScreen(
     onRescan: () -> Unit,
     onLaunch: () -> Unit,
     onNavigateToSettings: () -> Unit,
-    onNavigateToModpacks: () -> Unit
+    onNavigateToModpacks: () -> Unit,
+    onNavigateToGameOptions: () -> Unit
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -173,6 +174,19 @@ fun GameScreen(
                                         )
                                         Spacer(Modifier.width(8.dp))
                                         TagPill("v${selectedGame.versionName}")
+                                        // Game Options: everything specific
+                                        // to this game (Framework Config,
+                                        // maintenance) lives behind this.
+                                        IconButton(
+                                            onClick = onNavigateToGameOptions,
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.Settings,
+                                                contentDescription = stringResource(R.string.game_options_title),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                     Spacer(Modifier.height(2.dp))
                                     Text(

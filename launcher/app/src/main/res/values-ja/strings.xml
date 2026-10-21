@@ -68,9 +68,28 @@
     <string name="config_editor_title">設定ファイルエディタ</string>
     <string name="config_editor_save">保存</string>
     <string name="config_editor_unsaved">未保存の変更</string>
+    <string name="config_editor_mode_form">フォーム</string>
+    <string name="config_editor_mode_raw">テキスト</string>
+    <string name="config_editor_search_hint">設定を検索</string>
+    <string name="config_editor_reset_default">既定値にリセット</string>
+    <string name="config_editor_default_value">既定値: %1$s</string>
+    <string name="config_editor_empty_default">（空）</string>
+    <string name="config_editor_no_results">検索に一致する設定がありません</string>
+    <string name="config_editor_invalid_title">無効な値があります</string>
+    <string name="config_editor_invalid_msg">以下の値がファイルで宣言された型と一致しないため、まだ保存できません。まず修正してください:</string>
+    <string name="config_editor_raw_warning_title">宣言された型と一致しない値</string>
+    <string name="config_editor_raw_warning_msg">そのまま保存できますが、ゲームがこれらの値を無視したり拒否したりする場合があります:</string>
+    <string name="config_editor_save_anyway">そのまま保存</string>
+    <string name="config_editor_ok">OK</string>
     <string name="config_editor_discard_title">変更を破棄しますか？</string>
     <string name="config_editor_discard_msg">未保存の変更があります。破棄しますか？</string>
     <string name="config_editor_no_configs">設定ファイルがありません</string>
+
+    <!-- Game Options -->
+    <string name="game_options_title">ゲームオプション</string>
+    <string name="game_options_framework_config">フレームワーク設定</string>
+    <string name="game_options_framework_config_desc">このゲーム用に保持されるフレームワーク設定（BepInEx.cfg）を編集します</string>
+    <string name="game_options_danger_zone">危険な操作</string>
 
     <!-- Settings -->
     <string name="settings_title">設定</string>
@@ -81,7 +100,13 @@
     <string name="settings_clear_dotnet_desc">.NETランタイムとコピーされたゲームデータを削除します。次回起動時に再展開されます。</string>
     <string name="settings_theme">テーマ</string>
     <string name="settings_language">言語</string>
+    <string name="settings_dynamic_color">ダイナミックカラー</string>
+    <string name="settings_dynamic_color_desc">Android 12以降で壁紙の色(Material You)をランチャーに適用します。</string>
+    <string name="settings_disable_animations">アニメーションを無効化</string>
+    <string name="settings_disable_animations_desc">ランチャーの画面遷移アニメーションをオフにします。</string>
     <string name="settings_about">情報</string>
+    <string name="settings_application_section">アプリケーション</string>
+    <string name="settings_about_desc">ライセンス、アーキテクチャ、チームクレジット</string>
 
     <!-- Confirm Dialogs -->
     <string name="confirm_clear_bepinex_title">BepInExファイルを消去しますか？</string>

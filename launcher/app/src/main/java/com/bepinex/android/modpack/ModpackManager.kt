@@ -52,7 +52,20 @@ data class ModpackExportProgress(
  */
 class ModpackManager {
 
+    /** The game's single framework config file (runtime config dir). */
+    fun getFrameworkConfigFile(packageName: String): File =
+        File(BepInExPaths.getConfigDir(packageName), FRAMEWORK_CONFIG_NAME)
+
     companion object {
+        /**
+         * The BepInEx framework config name. Like every config it exists
+         * exactly once per game, in the runtime config dir; it belongs to no
+         * modpack, so the modpack detail screen does not list it - it is
+         * edited through the global config button on the modpack list
+         * screen, and modpack imports never overwrite it.
+         */
+        const val FRAMEWORK_CONFIG_NAME = "BepInEx.cfg"
+
         const val MODPACK_EXTENSION = "rhp"
         const val MODPACK_MIME_TYPE = "application/octet-stream"
 
@@ -192,9 +205,20 @@ class ModpackManager {
         }
     }
 
+    /**
+     * Configs live in exactly one place per game: the runtime config dir
+     * ([BepInExPaths.getConfigDir]), which is the folder BepInEx itself reads
+     * and writes while the game runs. Modpacks hold plugins only - there are
+     * no per-pack config copies and no config sync in either direction.
+     * The detail screen lists the central files that belong to the pack's
+     * plugins; editing one edits the game's live config directly.
+     */
     fun listConfigs(packageName: String, modpackName: String): List<File> {
-        val configDir = getModpackConfigDir(packageName, modpackName)
-        return configDir.listFiles()?.filter { it.isFile && it.extension == "cfg" } ?: emptyList()
+        val owned = pluginConfigFileNames(packageName, modpackName) ?: return emptyList()
+        val configDir = BepInExPaths.getConfigDir(packageName)
+        return configDir.listFiles()
+            ?.filter { it.isFile && it.name in owned }
+            ?: emptyList()
     }
 
     fun addMod(packageName: String, modpackName: String, sourceFile: File): File? {
@@ -292,10 +316,10 @@ class ModpackManager {
             restoreRuntimeState(packageName, modpackNames.first())
 
             val pluginsDir = BepInExPaths.getPluginsDir(packageName)
-            val configDir = BepInExPaths.getConfigDir(packageName)
             val bepInExDir = BepInExPaths.getBepInExDir(packageName)
 
-            // Overlay remaining modpacks
+            // Overlay remaining modpacks (plugins and extra files only -
+            // configs live solely in the runtime config dir)
             for (i in 1 until modpackNames.size) {
                 val modpackName = modpackNames[i]
                 val modpackDir = getModpackDir(packageName, modpackName)
@@ -308,14 +332,6 @@ class ModpackManager {
                         val target = File(pluginsDir, rel.path)
                         target.parentFile?.mkdirs()
                         plugin.copyTo(target, overwrite = true)
-                    }
-                }
-
-                // Overlay config
-                val modpackConfig = getModpackConfigDir(packageName, modpackName)
-                if (modpackConfig.isDirectory) {
-                    modpackConfig.listFiles()?.forEach { cfg ->
-                        cfg.copyTo(File(configDir, cfg.name), overwrite = true)
                     }
                 }
 
@@ -337,42 +353,63 @@ class ModpackManager {
     }
 
     fun persistRuntimeState(packageName: String, modpackName: String?) {
+        // Configs are single-copy in the runtime config dir (see
+        // listConfigs) - nothing to persist for them. Only logs are
+        // snapshotted per state (pack / vanilla).
         val destRoot = stateRoot(packageName, modpackName)
         destRoot.mkdirs()
-        // Last-writer-wins: only copy a runtime config back when it is newer than
-        // the modpack's copy (or the modpack has no copy). An unconditional copy
-        // would silently clobber edits the user made in the launcher UI between
-        // runs with stale runtime state.
-        copyNewerDirContents(BepInExPaths.getConfigDir(packageName), File(destRoot, "config"))
         copyRuntimeLogs(packageName, File(destRoot, "logs"))
-        BepInExLog.i("Persisted runtime cfg/logs -> ${destRoot.absolutePath}")
+        BepInExLog.i("Persisted runtime logs -> ${destRoot.absolutePath}")
     }
 
     /**
-     * Copies source -> dest, but only for files that do not exist at the
-     * destination or are newer than the destination copy. Source timestamps are
-     * preserved so the next comparison stays meaningful.
+     * Names of config files in the central config dir that belong to
+     * [modpackName]'s plugins: for each plugin DLL in the pack, any
+     * "<guid>.cfg" whose guid string appears inside the DLL (BepInEx names
+     * plugin config files after the plugin GUID, and the GUID literal is
+     * embedded in the DLL metadata). Null when the pack has no plugins dir.
      */
-    private fun copyNewerDirContents(source: File, dest: File) {
-        dest.mkdirs()
-        if (!source.isDirectory) return
-        source.listFiles()?.forEach { child ->
-            val target = File(dest, child.name)
-            if (child.isDirectory) {
-                copyNewerDirContents(child, target)
-            } else if (!target.exists() || child.lastModified() > target.lastModified()) {
-                child.copyTo(target, overwrite = true)
-                target.setLastModified(child.lastModified())
-                BepInExLog.i("Persisted newer config: ${child.name}")
+    private fun pluginConfigFileNames(packageName: String, modpackName: String): Set<String>? {
+        val pluginsDir = getModpackPluginsDir(packageName, modpackName)
+        if (!pluginsDir.isDirectory) return null
+        val result = mutableSetOf<String>()
+        val runtimeConfig = BepInExPaths.getConfigDir(packageName)
+        val candidates = runtimeConfig.listFiles()
+            ?.filter { it.isFile && it.extension == "cfg" && it.name != "BepInEx.cfg" }
+            ?.map { it.name }
+            ?: return result
+        if (candidates.isEmpty()) return result
+        val dllBytes = pluginsDir.walkTopDown()
+            .filter { it.isFile && it.extension.equals("dll", ignoreCase = true) }
+            .map { runCatching { it.readBytes() }.getOrNull() }
+            .filterNotNull()
+            .toList()
+        for (name in candidates) {
+            val guid = name.removeSuffix(".cfg")
+            val utf8 = guid.toByteArray(Charsets.UTF_8)
+            val utf16 = guid.toByteArray(Charsets.UTF_16LE)
+            if (dllBytes.any { containsSubarray(it, utf8) || containsSubarray(it, utf16) }) {
+                result.add(name)
             }
         }
+        return result
+    }
+
+    private fun containsSubarray(haystack: ByteArray, needle: ByteArray): Boolean {
+        if (needle.isEmpty() || haystack.size < needle.size) return false
+        outer@ for (i in 0..haystack.size - needle.size) {
+            for (j in needle.indices) {
+                if (haystack[i + j] != needle[j]) continue@outer
+            }
+            return true
+        }
+        return false
     }
 
     fun restoreRuntimeState(packageName: String, modpackName: String?) {
         val srcRoot = stateRoot(packageName, modpackName)
         val bepInExDir = BepInExPaths.getBepInExDir(packageName)
         val pluginsDir = BepInExPaths.getPluginsDir(packageName)
-        val configDir = BepInExPaths.getConfigDir(packageName)
         val logsDir = BepInExPaths.getLogsDir(packageName)
         val logFile = BepInExPaths.getLogFile(packageName)
 
@@ -385,8 +422,9 @@ class ModpackManager {
         } else {
             replaceDir(pluginsDir)
         }
-        syncDirContents(File(srcRoot, "config"), configDir)
-        BepInExLog.i("Restored runtime cfg from ${srcRoot.absolutePath}")
+        // Configs are not restored: the runtime config dir is the single
+        // store for every state (packs and vanilla alike).
+        BepInExLog.i("Restored runtime state from ${srcRoot.absolutePath}")
     }
 
     private fun stateRoot(packageName: String, modpackName: String?): File =
@@ -783,6 +821,21 @@ class ModpackManager {
             getModpackPluginsDir(packageName, resolvedName).mkdirs()
             getModpackConfigDir(packageName, resolvedName).mkdirs()
             getModpackLogsDir(packageName, resolvedName).mkdirs()
+
+            // Configs are single-copy in the runtime config dir: fold any
+            // configs the archive carries into it (the framework config is
+            // never imported - it belongs to the game, not the pack), then
+            // clear the pack's config dir so no second copy lingers.
+            val importedConfigDir = getModpackConfigDir(packageName, resolvedName)
+            val centralConfigDir = BepInExPaths.getConfigDir(packageName)
+            importedConfigDir.listFiles()
+                ?.filter { it.isFile && it.extension == "cfg" && it.name != FRAMEWORK_CONFIG_NAME }
+                ?.forEach { cfg ->
+                    centralConfigDir.mkdirs()
+                    cfg.copyTo(File(centralConfigDir, cfg.name), overwrite = true)
+                    cfg.delete()
+                    BepInExLog.i("Imported config into central dir: ${cfg.name}")
+                }
 
             val meta = ModpackMeta(
                 name = resolvedName,

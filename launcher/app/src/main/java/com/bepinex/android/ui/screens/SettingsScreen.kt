@@ -1,7 +1,10 @@
 package com.bepinex.android.ui.screens
 
+import android.content.res.Configuration
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,34 +19,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.bepinex.android.R
 import com.bepinex.android.settings.AppSettings
+import com.bepinex.android.ui.theme.BepInExTheme
 
 /**
- * Settings screen with theme, language, and maintenance actions grouped into M3 cards.
+ * Launcher Settings screen: theme and language grouped into M3 cards.
+ * Everything here is global to the launcher itself; anything specific to
+ * one game — including the in-game floating log / screen dim options,
+ * which are per game since #36 — lives on the Game Options screen (#35).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    packageName: String,
     themeMode: AppSettings.ThemeMode,
     language: AppSettings.Language,
-    floatingLogInGame: Boolean,
-    screenDimInGame: Boolean,
+    dynamicColor: Boolean,
+    animationDisabled: Boolean,
     onNavigateBack: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onThemeChanged: (AppSettings.ThemeMode) -> Unit,
     onLanguageChanged: (AppSettings.Language) -> Unit,
-    onFloatingLogInGameChanged: (Boolean) -> Unit,
-    onScreenDimInGameChanged: (Boolean) -> Unit,
-    onClearBepInEx: () -> Unit,
-    onClearDotnet: () -> Unit
+    onDynamicColorChanged: (Boolean) -> Unit,
+    onAnimationDisabledChanged: (Boolean) -> Unit
 ) {
     var showThemeMenu by remember { mutableStateOf(false) }
     var showLangMenu by remember { mutableStateOf(false) }
-    var confirmAction by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -53,8 +56,7 @@ fun SettingsScreen(
                 title = {
                     Text(
                         text = stringResource(R.string.settings_title),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleLarge
                     )
                 },
                 navigationIcon = {
@@ -90,7 +92,7 @@ fun SettingsScreen(
                         // Theme item
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_theme), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_theme))
                             },
                             supportingContent = {
                                 Text(when (themeMode) {
@@ -117,7 +119,7 @@ fun SettingsScreen(
                         // Language item
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_language), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_language))
                             },
                             supportingContent = {
                                 Text(when (language) {
@@ -137,35 +139,25 @@ fun SettingsScreen(
                             colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                             modifier = Modifier.clickable { showLangMenu = true }
                         )
-                    }
-                }
-            }
 
-            // In-Game Experience Card
-            item {
-                SettingsSectionHeader(stringResource(R.string.settings_ingame_section))
-                Spacer(Modifier.height(6.dp))
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
-                ) {
-                    Column {
-                        // Floating Log in Game
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+                        )
+
+                        // Dynamic Color (Material You)
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_floating_log), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_dynamic_color))
                             },
-                            supportingContent = { Text(stringResource(R.string.settings_floating_log_desc)) },
+                            supportingContent = { Text(stringResource(R.string.settings_dynamic_color_desc)) },
                             leadingContent = {
-                                Icon(Icons.Outlined.Terminal, null, tint = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Outlined.ColorLens, null, tint = MaterialTheme.colorScheme.primary)
                             },
                             trailingContent = {
                                 Switch(
-                                    checked = floatingLogInGame,
-                                    onCheckedChange = onFloatingLogInGameChanged
+                                    checked = dynamicColor,
+                                    onCheckedChange = onDynamicColorChanged
                                 )
                             },
                             colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
@@ -176,77 +168,22 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
                         )
 
-                        // Screen Dim on Idle
+                        // Disable Animations
                         ListItem(
                             headlineContent = {
-                                Text(stringResource(R.string.settings_screen_dim), fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.settings_disable_animations))
                             },
-                            supportingContent = { Text(stringResource(R.string.settings_screen_dim_desc)) },
+                            supportingContent = { Text(stringResource(R.string.settings_disable_animations_desc)) },
                             leadingContent = {
-                                Icon(Icons.Outlined.Brightness4, null, tint = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Outlined.Animation, null, tint = MaterialTheme.colorScheme.primary)
                             },
                             trailingContent = {
                                 Switch(
-                                    checked = screenDimInGame,
-                                    onCheckedChange = onScreenDimInGameChanged
+                                    checked = animationDisabled,
+                                    onCheckedChange = onAnimationDisabledChanged
                                 )
                             },
                             colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
-                        )
-                    }
-                }
-            }
-
-            // Maintenance Card
-            item {
-                SettingsSectionHeader("Maintenance & Cache")
-                Spacer(Modifier.height(6.dp))
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
-                ) {
-                    Column {
-                        ListItem(
-                            headlineContent = {
-                                Text(stringResource(R.string.settings_clear_bepinex), fontWeight = FontWeight.SemiBold)
-                            },
-                            supportingContent = { Text(stringResource(R.string.settings_clear_bepinex_desc)) },
-                            leadingContent = {
-                                Icon(Icons.Outlined.DeleteForever, null, tint = MaterialTheme.colorScheme.error)
-                            },
-                            trailingContent = {
-                                Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-                            modifier = Modifier.clickable { confirmAction = "bepinex" }
-                        )
-
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
-                        )
-
-                        ListItem(
-                            headlineContent = {
-                                Text(stringResource(R.string.settings_clear_dotnet), fontWeight = FontWeight.SemiBold)
-                            },
-                            supportingContent = { Text(stringResource(R.string.settings_clear_dotnet_desc)) },
-                            leadingContent = {
-                                Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error)
-                            },
-                            trailingContent = {
-                                Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            },
-                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-                            modifier = Modifier.clickable { confirmAction = "dotnet" }
-                        )
-
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
                         )
                     }
                 }
@@ -254,7 +191,7 @@ fun SettingsScreen(
 
             // About Card
             item {
-                SettingsSectionHeader("Application")
+                SettingsSectionHeader(stringResource(R.string.settings_application_section))
                 Spacer(Modifier.height(6.dp))
                 Card(
                     shape = RoundedCornerShape(16.dp),
@@ -265,9 +202,9 @@ fun SettingsScreen(
                 ) {
                     ListItem(
                         headlineContent = {
-                            Text(stringResource(R.string.settings_about), fontWeight = FontWeight.SemiBold)
+                            Text(stringResource(R.string.settings_about))
                         },
-                        supportingContent = { Text("Licenses, architecture, and team credits") },
+                        supportingContent = { Text(stringResource(R.string.settings_about_desc)) },
                         leadingContent = {
                             Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.primary)
                         },
@@ -288,7 +225,13 @@ fun SettingsScreen(
             onDismissRequest = { showThemeMenu = false },
             title = { Text(stringResource(R.string.settings_theme)) },
             text = {
-                Column(Modifier.padding(vertical = 4.dp)) {
+                // Scrollable so the options stay reachable at enlarged
+                // system font scales instead of pushing the button away.
+                Column(
+                    Modifier
+                        .padding(vertical = 4.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     ThemeOption(stringResource(R.string.theme_dark), AppSettings.ThemeMode.DARK, themeMode) {
                         onThemeChanged(it); showThemeMenu = false
                     }
@@ -312,7 +255,13 @@ fun SettingsScreen(
             onDismissRequest = { showLangMenu = false },
             title = { Text(stringResource(R.string.settings_language)) },
             text = {
-                Column(Modifier.padding(vertical = 4.dp)) {
+                // Scrollable so the options stay reachable at enlarged
+                // system font scales instead of pushing the button away.
+                Column(
+                    Modifier
+                        .padding(vertical = 4.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     LangOption(stringResource(R.string.lang_english), AppSettings.Language.ENGLISH, language) {
                         onLanguageChanged(it); showLangMenu = false
                     }
@@ -336,35 +285,6 @@ fun SettingsScreen(
         )
     }
 
-    // Confirmation dialogs
-    confirmAction?.let { action ->
-        val (title, message, onConfirm) = when (action) {
-            "bepinex" -> Triple(
-                stringResource(R.string.confirm_clear_bepinex_title),
-                stringResource(R.string.confirm_clear_bepinex_msg),
-                { onClearBepInEx(); confirmAction = null }
-            )
-            "dotnet" -> Triple(
-                stringResource(R.string.confirm_clear_dotnet_title),
-                stringResource(R.string.confirm_clear_dotnet_msg),
-                { onClearDotnet(); confirmAction = null }
-            )
-            else -> Triple("", "", { confirmAction = null })
-        }
-        AlertDialog(
-            onDismissRequest = { confirmAction = null },
-            title = { Text(title) },
-            text = { Text(message) },
-            confirmButton = {
-                TextButton(onClick = onConfirm) {
-                    Text(stringResource(R.string.confirm_yes), color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmAction = null }) { Text(stringResource(R.string.confirm_no)) }
-            }
-        )
-    }
 }
 
 @Composable
@@ -372,7 +292,6 @@ private fun SettingsSectionHeader(title: String) {
     Text(
         text = title,
         style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 4.dp)
     )
@@ -418,4 +337,51 @@ private fun LangOption(
         Spacer(Modifier.width(10.dp))
         Text(label, style = MaterialTheme.typography.bodyLarge)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Previews — the agreed test seam for screens in this project (no UI-test
+// framework). They pin the settings screen in light/dark and with an
+// enlarged system font.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun SettingsScreenPreviewContent(themeMode: AppSettings.ThemeMode) {
+    BepInExTheme(themeMode = themeMode, dynamicColor = false) {
+        SettingsScreen(
+            themeMode = themeMode,
+            language = AppSettings.Language.SYSTEM,
+            dynamicColor = true,
+            animationDisabled = false,
+            onNavigateBack = {},
+            onNavigateToAbout = {},
+            onThemeChanged = {},
+            onLanguageChanged = {},
+            onDynamicColorChanged = {},
+            onAnimationDisabledChanged = {}
+        )
+    }
+}
+
+@Preview(name = "Settings - Light", showBackground = true, heightDp = 1000)
+@Composable
+private fun SettingsScreenLightPreview() {
+    SettingsScreenPreviewContent(themeMode = AppSettings.ThemeMode.LIGHT)
+}
+
+@Preview(
+    name = "Settings - Dark",
+    showBackground = true,
+    heightDp = 1000,
+    uiMode = Configuration.UI_MODE_NIGHT_YES
+)
+@Composable
+private fun SettingsScreenDarkPreview() {
+    SettingsScreenPreviewContent(themeMode = AppSettings.ThemeMode.DARK)
+}
+
+@Preview(name = "Settings - Enlarged font", showBackground = true, heightDp = 1200, fontScale = 2f)
+@Composable
+private fun SettingsScreenLargeFontPreview() {
+    SettingsScreenPreviewContent(themeMode = AppSettings.ThemeMode.LIGHT)
 }

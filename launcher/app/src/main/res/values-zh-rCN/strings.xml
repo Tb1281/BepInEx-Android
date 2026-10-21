@@ -68,9 +68,28 @@
     <string name="config_editor_title">配置编辑器</string>
     <string name="config_editor_save">保存</string>
     <string name="config_editor_unsaved">有未保存的更改</string>
+    <string name="config_editor_mode_form">表单</string>
+    <string name="config_editor_mode_raw">原文</string>
+    <string name="config_editor_search_hint">搜索设置</string>
+    <string name="config_editor_reset_default">重置为默认值</string>
+    <string name="config_editor_default_value">默认值：%1$s</string>
+    <string name="config_editor_empty_default">（空）</string>
+    <string name="config_editor_no_results">没有与搜索匹配的设置</string>
+    <string name="config_editor_invalid_title">存在无效的值</string>
+    <string name="config_editor_invalid_msg">以下值与文件中声明的类型不符，因此尚不能保存。请先修正：</string>
+    <string name="config_editor_raw_warning_title">与声明类型不符的值</string>
+    <string name="config_editor_raw_warning_msg">可以仍然保存，但游戏可能会忽略或拒绝这些值：</string>
+    <string name="config_editor_save_anyway">仍然保存</string>
+    <string name="config_editor_ok">确定</string>
     <string name="config_editor_discard_title">放弃更改？</string>
     <string name="config_editor_discard_msg">您有未保存的更改，确定要放弃吗？</string>
     <string name="config_editor_no_configs">无配置文件</string>
+
+    <!-- Game Options -->
+    <string name="game_options_title">游戏选项</string>
+    <string name="game_options_framework_config">框架配置</string>
+    <string name="game_options_framework_config_desc">编辑为此游戏保存的框架配置文件（BepInEx.cfg）</string>
+    <string name="game_options_danger_zone">危险操作</string>
 
     <!-- Settings -->
     <string name="settings_title">设置</string>
@@ -81,7 +100,13 @@
     <string name="settings_clear_dotnet_desc">删除 .NET 运行时和复制的游戏数据。下次启动将重新解压。</string>
     <string name="settings_theme">主题</string>
     <string name="settings_language">语言</string>
+    <string name="settings_dynamic_color">动态取色</string>
+    <string name="settings_dynamic_color_desc">在 Android 12 及以上版本将壁纸颜色(Material You)应用到启动器。</string>
+    <string name="settings_disable_animations">禁用动画</string>
+    <string name="settings_disable_animations_desc">关闭启动器的界面切换动画。</string>
     <string name="settings_about">关于</string>
+    <string name="settings_application_section">应用</string>
+    <string name="settings_about_desc">许可证、架构和团队致谢</string>
 
     <!-- Confirm Dialogs -->
     <string name="confirm_clear_bepinex_title">清除 BepInEx 文件？</string>

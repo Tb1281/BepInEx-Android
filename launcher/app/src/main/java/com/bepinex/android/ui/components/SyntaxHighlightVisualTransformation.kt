@@ -28,6 +28,7 @@ internal class SyntaxHighlightVisualTransformation(
     private val language = when (extension.lowercase()) {
         "json", "json5" -> Language.JSON
         "lua" -> Language.LUA
+        "cfg", "ini" -> Language.CFG
         else -> Language.PLAIN_TEXT
     }
 
@@ -40,6 +41,7 @@ internal class SyntaxHighlightVisualTransformation(
             when (language) {
                 Language.JSON -> highlightJson(text.text)
                 Language.LUA -> highlightLua(text.text)
+                Language.CFG -> highlightCfg(text.text)
                 Language.PLAIN_TEXT -> Unit
             }
         }.toAnnotatedString()
@@ -206,6 +208,64 @@ internal class SyntaxHighlightVisualTransformation(
         }
     }
 
+    /**
+     * INI-style highlighting for cfg files: comment lines, [section]
+     * headers, keys before the first '=', and boolean/number values.
+     * Line-oriented — cfg has no multi-line constructs.
+     */
+    private fun AnnotatedString.Builder.highlightCfg(source: String) {
+        var lineStart = 0
+        while (lineStart <= source.length) {
+            val lineEnd = source.indexOf('\n', lineStart).let { if (it >= 0) it else source.length }
+            val line = source.substring(lineStart, lineEnd)
+            val trimmed = line.trim()
+            val contentStart = lineStart + (line.length - line.trimStart().length)
+            when {
+                trimmed.startsWith("#") || trimmed.startsWith(";") ->
+                    addCommentStyle(contentStart, lineEnd)
+
+                trimmed.startsWith("[") && trimmed.endsWith("]") ->
+                    addStyle(
+                        SpanStyle(color = colors.keyword, fontWeight = FontWeight.Bold),
+                        contentStart,
+                        contentStart + trimmed.length
+                    )
+
+                else -> {
+                    val eq = line.indexOf('=')
+                    if (eq > 0) {
+                        val keyEnd = lineStart + line.substring(0, eq).trimEnd().length
+                        if (keyEnd > contentStart) {
+                            addStyle(
+                                SpanStyle(color = colors.property, fontWeight = FontWeight.SemiBold),
+                                contentStart,
+                                keyEnd
+                            )
+                        }
+                        val value = line.substring(eq + 1)
+                        val valueStart = lineStart + eq + 1 + (value.length - value.trimStart().length)
+                        val valueText = value.trim()
+                        val style = when {
+                            valueText.equals("true", ignoreCase = true) ||
+                                valueText.equals("false", ignoreCase = true) ->
+                                SpanStyle(color = colors.boolean, fontWeight = FontWeight.SemiBold)
+
+                            valueText.isNotEmpty() && valueText.toDoubleOrNull() != null ->
+                                SpanStyle(color = colors.number)
+
+                            else -> null
+                        }
+                        if (style != null && valueText.isNotEmpty()) {
+                            addStyle(style, valueStart, valueStart + valueText.length)
+                        }
+                    }
+                }
+            }
+            if (lineEnd == source.length) break
+            lineStart = lineEnd + 1
+        }
+    }
+
     private fun AnnotatedString.Builder.addCommentStyle(start: Int, end: Int) {
         addStyle(
             SpanStyle(color = colors.comment, fontStyle = FontStyle.Italic),
@@ -217,6 +277,7 @@ internal class SyntaxHighlightVisualTransformation(
     private enum class Language {
         JSON,
         LUA,
+        CFG,
         PLAIN_TEXT
     }
 

@@ -47,3 +47,7 @@ app/src/main/assets/game_config.json
 # Claude Code
 CLAUDE.md
 .claude/
+
+# The debug keystore is checked in on purpose (public debug key, pinned
+# so builds are update-installable across machines) - see app/build.gradle.kts
+!debug.keystore

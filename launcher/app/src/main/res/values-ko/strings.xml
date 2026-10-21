@@ -68,9 +68,28 @@
     <string name="config_editor_title">설정 파일 편집기</string>
     <string name="config_editor_save">저장</string>
     <string name="config_editor_unsaved">저장되지 않은 변경사항</string>
+    <string name="config_editor_mode_form">폼</string>
+    <string name="config_editor_mode_raw">원문</string>
+    <string name="config_editor_search_hint">설정 검색</string>
+    <string name="config_editor_reset_default">기본값으로 재설정</string>
+    <string name="config_editor_default_value">기본값: %1$s</string>
+    <string name="config_editor_empty_default">(비어 있음)</string>
+    <string name="config_editor_no_results">검색과 일치하는 설정이 없습니다</string>
+    <string name="config_editor_invalid_title">유효하지 않은 값이 있습니다</string>
+    <string name="config_editor_invalid_msg">아래 값이 파일에 선언된 타입과 맞지 않아 아직 저장할 수 없습니다. 먼저 수정해 주세요:</string>
+    <string name="config_editor_raw_warning_title">선언된 타입과 맞지 않는 값</string>
+    <string name="config_editor_raw_warning_msg">그래도 저장할 수 있지만, 게임이 이 값들을 무시하거나 거부할 수 있습니다:</string>
+    <string name="config_editor_save_anyway">그래도 저장</string>
+    <string name="config_editor_ok">확인</string>
     <string name="config_editor_discard_title">변경사항을 취소하시겠습니까?</string>
     <string name="config_editor_discard_msg">저장되지 않은 변경사항이 있습니다. 취소하시겠습니까?</string>
     <string name="config_editor_no_configs">설정 파일 없음</string>
+
+    <!-- Game Options -->
+    <string name="game_options_title">게임 옵션</string>
+    <string name="game_options_framework_config">프레임워크 설정</string>
+    <string name="game_options_framework_config_desc">이 게임용으로 보관되는 프레임워크 설정 파일(BepInEx.cfg)을 편집합니다</string>
+    <string name="game_options_danger_zone">위험 구역</string>
 
     <!-- Settings -->
     <string name="settings_title">설정</string>
@@ -81,7 +100,13 @@
     <string name="settings_clear_dotnet_desc">.NET 런타임 및 복사된 게임 데이터를 삭제합니다. 다음 실행 시 다시 추출됩니다.</string>
     <string name="settings_theme">테마</string>
     <string name="settings_language">언어</string>
+    <string name="settings_dynamic_color">다이내믹 컬러</string>
+    <string name="settings_dynamic_color_desc">Android 12 이상에서 배경화면 색상(Material You)을 런처에 적용합니다.</string>
+    <string name="settings_disable_animations">애니메이션 끄기</string>
+    <string name="settings_disable_animations_desc">런처의 화면 전환 애니메이션을 끕니다.</string>
     <string name="settings_about">정보</string>
+    <string name="settings_application_section">애플리케이션</string>
+    <string name="settings_about_desc">라이선스, 아키텍처 및 팀 크레딧</string>
 
     <!-- Confirm Dialogs -->
     <string name="confirm_clear_bepinex_title">BepInEx 파일을 정리하시겠습니까?</string>
