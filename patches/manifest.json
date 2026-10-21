@@ -26,6 +26,7 @@
     "files": [
       "BepInEx.Core/Console/Android/AndroidConsoleDriver.cs",
       "BepInEx.Core/Console/ConsoleManager.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs",
       "Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs"
     ],
     "depends_on": [],
@@ -175,8 +176,6 @@
       "Runtimes/NET/BepInEx.NET.Shared/BepInEx.NET.Shared.projitems",
       "Runtimes/NET/BepInEx.NET.Shared/BepInEx.NET.Shared.shproj",
       "Runtimes/NET/BepInEx.NET.Shared/SharedEntrypoint.cs",
-      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs",
-      "Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs",
       "Runtimes/Unity/BepInEx.Unity.Mono/Bootstrap/UnityChainloader.cs",
       "Runtimes/Unity/BepInEx.Unity.Mono/Logging/UnityLogSource.cs",
       "Runtimes/Unity/Doorstop/doorstop_config_il2cpp.ini",
@@ -241,8 +240,7 @@
     "description": "",
     "files": [
       "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs",
-      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs",
-      "Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs"
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs"
     ],
     "depends_on": [
       "0009-il2cpp-fix-the-arm64-export-thunk-target-arith"

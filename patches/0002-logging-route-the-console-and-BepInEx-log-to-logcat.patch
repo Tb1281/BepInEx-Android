@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 438c316786d06a094592250d033e1c4b99102b41 Mon Sep 17 00:00:00 2001
 From: port <port@local>
 Date: Sun, 4 Oct 2026 15:43:52 +0900
-Subject: [PATCH 2/8] logging: route the console and BepInEx log to logcat
+Subject: [PATCH] logging: route the console and BepInEx log to logcat
 
 There is no stdout console on Android and no writable log directory, so the
 Unix tty driver and Windows console driver cannot work. Replace them with a
@@ -10,8 +10,9 @@ managed log mirrors into logcat for adb logcat inspection.
 ---
  .../Console/Android/AndroidConsoleDriver.cs   | 49 +++++++++++++++++++
  BepInEx.Core/Console/ConsoleManager.cs        | 14 ++----
+ .../BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs |  2 +-
  .../Logging/AndroidLogListener.cs             | 49 +++++++++++++++++++
- 3 files changed, 101 insertions(+), 11 deletions(-)
+ 4 files changed, 102 insertions(+), 12 deletions(-)
  create mode 100644 BepInEx.Core/Console/Android/AndroidConsoleDriver.cs
  create mode 100644 Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs
 
@@ -109,6 +110,19 @@ index 764128b..f271548 100644
          Driver.Initialize(alreadyActive, useManagedEncoder);
      }
  
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+index 5fcdb35..d65beaa 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+@@ -21,7 +21,7 @@ public class IL2CPPChainloader : BaseChainloader<BasePlugin>
+ 
+     private static readonly ConfigEntry<bool> ConfigUnityLogging = ConfigFile.CoreConfig.Bind(
+      "Logging", "UnityLogListening",
+-     true,
++     false,
+      "Enables showing unity log messages in the BepInEx logging system.");
+ 
+     private static readonly ConfigEntry<bool> ConfigDiskWriteUnityLog = ConfigFile.CoreConfig.Bind(
 diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs
 new file mode 100644
 index 0000000..a57a40a
@@ -164,3 +178,6 @@ index 0000000..a57a40a
 +        Silent = 8
 +    }
 +}
+-- 
+2.53.0
+
