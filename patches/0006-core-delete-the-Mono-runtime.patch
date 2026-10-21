@@ -11,6 +11,8 @@ dead weight that only exists to be compiled and shipped.
 Removing them also removes the entrypoint patcher, the TraceFix/XTermFix/
 UnityPatches runtime fixes and the BaseUnityPlugin/UnityChainloader plumbing
 that cannot run on Android.
+
+Depends-On: 0005-build-retarget-the-project-files-at-the-Android-IL2C
 ---
  .../BepInEx.Unity.Mono.Preloader.csproj       |  21 -
  .../DoorstopEntrypoint.cs                     |  37 -

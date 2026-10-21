@@ -13,7 +13,23 @@ Upstream changes live as serialized patches in `patches/`, replayed with
 
 `sync_upstream.sh` derives the repository from the pin file, so a fixture can
 point `BEPINEX_PIN_FILE` at a throwaway repository. It refuses to run when
-the pin has uncommitted changes.`
+the pin has uncommitted changes.
+
+## 1a. Patch manifest
+
+`patches/manifest.json` is the machine-readable interface of the queue:
+purpose, touched files, depends-on, ADR references and compile-unit status
+for each patch. It is generated, not authored:
+
+```bash
+./scripts/generate_patch_manifest.py   # writes patches/manifest.json
+./scripts/test_patch_manifest.sh      # drift test + validation
+```
+
+`patches/*.patch` remains the only source of truth. Metadata that is not
+derivable from the diff (depends-on, ADR) is carried as commit-message
+trailers (`Depends-On:`, `ADR:`) inside the patch itself, so the manifest
+can be regenerated and checked for drift.``
 
 Patches `0001`-`0013` cover: Android paths, logcat logging, the
 `AndroidEntrypoint` native entrypoint, libfusion detour routing with export

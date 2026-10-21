@@ -1,0 +1,283 @@
+[
+  {
+    "id": "0001-core-resolve-paths-env-vars-and-platform-for-Android",
+    "number": 1,
+    "subject": "core: resolve paths, env vars and platform for Android",
+    "purpose": "core: resolve paths, env vars and platform for Android",
+    "description": "",
+    "files": [
+      "BepInEx.Core/Paths.cs",
+      "BepInEx.Core/Utility.cs",
+      "BepInEx.Preloader.Core/EnvVars.cs",
+      "BepInEx.Preloader.Core/Logging/ChainloaderLogHelper.cs",
+      "BepInEx.Preloader.Core/PlatformUtils.cs",
+      "Runtimes/Unity/BepInEx.Unity.Common/UnityInfo.cs"
+    ],
+    "depends_on": [],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0002-logging-route-the-console-and-BepInEx-log-to-logcat",
+    "number": 2,
+    "subject": "logging: route the console and BepInEx log to logcat",
+    "purpose": "logging: route the console and BepInEx log to logcat",
+    "description": "",
+    "files": [
+      "BepInEx.Core/Console/Android/AndroidConsoleDriver.cs",
+      "BepInEx.Core/Console/ConsoleManager.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs"
+    ],
+    "depends_on": [],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0003-il2cpp-replace-the-Doorstop-entrypoint-with-a-native",
+    "number": 3,
+    "subject": "il2cpp: replace the Doorstop entrypoint with a native one",
+    "purpose": "il2cpp: replace the Doorstop entrypoint with a native one",
+    "description": "",
+    "files": [
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/AndroidEntrypoint.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/NativeInterop.cs"
+    ],
+    "depends_on": [],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0004-il2cpp-hook-through-libfusion-and-resolve-export-stu",
+    "number": 4,
+    "subject": "il2cpp: hook through libfusion and resolve export stubs",
+    "purpose": "il2cpp: hook through libfusion and resolve export stubs",
+    "description": "",
+    "files": [
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Configuration/KeyboardShortcut.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/BaseNativeDetour.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/CacheDetourWrapper.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyDetour.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Dobby/DobbyLib.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookDetour.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Funchook/FunchookLib.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/INativeDetour.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/Il2CppInteropDetourProvider.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetourProvider.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Il2CppInteropManager.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Logging/AndroidLogListener.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Preloader.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/RuntimeFixes/RedirectStdErrFix.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityInput.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/UnityPreloadRunner.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Utils/MessageBox.cs"
+    ],
+    "depends_on": [
+      "0001-core-resolve-paths-env-vars-and-platform-for-Android",
+      "0002-logging-route-the-console-and-BepInEx-log-to-logcat"
+    ],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0005-build-retarget-the-project-files-at-the-Android-IL2C",
+    "number": 5,
+    "subject": "build: retarget the project files at the Android IL2CPP runtime",
+    "purpose": "build: retarget the project files at the Android IL2CPP runtime",
+    "description": "",
+    "files": [
+      "BepInEx.Core/BepInEx.Core.csproj",
+      "BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj",
+      "BepInEx.sln",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj"
+    ],
+    "depends_on": [],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0006-core-delete-the-Mono-runtime",
+    "number": 6,
+    "subject": "core: delete the Mono runtime",
+    "purpose": "core: delete the Mono runtime",
+    "description": "",
+    "files": [
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/BepInEx.Unity.Mono.Preloader.csproj",
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/DoorstopEntrypoint.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/EntrypointPatcher.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/TraceFix.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/UnityPatches.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/RuntimeFixes/XTermFix.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloader.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/UnityPreloaderRunner.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono.Preloader/Utils/MonoAssemblyHelper.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/BaseUnityPlugin.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/BepInEx.Unity.Mono.csproj",
+      "Runtimes/Unity/BepInEx.Unity.Mono/BepInExInstance.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/Configuration/KeyboardShortcut.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/Logging/UnityLogListener.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/ThreadingHelper.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/UnityInput.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/UnityTomlTypeConverters.cs"
+    ],
+    "depends_on": [
+      "0005-build-retarget-the-project-files-at-the-Android-IL2C"
+    ],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0007-core-delete-the-Unix-and-Windows-console-drivers",
+    "number": 7,
+    "subject": "core: delete the Unix and Windows console drivers",
+    "purpose": "core: delete the Unix and Windows console drivers",
+    "description": "",
+    "files": [
+      "BepInEx.Core/Console/Unix/ConsoleWriter.cs",
+      "BepInEx.Core/Console/Unix/LinuxConsoleDriver.cs",
+      "BepInEx.Core/Console/Unix/TtyHandler.cs",
+      "BepInEx.Core/Console/Unix/UnixStream.cs",
+      "BepInEx.Core/Console/Unix/UnixStreamHelper.cs",
+      "BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.Buffers.cs",
+      "BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.PInvoke.cs",
+      "BepInEx.Core/Console/Windows/ConsoleEncoding/ConsoleEncoding.cs",
+      "BepInEx.Core/Console/Windows/ConsoleWindow.cs",
+      "BepInEx.Core/Console/Windows/Kon.cs",
+      "BepInEx.Core/Console/Windows/WindowsConsoleDriver.cs"
+    ],
+    "depends_on": [
+      "0002-logging-route-the-console-and-BepInEx-log-to-logcat"
+    ],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0008-build-drop-the-layers-that-cannot-run-on-Android",
+    "number": 8,
+    "subject": "build: drop the layers that cannot run on Android",
+    "purpose": "build: drop the layers that cannot run on Android",
+    "description": "",
+    "files": [
+      "BepInEx.sln",
+      "Runtimes/NET/BepInEx.NET.Common/BasePlugin.cs",
+      "Runtimes/NET/BepInEx.NET.Common/BepInEx.NET.Common.csproj",
+      "Runtimes/NET/BepInEx.NET.Common/NetChainloader.cs",
+      "Runtimes/NET/BepInEx.NET.CoreCLR/BepInEx.NET.CoreCLR.csproj",
+      "Runtimes/NET/BepInEx.NET.CoreCLR/HookEntrypoint.cs",
+      "Runtimes/NET/BepInEx.NET.CoreCLR/NetCorePreloader.cs",
+      "Runtimes/NET/BepInEx.NET.Framework.Launcher/App.config",
+      "Runtimes/NET/BepInEx.NET.Framework.Launcher/BepInEx.NET.Framework.Launcher.csproj",
+      "Runtimes/NET/BepInEx.NET.Framework.Launcher/NetPreloader.cs",
+      "Runtimes/NET/BepInEx.NET.Framework.Launcher/Program.cs",
+      "Runtimes/NET/BepInEx.NET.Framework.Launcher/RuntimeFixes/AssemblyFixes.cs",
+      "Runtimes/NET/BepInEx.NET.Shared/BepInEx.NET.Shared.projitems",
+      "Runtimes/NET/BepInEx.NET.Shared/BepInEx.NET.Shared.shproj",
+      "Runtimes/NET/BepInEx.NET.Shared/SharedEntrypoint.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/Bootstrap/UnityChainloader.cs",
+      "Runtimes/Unity/BepInEx.Unity.Mono/Logging/UnityLogSource.cs",
+      "Runtimes/Unity/Doorstop/doorstop_config_il2cpp.ini",
+      "Runtimes/Unity/Doorstop/doorstop_config_mono.ini",
+      "Runtimes/Unity/Doorstop/run_bepinex_il2cpp.sh",
+      "Runtimes/Unity/Doorstop/run_bepinex_mono.sh",
+      "build.cmd",
+      "build.ps1",
+      "build.sh",
+      "build/Build.csproj",
+      "build/DependencyCache.cs",
+      "build/DistributionTarget.cs",
+      "build/DownloadTasks.cs",
+      "build/GitTasks.cs",
+      "build/Program.cs"
+    ],
+    "depends_on": [
+      "0004-il2cpp-hook-through-libfusion-and-resolve-export-stu",
+      "0006-core-delete-the-Mono-runtime"
+    ],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0009-il2cpp-fix-the-arm64-export-thunk-target-arith",
+    "number": 9,
+    "subject": "il2cpp: fix the arm64 export-thunk target arithmetic",
+    "purpose": "il2cpp: fix the arm64 export-thunk target arithmetic",
+    "description": "",
+    "files": [
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs"
+    ],
+    "depends_on": [
+      "0008-build-drop-the-layers-that-cannot-run-on-Android"
+    ],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0010-build-pin-il2cppinterop-1.5.2-and-local-feed",
+    "number": 10,
+    "subject": "build: pin Il2CppInterop 1.5.2 and resolve from the local feed",
+    "purpose": "build: pin Il2CppInterop 1.5.2 and resolve from the local feed",
+    "description": "MIME-Version: 1.0 Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: 8bit",
+    "files": [
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj",
+      "nuget.config"
+    ],
+    "depends_on": [
+      "0005-build-retarget-the-project-files-at-the-Android-IL2C"
+    ],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0011-build-pin-monomod-to-the-rebuilt-Android-package",
+    "number": 11,
+    "subject": "build: pin MonoMod to the locally rebuilt Android package",
+    "purpose": "build: pin MonoMod to the locally rebuilt Android package",
+    "description": "",
+    "files": [
+      "BepInEx.Core/BepInEx.Core.csproj",
+      "BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj"
+    ],
+    "depends_on": [
+      "0010-build-pin-il2cppinterop-1.5.2-and-local-feed"
+    ],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0012-il2cpp-resolve-thunks-in-NativeDetour-and-guard-ARM6",
+    "number": 12,
+    "subject": "il2cpp: resolve thunks in NativeDetour and guard ARM64 inline hook bounds",
+    "purpose": "il2cpp: resolve thunks in NativeDetour and guard ARM64 inline hook bounds",
+    "description": "",
+    "files": [
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/ExportThunkResolver.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/Hook/NativeDetour.cs",
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs"
+    ],
+    "depends_on": [
+      "0009-il2cpp-fix-the-arm64-export-thunk-target-arith"
+    ],
+    "adr": [],
+    "compile_unit": true
+  },
+  {
+    "id": "0013-il2cpp-pin-cpp2il-to-published-prerelease",
+    "number": 13,
+    "subject": "il2cpp: pin Cpp2IL to a published prerelease",
+    "purpose": "il2cpp: pin Cpp2IL to a published prerelease",
+    "description": "",
+    "files": [
+      "Runtimes/Unity/BepInEx.Unity.IL2CPP/BepInEx.Unity.IL2CPP.csproj"
+    ],
+    "depends_on": [
+      "0011-build-pin-monomod-to-the-rebuilt-Android-package"
+    ],
+    "adr": [],
+    "compile_unit": true
+  }
+]

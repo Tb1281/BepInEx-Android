@@ -21,6 +21,8 @@ MonoMod.Utils moves 25.0.12 -> 25.3.7-android.1 because all three packages are
 produced by one build of one tree; a package set that mixes a Utils from a
 different upstream version with a RuntimeDetour from the patched tree is not
 something a single provenance record can describe.
+
+Depends-On: 0010-build-pin-il2cppinterop-1.5.2-and-local-feed
 ---
  BepInEx.Core/BepInEx.Core.csproj                              | 4 ++--
  BepInEx.Preloader.Core/BepInEx.Preloader.Core.csproj          | 4 ++--

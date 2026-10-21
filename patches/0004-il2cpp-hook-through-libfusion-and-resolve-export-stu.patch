@@ -24,6 +24,8 @@ Three changes are needed before the chainloader can run on Android.
    ExportThunkResolver follows those stubs explicitly, bounded and with a hop
    limit, then validates the result against /proc/self/maps so a detached or
    unresolvable address fails loudly instead of being hooked.
+
+Depends-On: 0001-core-resolve-paths-env-vars-and-platform-for-Android, 0002-logging-route-the-console-and-BepInEx-log-to-logcat
 ---
  .../Configuration/KeyboardShortcut.cs         | 178 ----
  .../Hook/BaseNativeDetour.cs                  |  98 --
