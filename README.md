@@ -130,9 +130,12 @@ adb logcat | grep -E '\[Error:Unity\]|\[Error:Il2CppInterop\]'
 ## Documentation
 
 - [Operations Guide](docs/operations.md)
+- [Release Runbook](docs/release-runbook.md)
 - [CI/CD Pipeline](docs/ci-cd.md)
 - [Roadmap](docs/todo.md)
+- [Glossary](GLOSSARY.md)
 - [Architecture Decisions](docs/progress.md)
+- [ADR Index](docs/adr/README.md)
 - [Modding Contracts](docs/responsibility.md)
 - [Unity 6000 Case Study](docs/thetower-6000.md)
 - [Storage Audit](docs/ci-storage-audit.md)

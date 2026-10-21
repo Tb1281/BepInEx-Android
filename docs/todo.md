@@ -39,7 +39,7 @@
 ### Phase 5: Build Provenance & Attestation [IN PROGRESS]
 
 - [x] Build provenance attested per producer run; shipping path gated with fixtures.
-- [ ] Public-era: Sigstore/Rekor attestation and consumer-side attestation verification on releases.
+- [x] Public-era: Sigstore/Rekor attestation and consumer-side attestation verification on releases.
 
 ### Phase 6: ARM64 Inline Hook Space Guard & Logging Alignment [COMPLETE]
 

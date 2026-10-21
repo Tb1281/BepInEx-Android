@@ -14,7 +14,7 @@
 #   - a stable release PASSES with --require-stable; a pre-release FAILS it.
 #   - a draft release FAILS rather than counting as published.
 #   - tampered APK (checksum mismatch) FAILS.
-#   - a bundle that does not vouch for the APK FAILS.
+#   - a bundle that does not vouch for the APK, the SBOM, or the provenance FAILS.
 #   - any missing required asset FAILS rather than falling back to "unverified".
 #   - an APK signed by a different certificate FAILS.
 #   - multiple signers FAIL.
@@ -88,7 +88,12 @@ if [ "${1:-}" = "release" ] && [ "${2:-}" = "download" ]; then
     exit 0
 fi
 if [ "${1:-}" = "attestation" ] && [ "${2:-}" = "verify" ]; then
-    [ "$mode" = "badbundle" ] && exit 1
+    subject="${3##*/}"
+    case "$mode" in
+        badbundle) exit 1 ;;
+        unvouched-sbom) [ "$subject" = "sbom.spdx.json" ] && exit 1 ;;
+        unvouched-provenance) [ "$subject" = "provenance.json" ] && exit 1 ;;
+    esac
     exit 0
 fi
 if [ "${1:-}" = "release" ] && [ "${2:-}" = "view" ]; then
@@ -125,10 +130,17 @@ chmod +x "$FIX/bin/apksigner"
 
 fails=0
 
-run_case() { # run_case <label> <want-rc> <mode> [--require-stable]
+run_case() { # run_case <label> <want-rc> <mode> [--require-stable] [--expect <text>]
     local label="$1" want="$2" mode="$3"; shift 3
     local args=()
-    [ "${1:-}" = "--require-stable" ] && args+=(--require-stable)
+    local expect=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --require-stable) args+=(--require-stable); shift ;;
+            --expect) expect="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
     echo "$mode" > "$FIX/mode"
     local out
     out="$(mktemp -d "$FIX/out.XXXXXX")"
@@ -136,6 +148,10 @@ run_case() { # run_case <label> <want-rc> <mode> [--require-stable]
     output="$(env PATH="$FIX/bin:$PATH" GITHUB_REPOSITORY=o/r "$SCRIPT" "${args[@]}" v9.9 "$out" 2>&1)"; rc=$?
     if [ "$rc" -ne "$want" ]; then
         echo "FAIL  $label: expected exit $want, got $rc"
+        printf '%s\n' "$output" | sed 's/^/        /'
+        fails=$((fails + 1))
+    elif [ -n "$expect" ] && ! printf '%s\n' "$output" | grep -q "$expect"; then
+        echo "FAIL  $label: failure did not say '$expect'"
         printf '%s\n' "$output" | sed 's/^/        /'
         fails=$((fails + 1))
     else
@@ -170,7 +186,9 @@ run_case "stable release passes with --require-stable" 0 stable --require-stable
 run_case "pre-release fails --require-stable" 1 prerelease --require-stable
 run_case "draft release fails" 1 draft
 run_case "tampered APK fails" 1 tampered
-run_case "unvouched bundle fails" 1 badbundle
+run_case "unvouched bundle fails" 1 badbundle --expect "does not vouch for this APK"
+run_case "unvouched SBOM fails" 1 unvouched-sbom --expect "does not vouch for the SBOM"
+run_case "unvouched provenance fails" 1 unvouched-provenance --expect "does not vouch for the provenance"
 run_case "missing APK fails" 1 noapk
 run_case "missing checksum fails" 1 nochecksum
 run_case "missing SBOM fails" 1 nosbom

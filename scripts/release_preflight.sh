@@ -16,14 +16,16 @@
 #
 # WHAT IT CHECKS
 #
-#   1. The tag is vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-<label>, and is not
+#   1. The tag is vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-<label>, where a
+#      pre-release label may end in a decimal ordinal (rc1, rc.2), and is not
 #      the moving `verified` tag.
 #   2. The tag commit is an ancestor of the remote default branch.
 #   3. The tag commit is covered by the remote `verified` tag. The local ref is
 #      never authoritative: `verified` moves, and a stale fetch would otherwise
 #      advertise coverage that no longer exists.
 #   4. The derived versionCode is greater than the highest stable tag on the
-#      remote, and no stable GitHub Release already exists for the tag. The
+#      remote, and no stable GitHub Release already exists for the tag.
+#      Pre-release ordinals order rc1 < rc2 below the stable release. The
 #      remote tag list is authoritative, not the local clone or the current
 #      pre-release state of a GitHub Release.
 #   5. The four release-key values are present, the keystore opens, and its
@@ -105,37 +107,63 @@ if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
     MAJOR="${BASH_REMATCH[1]}"
     MINOR="${BASH_REMATCH[2]}"
     PATCH="${BASH_REMATCH[3]}"
+    PRERELEASE_SUFFIX=""
     IS_PRERELEASE=0
-elif [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-[0-9A-Za-z][0-9A-Za-z.-]*$ ]]; then
+elif [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9A-Za-z][0-9A-Za-z.-]*)$ ]]; then
     MAJOR="${BASH_REMATCH[1]}"
     MINOR="${BASH_REMATCH[2]}"
     PATCH="${BASH_REMATCH[3]}"
+    PRERELEASE_SUFFIX="${BASH_REMATCH[4]}"
     IS_PRERELEASE=1
 else
     die "tag '$TAG' is not vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-<label>; the moving verified tag is not a release tag"
 fi
 
 for component in "$MAJOR" "$MINOR" "$PATCH"; do
+    [ "${#component}" -le 3 ] \
+        || die "tag '$TAG' has a version component longer than three digits"
     if [ "$component" != "0" ] && [[ "$component" == 0* ]]; then
         die "tag '$TAG' has a leading zero in a version component"
     fi
 done
-[ "$((10#$MAJOR))" -le 200 ] || die "tag '$TAG' has a major version above 200"
+[ "$((10#$MAJOR))" -le 20 ] || die "tag '$TAG' has a major version above 20"
 [ "$((10#$MINOR))" -le 999 ] || die "tag '$TAG' has a minor version above 999"
 [ "$((10#$PATCH))" -le 999 ] || die "tag '$TAG' has a patch version above 999"
 
-# versionCode = major*10,000,000 + minor*10,000 + patch*10 + channel.
-# Stable is +2, pre-release is +1, so v1.2.3-rc1 is below v1.2.3 and above
-# v1.2.2. The component bounds keep the result below Android's 2,100,000,000
-# limit and leave the channel digit room to order the two channels.
-version_code_for() { # version_code_for <major> <minor> <patch> <channel>
-    printf '%s' "$((10#$1 * 10000000 + 10#$2 * 10000 + 10#$3 * 10 + $4))"
+# A pre-release's ordinal is the trailing decimal run in its label: rc1 -> 1,
+# rc.2 -> 2, beta10 -> 10. A label with no trailing number is the first
+# pre-release of its base version. Rank 99 is reserved for stable, so 0 and
+# 99+ are not valid pre-release ordinals.
+if [ "$IS_PRERELEASE" -eq 1 ]; then
+    if [[ "$PRERELEASE_SUFFIX" =~ ([0-9]+)$ ]]; then
+        ordinal="${BASH_REMATCH[1]}"
+        # Strip leading zeros before the length check so rc0007 is still 7
+        # while an arbitrarily long run cannot wrap Bash's 64-bit arithmetic.
+        ordinal="${ordinal#"${ordinal%%[!0]*}"}"
+        [ "${#ordinal}" -le 2 ] \
+            || die "tag '$TAG' has pre-release ordinal ${BASH_REMATCH[1]}; 99 and above are reserved for stable releases"
+        RANK="$((10#0${ordinal}))"
+    else
+        RANK=1
+    fi
+    [ "$RANK" -ge 1 ] \
+        || die "tag '$TAG' has pre-release ordinal 0; ordinals start at 1"
+    [ "$RANK" -le 98 ] \
+        || die "tag '$TAG' has pre-release ordinal $RANK; 99 and above are reserved for stable releases"
+else
+    RANK=99
+fi
+
+# versionCode = major*100,000,000 + minor*100,000 + patch*100 + rank.
+# rank 99 is stable; pre-releases use 1..98 from their trailing ordinal, so
+# rc1 < rc2 < stable. The component bounds keep the maximum at 2,099,999,999,
+# below Android's 2,100,000,000 limit.
+version_code_for() { # version_code_for <major> <minor> <patch> <rank>
+    printf '%s' "$((10#$1 * 100000000 + 10#$2 * 100000 + 10#$3 * 100 + 10#$4))"
 }
 
 VERSION_NAME="${TAG#v}"
-CHANNEL=2
-[ "$IS_PRERELEASE" -eq 1 ] && CHANNEL=1
-VERSION_CODE="$(version_code_for "$MAJOR" "$MINOR" "$PATCH" "$CHANNEL")"
+VERSION_CODE="$(version_code_for "$MAJOR" "$MINOR" "$PATCH" "$RANK")"
 [ "$VERSION_CODE" -ge 1 ] || die "tag '$TAG' derives a non-positive versionCode"
 [ "$VERSION_CODE" -le 2100000000 ] || die "tag '$TAG' derives versionCode $VERSION_CODE, above Android's 2,100,000,000 limit"
 
@@ -195,16 +223,19 @@ while IFS=$'\t' read -r _ ref; do
     rminor="${BASH_REMATCH[2]}"
     rpatch="${BASH_REMATCH[3]}"
     valid=1
+    [ "${#rmajor}" -le 3 ] || valid=0
+    [ "${#rminor}" -le 3 ] || valid=0
+    [ "${#rpatch}" -le 3 ] || valid=0
     for component in "$rmajor" "$rminor" "$rpatch"; do
         if [ "$component" != "0" ] && [[ "$component" == 0* ]]; then
             valid=0
         fi
     done
     [ "$valid" -eq 1 ] || continue
-    [ "$((10#$rmajor))" -le 200 ] || continue
+    [ "$((10#$rmajor))" -le 20 ] || continue
     [ "$((10#$rminor))" -le 999 ] || continue
     [ "$((10#$rpatch))" -le 999 ] || continue
-    rcode="$(version_code_for "$rmajor" "$rminor" "$rpatch" 2)"
+    rcode="$(version_code_for "$rmajor" "$rminor" "$rpatch" 99)"
     if [ "$rcode" -gt "$LAST_CODE" ]; then
         LAST_CODE="$rcode"
         LAST_TAG="$released_tag"
