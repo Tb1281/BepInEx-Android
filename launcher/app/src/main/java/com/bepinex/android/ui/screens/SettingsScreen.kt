@@ -18,8 +18,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.content.res.Configuration
+import androidx.compose.ui.tooling.preview.Preview
 import com.bepinex.android.R
 import com.bepinex.android.settings.AppSettings
+import com.bepinex.android.ui.theme.BepInExTheme
 
 /**
  * Settings screen with theme, language, and maintenance actions grouped into M3 cards.
@@ -27,15 +30,26 @@ import com.bepinex.android.settings.AppSettings
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    packageName: String,
+    /**
+     * Package name of the currently selected game, or null when no game is
+     * selected. Launcher Settings themselves are global and never need a
+     * game; this only decides whether the per-game maintenance card is
+     * shown (it has no target without a game). Maintenance moves to the
+     * per-game settings screen in #35.
+     */
+    maintenancePackageName: String?,
     themeMode: AppSettings.ThemeMode,
     language: AppSettings.Language,
+    dynamicColor: Boolean,
+    animationDisabled: Boolean,
     floatingLogInGame: Boolean,
     screenDimInGame: Boolean,
     onNavigateBack: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onThemeChanged: (AppSettings.ThemeMode) -> Unit,
     onLanguageChanged: (AppSettings.Language) -> Unit,
+    onDynamicColorChanged: (Boolean) -> Unit,
+    onAnimationDisabledChanged: (Boolean) -> Unit,
     onFloatingLogInGameChanged: (Boolean) -> Unit,
     onScreenDimInGameChanged: (Boolean) -> Unit,
     onClearBepInEx: () -> Unit,
@@ -137,6 +151,52 @@ fun SettingsScreen(
                             colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                             modifier = Modifier.clickable { showLangMenu = true }
                         )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+                        )
+
+                        // Dynamic Color (Material You)
+                        ListItem(
+                            headlineContent = {
+                                Text(stringResource(R.string.settings_dynamic_color), fontWeight = FontWeight.SemiBold)
+                            },
+                            supportingContent = { Text(stringResource(R.string.settings_dynamic_color_desc)) },
+                            leadingContent = {
+                                Icon(Icons.Outlined.ColorLens, null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = dynamicColor,
+                                    onCheckedChange = onDynamicColorChanged
+                                )
+                            },
+                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+                        )
+
+                        // Disable Animations
+                        ListItem(
+                            headlineContent = {
+                                Text(stringResource(R.string.settings_disable_animations), fontWeight = FontWeight.SemiBold)
+                            },
+                            supportingContent = { Text(stringResource(R.string.settings_disable_animations_desc)) },
+                            leadingContent = {
+                                Icon(Icons.Outlined.Animation, null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = animationDisabled,
+                                    onCheckedChange = onAnimationDisabledChanged
+                                )
+                            },
+                            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                        )
                     }
                 }
             }
@@ -197,7 +257,10 @@ fun SettingsScreen(
                 }
             }
 
-            // Maintenance Card
+            // Maintenance Card — per-game actions, shown only while a game is
+            // selected to target them (they move to the per-game settings
+            // screen in #35). Global settings above work without any game.
+            if (maintenancePackageName != null) {
             item {
                 SettingsSectionHeader("Maintenance & Cache")
                 Spacer(Modifier.height(6.dp))
@@ -250,6 +313,7 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
             }
 
             // About Card
@@ -418,4 +482,80 @@ private fun LangOption(
         Spacer(Modifier.width(10.dp))
         Text(label, style = MaterialTheme.typography.bodyLarge)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Previews — the agreed test seam for screens in this project (no UI-test
+// framework). They pin the settings screen's meaningful states: with and
+// without a selected game (maintenance card hidden), light/dark, and an
+// enlarged system font.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun SettingsScreenPreviewContent(
+    maintenancePackageName: String?,
+    themeMode: AppSettings.ThemeMode
+) {
+    BepInExTheme(themeMode = themeMode, dynamicColor = false) {
+        SettingsScreen(
+            maintenancePackageName = maintenancePackageName,
+            themeMode = themeMode,
+            language = AppSettings.Language.SYSTEM,
+            dynamicColor = true,
+            animationDisabled = false,
+            floatingLogInGame = true,
+            screenDimInGame = false,
+            onNavigateBack = {},
+            onNavigateToAbout = {},
+            onThemeChanged = {},
+            onLanguageChanged = {},
+            onDynamicColorChanged = {},
+            onAnimationDisabledChanged = {},
+            onFloatingLogInGameChanged = {},
+            onScreenDimInGameChanged = {},
+            onClearBepInEx = {},
+            onClearDotnet = {}
+        )
+    }
+}
+
+@Preview(name = "Settings - Light, game selected", showBackground = true, heightDp = 1000)
+@Composable
+private fun SettingsScreenLightPreview() {
+    SettingsScreenPreviewContent(
+        maintenancePackageName = "com.example.game",
+        themeMode = AppSettings.ThemeMode.LIGHT
+    )
+}
+
+@Preview(name = "Settings - Light, no game selected", showBackground = true, heightDp = 1000)
+@Composable
+private fun SettingsScreenNoGamePreview() {
+    SettingsScreenPreviewContent(
+        maintenancePackageName = null,
+        themeMode = AppSettings.ThemeMode.LIGHT
+    )
+}
+
+@Preview(
+    name = "Settings - Dark, game selected",
+    showBackground = true,
+    heightDp = 1000,
+    uiMode = Configuration.UI_MODE_NIGHT_YES
+)
+@Composable
+private fun SettingsScreenDarkPreview() {
+    SettingsScreenPreviewContent(
+        maintenancePackageName = "com.example.game",
+        themeMode = AppSettings.ThemeMode.DARK
+    )
+}
+
+@Preview(name = "Settings - Enlarged font", showBackground = true, heightDp = 1200, fontScale = 2f)
+@Composable
+private fun SettingsScreenLargeFontPreview() {
+    SettingsScreenPreviewContent(
+        maintenancePackageName = "com.example.game",
+        themeMode = AppSettings.ThemeMode.LIGHT
+    )
 }

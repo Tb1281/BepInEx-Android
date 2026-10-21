@@ -107,6 +107,8 @@ class MainActivity : AppCompatActivity() {
                     extractionStatus = uiState.extractionStatus,
                     themeMode = uiState.themeMode,
                     language = uiState.language,
+                    dynamicColor = uiState.dynamicColor,
+                    animationDisabled = uiState.animationDisabled,
                     floatingLogInGame = uiState.floatingLogInGame,
                     screenDimInGame = uiState.screenDimInGame,
                     onSelectGame = { viewModel.selectGame(it) },
@@ -118,6 +120,8 @@ class MainActivity : AppCompatActivity() {
                         // to apply the new locale. No manual recreate() needed.
                         viewModel.setLanguage(lang)
                     },
+                    onDynamicColorChanged = { viewModel.setDynamicColor(it) },
+                    onAnimationDisabledChanged = { viewModel.setAnimationDisabled(it) },
                     onFloatingLogInGameChanged = { enabled ->
                         if (enabled && !Settings.canDrawOverlays(this@MainActivity)) {
                             try {

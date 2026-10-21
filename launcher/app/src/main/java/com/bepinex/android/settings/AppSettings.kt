@@ -143,7 +143,11 @@ object AppSettings {
     private fun keyActiveModpacks(packageName: String) = stringPreferencesKey("active_modpacks_$packageName")
 
     fun getDynamicColorFlow(context: Context): Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_DYNAMIC_COLOR] ?: false
+        // Default ON: this must agree with the theme's dynamicColor default
+        // (and MainUiState's initial value). It used to default to false,
+        // which silently overrode the theme default on first run, so a
+        // fresh install started with dynamic color off.
+        prefs[KEY_DYNAMIC_COLOR] ?: true
     }
 
     suspend fun setDynamicColorEnabled(context: Context, enabled: Boolean) {
