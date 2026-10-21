@@ -7,11 +7,31 @@ Upstream changes live as serialized patches in `patches/`, replayed with
 
 ```bash
 ./scripts/apply_patches.sh       # apply queue onto pinned commit; conflict aborts build
-./scripts/sync_upstream.sh       # replay queue onto a new upstream tip
-./scripts/report_patch_conflict.sh  # print failing patch, files, markers
+./scripts/sync_upstream.sh       # advance the pin and update UPSTREAM_DESCRIBE
+./scripts/report_patch_conflict.sh  # print failing patch, files, markers, upstream diff
 ```
 
-Patches `0001`-`0013` cover: Android paths, logcat logging, the
+`sync_upstream.sh` derives the repository from the pin file, so a fixture can
+point `BEPINEX_PIN_FILE` at a throwaway repository. It refuses to run when
+the pin has uncommitted changes.
+
+## 1a. Patch manifest
+
+`patches/manifest.json` is the machine-readable interface of the queue:
+purpose, touched files, depends-on, ADR references and compile-unit status
+for each patch. It is generated, not authored:
+
+```bash
+./scripts/generate_patch_manifest.py   # writes patches/manifest.json
+./scripts/test_patch_manifest.sh      # drift test + validation
+```
+
+`patches/*.patch` remains the only source of truth. Metadata that is not
+derivable from the diff (depends-on, ADR) is carried as commit-message
+trailers (`Depends-On:`, `ADR:`) inside the patch itself, so the manifest
+can be regenerated and checked for drift.``
+
+Patches `0001`-`0012` cover: Android paths, logcat logging, the
 `AndroidEntrypoint` native entrypoint, libfusion detour routing with export
 thunk resolution, Android solution retargeting, Mono/runtime and console
 driver removal, desktop target stripping, AArch64 export-thunk arithmetic,
@@ -77,10 +97,14 @@ Re-recording is deliberate, like a manifest rebaseline:
 ./scripts/record_patched_tree.sh   # writes references/patched-tree.sha256
 ```
 
-Commit the updated hash alongside the patch change. The fixture
-`scripts/test_verify_patches.sh` proves the refusals (tampered tree,
-untracked file, wrong pin, missing record). Never re-record as part of a
-normal build.
+`record_patched_tree.sh` refuses anything that is not a complete, clean
+replay onto the pin: an open `git am` session, a dirty tree, a tree not
+built on the pinned commit, or a replay whose commit count does not match
+the current queue glob. The fixture
+`scripts/test_patch_queue_workflow.sh` proves those refusals together with
+the conflict report. The fixture `scripts/test_verify_patches.sh` proves
+the tree-gate refusals (tampered tree, untracked file, wrong pin,
+missing record). Never re-record as part of a normal build.
 
 The one flow that legitimately changes the tree is the daily upstream sync:
 `sync-upstream.yml` advances the pin first, so the replay runs with
@@ -92,7 +116,7 @@ run.
 As-built provenance (`scripts/emit_provenance.sh`) records what a run
 actually built with - upstream pin, achieved tree hash, patch file hashes,
 SDK version - as JSON next to the artifacts (`build-bepinex.yml` attests it
-with the zip; `sync-upstream.yml` ships it in the release). The pins say
+with the zip; `sync-upstream.yml` ships it in the CI artifact). The pins say
 what was intended; this says what was built. Informational by design: a
 missing tool degrades a field to `"unknown"` instead of failing the build,
 because enforcement lives in the gates.
@@ -125,7 +149,10 @@ a `RET` in the first 16 bytes. Fail-closed: halt before attaching.
 
 ## 4. Deterministic Boot States
 
-One tree builds debug and release (`./gradlew assembleDebug/assembleRelease`).
+One tree builds debug, CI artifact, and release
+(`./gradlew assembleDebug/assembleArtifact/assembleRelease`). Release builds
+require the release key and tag-derived version; use `assembleArtifact` for a
+local installable build without release credentials.
 A successful launch transitions in order:
 
 ```

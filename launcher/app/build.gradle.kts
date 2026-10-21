@@ -4,22 +4,60 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Shipping inputs. The tag release workflow passes bepinex.versionName and
+// bepinex.versionCode from the release preflight; debug and CI artifact builds
+// fall back to the development defaults so they need no release credentials.
+val defaultVersionName = "0.0.0-dev"
+val defaultVersionCode = 1
+val releaseVersionName: String? = providers.gradleProperty("bepinex.versionName")
+    .orNull?.takeIf { it.isNotBlank() }
+val releaseVersionCode: Int? = providers.gradleProperty("bepinex.versionCode")
+    .orNull?.takeIf { it.isNotBlank() }?.toIntOrNull()
+val releaseKeystorePath: String? = providers.environmentVariable("RELEASE_KEYSTORE_PATH")
+    .orNull?.takeIf { it.isNotBlank() }
+
+// Mirrors scripts/release_preflight.sh. The workflow passes both values, but the
+// build independently derives the code from the name so a mismatched handoff is
+// rejected here instead of shipping an APK that claims the wrong version.
+// versionCode = major*100,000,000 + minor*100,000 + patch*100 + rank; rank 99
+// is stable and pre-releases use 1..98 from their trailing ordinal, so
+// rc1 < rc2 < stable.
+fun derivedVersionCode(versionName: String): Int? {
+    val match = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)(-([0-9A-Za-z][0-9A-Za-z.-]*))?$")
+        .matchEntire(versionName) ?: return null
+    val (majorText, minorText, patchText) = match.destructured
+    val components = listOf(majorText, minorText, patchText)
+    if (components.any { it.length > 3 || (it.length > 1 && it.startsWith("0")) }) {
+        return null
+    }
+    val major = majorText.toInt()
+    val minor = minorText.toInt()
+    val patch = patchText.toInt()
+    if (major > 20 || minor > 999 || patch > 999) return null
+    val rank = match.groups[5]?.value?.let { suffix ->
+        val trailing = Regex("(\\d+)$").find(suffix)?.groupValues?.get(1)
+        val ordinal = if (trailing == null) 1 else trailing.toIntOrNull() ?: return null
+        if (ordinal !in 1..98) return null
+        ordinal
+    } ?: 99
+    return major * 100_000_000 + minor * 100_000 + patch * 100 + rank
+}
+
 android {
     namespace = "com.bepinex.android"
     compileSdk = 36
 
     defaultConfig {
-        // Debug and release install side by side: release carries an
-        // applicationIdSuffix (see buildTypes below), so a release APK never
-        // overwrites the debug install. The test-variant applicationId
-        // override (-Pbepinex.applicationId) was removed 2026-10-12; the
-        // suffix below replaces it.
+        // The release is com.bepinex.android. Debug and CI artifact builds carry
+        // their own suffixes so all three can install side by side (see
+        // buildTypes below). The test-variant applicationId override
+        // (-Pbepinex.applicationId) was removed 2026-10-12.
         applicationId = "com.bepinex.android"
-        manifestPlaceholders["appLabel"] = "BepInEx Debug"
+        manifestPlaceholders["appLabel"] = "BepInEx"
         minSdk = 28
         targetSdk = 36
-        versionCode = 184
-        versionName = "0.184"
+        versionCode = releaseVersionCode ?: defaultVersionCode
+        versionName = releaseVersionName ?: defaultVersionName
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -65,15 +103,28 @@ android {
 
     ndkVersion = "30.0.16248370"
 
+    signingConfigs {
+        // Only present when the preflight has materialized the release keystore.
+        // The release build type fails closed in preReleaseBuild if it is absent;
+        // debug and artifact builds never look at this config.
+        if (releaseKeystorePath != null) {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Side-by-side with debug: release installs as
-            // com.bepinex.android.release, so it never overwrites the debug
-            // install. Still the debug keystore (see signing note below).
-            applicationIdSuffix = ".release"
-            versionNameSuffix = "-release"
-            manifestPlaceholders["appLabel"] = "BepInEx Release"
-            signingConfig = signingConfigs.getByName("debug")
+            // The shipping identity: com.bepinex.android, signed by the release
+            // key. preReleaseBuild refuses to run without the key and the
+            // tag-derived version, so a release can never fall back to debug
+            // signing.
+            manifestPlaceholders["appLabel"] = "BepInEx"
+            signingConfig = signingConfigs.findByName("release")
             // The bulk of this APK was androidx.compose.material.icons.extended:
             // 21,320 icon classes (4,264 x 5 variants) of which this app uses 33.
             // A debug build ships all of them - classes.dex alone was 39.6 MB of
@@ -93,7 +144,22 @@ android {
                 "proguard-rules.pro"
             )
         }
+        create("artifact") {
+            // CI-only installable APK for the upstream-sync and manual launcher
+            // builds. It keeps the release shrinking and alignment but is
+            // debug-signed under a distinct ID, and is never published as a
+            // release. This is what lets those paths build without the release
+            // key while keeping the release build fail-closed.
+            initWith(getByName("release"))
+            applicationIdSuffix = ".artifact"
+            versionNameSuffix = "-artifact"
+            manifestPlaceholders["appLabel"] = "BepInEx CI"
+            signingConfig = signingConfigs.getByName("debug")
+        }
         debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            manifestPlaceholders["appLabel"] = "BepInEx Debug"
             isDebuggable = true
             isJniDebuggable = true
             // proguardFiles is declared on release only, so a debug build with
@@ -240,6 +306,49 @@ val preparePrebuilts = tasks.register("preparePrebuilts") {
                 "[preparePrebuilts] ${script.name} failed (exit $exitCode). " +
                     "Shipped artifacts do not match provenance/sha256sums.txt."
             }
+        }
+    }
+}
+
+// Fail before any release byte is compiled when the shipping inputs are absent.
+// Attached to preReleaseBuild rather than the configuration phase so debug and
+// artifact builds - and `gradlew tasks` - still work without release
+// credentials. There is deliberately no debug-key fallback here.
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    doFirst {
+        val missing = listOf(
+            "RELEASE_KEYSTORE_PATH" to System.getenv("RELEASE_KEYSTORE_PATH"),
+            "RELEASE_KEYSTORE_PASSWORD" to System.getenv("RELEASE_KEYSTORE_PASSWORD"),
+            "RELEASE_KEY_ALIAS" to System.getenv("RELEASE_KEY_ALIAS"),
+            "RELEASE_KEY_PASSWORD" to System.getenv("RELEASE_KEY_PASSWORD"),
+        ).filter { it.second.isNullOrBlank() }.map { it.first }
+        check(missing.isEmpty()) {
+            "Release signing is not configured. Missing: ${missing.joinToString(", ")}. " +
+                "Use assembleArtifact for a CI-only build; release builds require the release key."
+        }
+        check(releaseVersionName != null && releaseVersionCode != null) {
+            "Release version is not configured. Pass -Pbepinex.versionName and " +
+                "-Pbepinex.versionCode from the release preflight."
+        }
+        val versionName = releaseVersionName!!
+        val versionCode = releaseVersionCode!!
+        check(versionCode > 0) {
+            "Release versionCode must be positive."
+        }
+        check(versionCode <= 2_100_000_000) {
+            "Release versionCode must stay below Android's 2,100,000,000 limit."
+        }
+        val expectedVersionCode = derivedVersionCode(versionName)
+        check(expectedVersionCode != null) {
+            "Release versionName '$versionName' is not a tag version."
+        }
+        check(versionCode == expectedVersionCode) {
+            "Release versionCode $versionCode does not match versionName '$versionName' " +
+                "(expected $expectedVersionCode). Derive both from the tag."
+        }
+        val store = file(System.getenv("RELEASE_KEYSTORE_PATH"))
+        check(store.isFile) {
+            "Release keystore not found at RELEASE_KEYSTORE_PATH."
         }
     }
 }

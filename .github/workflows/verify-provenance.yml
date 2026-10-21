@@ -2,8 +2,12 @@ name: verify-provenance
 on:
   workflow_dispatch:
   push:
-    # Every path here is an input to one of the two jobs below, and nothing else.
-    # The previous list omitted the patch queue's own inputs, so `patches/**` -
+    # Every path here is either an input to one of the two jobs below or one of
+    # the root docs/metadata files listed at the end for branch-protection
+    # parity: those files cannot affect provenance, but branch protection
+    # requires these checks on every pull request, and the two trigger lists
+    # must match so the gate cannot be skipped for one kind of change. The
+    # previous list omitted the patch queue's own inputs, so `patches/**` -
     # the one thing this repository exists to keep honest - was only verified on
     # pull_request, and this repository works by pushing to a branch. `global.json`
     # and `.github/workflows/**` were omitted too, so pinning the SDK or editing
@@ -15,6 +19,8 @@ on:
       - 'provenance/**'
       - 'references/**'
       - 'scripts/apply_patches.sh'
+      - 'scripts/sync_upstream.sh'
+      - 'scripts/record_patched_tree.sh'
       - 'scripts/bepinex_paths.sh'
       - 'scripts/build_native_deps.sh'
       - 'scripts/build_monomod.sh'
@@ -39,6 +45,8 @@ on:
       - 'launcher/app/src/main/**'
       - 'scripts/mark_verified.sh'
       - 'scripts/ci_failure_notice.sh'
+      - 'scripts/apply_repo_settings.sh'
+      - 'scripts/emit_provenance.sh'
       - 'scripts/pin_drift_notice.sh'
       - 'scripts/test_*.sh'
       - 'scripts/check_elf_alignment.sh'
@@ -48,6 +56,15 @@ on:
       # the workflows rather than inside them, so `.github/workflows/**` does not
       # cover it, and a change to it would otherwise re-run nothing.
       - '.github/actions/**'
+      # These are job inputs too: the launcher compile uses the Gradle wrapper
+      # and R8 rules, the patch queue restores through nuget.config, and the
+      # release preflight is exercised by this gate's fixture.
+      - 'scripts/release_preflight.sh'
+      - 'nuget.config'
+      - 'launcher/app/proguard-rules.pro'
+      - 'launcher/gradle/wrapper/**'
+      - 'launcher/gradlew'
+      - 'launcher/gradlew.bat'
       # job `patch-queue`: replay the queue from pristine upstream and build it
       - 'patches/**'
       - 'references/**'
@@ -58,11 +75,23 @@ on:
       - 'scripts/report_patch_conflict.sh'
       - 'provenance/bepinex.env'
       - 'scripts/bepinex_paths.sh'
+      # Root metadata and docs are not read by either job. They are included so
+      # every pull request runs the required checks: branch protection requires
+      # the `provenance` and `patch-queue` jobs, and a path-filter miss leaves
+      # them pending instead of green.
+      - 'README.md'
+      - 'GLOSSARY.md'
+      - 'LICENSE'
+      - 'launcher/README.md'
+      - 'launcher/THIRDPARTY_NATIVE.md'
+      - 'docs/**'
   pull_request:
     paths:
       - 'provenance/**'
       - 'references/**'
       - 'scripts/apply_patches.sh'
+      - 'scripts/sync_upstream.sh'
+      - 'scripts/record_patched_tree.sh'
       - 'scripts/bepinex_paths.sh'
       - 'scripts/build_native_deps.sh'
       - 'scripts/build_monomod.sh'
@@ -87,12 +116,23 @@ on:
       - 'launcher/app/src/main/**'
       - 'scripts/mark_verified.sh'
       - 'scripts/ci_failure_notice.sh'
+      - 'scripts/apply_repo_settings.sh'
+      - 'scripts/emit_provenance.sh'
       - 'scripts/pin_drift_notice.sh'
       - 'scripts/test_*.sh'
       - 'scripts/check_elf_alignment.sh'
       - 'global.json'
       - '.github/workflows/**'
       - '.github/actions/**'
+      # These are job inputs too: the launcher compile uses the Gradle wrapper
+      # and R8 rules, the patch queue restores through nuget.config, and the
+      # release preflight is exercised by this gate's fixture.
+      - 'scripts/release_preflight.sh'
+      - 'nuget.config'
+      - 'launcher/app/proguard-rules.pro'
+      - 'launcher/gradle/wrapper/**'
+      - 'launcher/gradlew'
+      - 'launcher/gradlew.bat'
       - 'patches/**'
       - 'references/**'
       - 'scripts/apply_patches.sh'
@@ -102,6 +142,16 @@ on:
       - 'scripts/report_patch_conflict.sh'
       - 'provenance/bepinex.env'
       - 'scripts/bepinex_paths.sh'
+      # Root metadata and docs are not read by either job. They are included so
+      # every pull request runs the required checks: branch protection requires
+      # the `provenance` and `patch-queue` jobs, and a path-filter miss leaves
+      # them pending instead of green.
+      - 'README.md'
+      - 'GLOSSARY.md'
+      - 'LICENSE'
+      - 'launcher/README.md'
+      - 'launcher/THIRDPARTY_NATIVE.md'
+      - 'docs/**'
 
 # Gate: nothing reaches the APK unless every shipped binary matches the CI
 # manifest, the crypto PAL is the platform one, and the runtime pack is a
@@ -325,6 +375,12 @@ jobs:
       - name: The patch gate refuses a tampered tree
         run: ./scripts/test_verify_patches.sh
 
+      - name: The patch manifest stays in sync with the queue
+        run: ./scripts/test_patch_manifest.sh
+
+      - name: The patch queue can be diagnosed and rebaselined
+        run: ./scripts/test_patch_queue_workflow.sh
+
       # Both APK-assembling workflows used to run assembleDebug, so the
       # release build type - R8 with the crypto PAL keep rules plus resource
       # shrinking - never ran in CI, and sync releases shipped debug APKs.
@@ -332,6 +388,14 @@ jobs:
       # Gradle config the switch depends on, and the dependency cache.
       - name: The shipping APK is a release build
         run: ./scripts/test_release_artifacts.sh
+
+      # The repository settings are part of the release contract: branch
+      # protection for main, a tag ruleset that excludes the moving verified
+      # tag, the release environment's ref policy, and a read-only default
+      # workflow token. The fixture stubs gh and asserts the payloads and
+      # idempotency, so it needs no repository access.
+      - name: Repository settings are idempotent and fail closed
+        run: ./scripts/test_apply_repo_settings.sh
 
       # The launcher compile gate above is a Gradle invocation, not a script,
       # so it has no fixture of its own to run here. What can rot instead is
@@ -386,12 +450,21 @@ jobs:
       - name: Drift notices update one rolling issue
         run: ./scripts/test_pin_drift_notice.sh
 
+      # The tag path's gate is the only thing between a pushed tag and a
+      # release. Its failure directions are what matter: a tag off main, a
+      # commit the verified gate never saw, a reused version, or a substituted
+      # key must each stop the build. git, gh and keytool are stubbed.
+      - name: The release preflight closes on bad tags, coverage, versions, and keys
+        run: ./scripts/test_release_preflight.sh
+
       # The release page is the one artifact surface no gate above touches:
       # producers attest, the shipping path checks inputs, but nobody ever
       # verified the published APK as a consumer would. verify_release_assets.sh
-      # downloads a release tag and checks checksum then bundle; the fixture
-      # proves a tampered APK, an unvouched bundle, and a missing bundle all
-      # fail, with gh stubbed per the attestation-gate precedent.
+      # downloads a release tag and checks the full asset set, checksum, bundle,
+      # signer certificate, and stable/pre-release state. The fixture proves
+      # tampering, missing assets, a wrong signer, and a pre-release passed to
+      # --require-stable all fail, with gh and apksigner stubbed per the
+      # attestation-gate precedent.
       - name: The published release verifies as a consumer
         run: ./scripts/test_verify_release_assets.sh
 

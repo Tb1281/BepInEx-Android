@@ -1,8 +1,8 @@
 name: ship-release
 # Shared shipping path for every release kind: attest the APK+SBOM+provenance,
 # write the checksum manifest, compose the release notes, and `gh release
-# create`. Called by sync-upstream (automated upstream-sync releases) and
-# release-tag (tag-based general releases).
+# create`. Currently called by release-tag (tag-based general releases); the
+# sync-upstream path produces CI artifacts only and never reaches this file.
 #
 # This is a called workflow — not steps in the caller — because the shipping
 # path is identical for every release kind; the only differences (tag format,
@@ -18,7 +18,7 @@ on:
   workflow_call:
     inputs:
       tag_name:
-        description: 'Release tag to create (e.g. sync-20261015-abc1234 or v1.2.3)'
+        description: 'Release tag to create (e.g. v1.2.3); sync builds are CI artifacts, not releases'
         required: true
         type: string
       release_title:
@@ -31,10 +31,9 @@ on:
         type: string
       notes_extra:
         description: >
-          Markdown bullet lines between notes_header and the build-timestamp
-          line (e.g. upstream old/new for sync releases, version for tag
-          releases). Callers pass this with |- so no trailing blank line is
-          added.
+          Markdown bullet lines after notes_header (e.g. version and build
+          channel for tag releases). Callers pass this with |- so no trailing
+          blank line is added.
         required: false
         type: string
         default: ''
@@ -42,6 +41,11 @@ on:
         description: 'Name of the artifact the caller uploaded holding the APK, SBOM and provenance'
         required: true
         type: string
+      prerelease:
+        description: 'Create the release as a GitHub pre-release; stable promotion is a separate step'
+        required: false
+        type: boolean
+        default: true
       apk_path:
         description: 'Path of the aligned APK inside the downloaded artifact'
         required: false
@@ -70,9 +74,10 @@ jobs:
       contents: write      # GitHub Release creation
       attestations: write  # mint the APK+SBOM+provenance attestation
       id-token: write
+      actions: write       # dispatch verify-release after publication
     steps:
-      # Block egress; the allow-list is the release half of the
-      # sync-upstream map: checkout (github.com, codeload), artifact download
+      # Block egress; the allow-list is the release half of the release-tag
+      # map: checkout (github.com, codeload), artifact download
       # (actions hosts, blob storage), the release API and asset upload
       # (api.github.com, uploads.github.com, cafe.github.com — all three hit
       # by `gh release create`), and the Sigstore Public Good instance the
@@ -137,6 +142,18 @@ jobs:
             ship/${{ inputs.sbom_path }}
             ship/${{ inputs.provenance_path }}
 
+      # The release contract publishes the licence, native notices, and the
+      # public signing certificate next to the APK. They are checked out from
+      # the same tag, so the notes and the certificate asset describe the
+      # source the release claims.
+      - name: Add license, notices, and release certificate
+        run: |
+          set -euo pipefail
+          cp LICENSE ship/LICENSE
+          cp launcher/THIRDPARTY_NATIVE.md ship/THIRDPARTY_NATIVE.md
+          cp provenance/release-cert.pem ship/release-cert.pem
+          cp provenance/release-cert.sha256 ship/release-cert.sha256
+
       - name: Publish Release with Checksums
         working-directory: ship
         env:
@@ -149,27 +166,69 @@ jobs:
           SBOM_PATH: ${{ inputs.sbom_path }}
           PROV_PATH: ${{ inputs.provenance_path }}
           BUNDLE_NAME: ${{ inputs.attestation_bundle_name }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
           SHA="$(sha256sum "$APK_PATH" | awk '{print $1}')"
           APK_BASENAME="$(basename "$APK_PATH")"
           echo "$SHA  $APK_BASENAME" > "$APK_PATH.sha256"
+          CERT_FP="$(tr -d '[:space:]' < release-cert.sha256 | tr 'A-F' 'a-f')"
+          [ -n "$CERT_FP" ] || { echo "release-cert.sha256 is empty" >&2; exit 1; }
+          SOURCE_URL="https://github.com/$GITHUB_REPOSITORY/tree/$TAG_NAME"
           # Notes are printed with printf (not a heredoc) so the
           # caller-supplied header/extra lines are reproduced literally —
           # backticks and all — instead of being reinterpreted by the shell.
           {
             printf '%s\n' "$NOTES_HEADER"
             printf '%s\n' "$NOTES_EXTRA"
-            printf '%s\n' "- **Build Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            printf '\n### 📲 Install and upgrade\n'
+            printf 'Download `%s` and open it on the device. The APK is `arm64-v8a` and requires Android 9 (API 28) or newer. Allow installs from unknown sources if prompted.\n\n' "$APK_BASENAME"
+            printf '**First contract release / old installs:** this release installs as `com.bepinex.android`. Uninstall `com.bepinex.android.release` and any old debug install at `com.bepinex.android` once. The package and signing identity changed, so Android cannot update them in place; app data is not migrated.\n\n'
+            printf '**Later releases:** install over the previous release signed by the same key; updates preserve app data.\n'
+            printf '\n### ✅ Verified device matrix\n'
+            printf '| Device class | Android | Unity | Game | Result |\n'
+            printf '| --- | --- | --- | --- | --- |\n'
+            printf '| Snapdragon 8 Gen 3, arm64 | Android 15+ | Unity 6000 | The Tower | Launcher and mods pass; production RTDB path is a known crash |\n'
+            printf '| Snapdragon 8 Gen 3, arm64 | Android 15+ | Unity 6000 | Unlock! | Pass |\n'
+            printf '| Snapdragon 8 Gen 2, arm64 | Android 15+ | Unity 2022.3 | Revolution Idle | Pass |\n'
+            printf '\nThe matrix records the devices used for release verification, not a guarantee for every title. Device results are recorded before stable promotion.\n'
+            printf '\n### ⚠️ Known issues\n'
+            printf -- '- **The Tower:** the production Firebase RTDB path aborts in `DeleteInternal` on the pinned Firebase C++ SDK. See [`docs/release-crash-investigation.md`](%s/docs/release-crash-investigation.md).\n' "$SOURCE_URL"
+            printf -- '- **Pine license review:** the GPL-3.0 launcher and Anti-996 Pine compatibility review must be closed before stable promotion.\n'
             printf '\n### 🔒 Checksums (SHA-256)\n```\n'
             cat "$APK_PATH.sha256"
-            sha256sum "$SBOM_PATH"
+            # Basenames, not the caller's staging paths: a user who downloads
+            # the assets runs `sha256sum -c` in one flat directory.
+            sha256sum "$(basename "$SBOM_PATH")" "$(basename "$PROV_PATH")" "$(basename "$BUNDLE_NAME")" \
+              LICENSE THIRDPARTY_NATIVE.md release-cert.pem release-cert.sha256
             printf '```\n'
             printf '\n### 📦 SBOM\n`%s` is the SPDX 2.3 source SBOM for this release.\n' "$(basename "$SBOM_PATH")"
-            printf '\n### 🧾 Build provenance\n`%s` records what this release was built from: the\nupstream pin, the patched-tree hash the replay produced, the patch\nfiles and the SDK version. It is covered by the attestation below.\n' "$(basename "$PROV_PATH")"
-            printf '\n### 🔏 Attestation\n`%s` binds this repository, this workflow\nrun and this commit to the APK and SBOM bytes above. Verify with:\n```\ngh attestation verify %s --repo %s\n```\n' "$BUNDLE_NAME" "$APK_BASENAME" "$GITHUB_REPOSITORY"
-            printf '(On a private repository the bundle is the fallback CI provenance\nstatement; it becomes a Sigstore attestation automatically if the\nrepository is made public.)\n'
+            printf '\n### 🧾 Build provenance\n`%s` records what this release was built from: the upstream pin, the patched-tree hash the replay produced, the patch files and the SDK version. It is covered by the attestation below.\n' "$(basename "$PROV_PATH")"
+            printf '\n### 🔏 Attestation\n`%s` binds this repository, this workflow run and this commit to the APK, SBOM, and provenance bytes above. Verify with:\n```\ngh attestation verify %s --repo %s\n```\n' "$BUNDLE_NAME" "$APK_BASENAME" "$GITHUB_REPOSITORY"
+            printf '\n### 🧾 Signing certificate\nSHA-256 fingerprint:\n```\n%s\n```\n`release-cert.pem` is the public certificate; `release-cert.sha256` is the fingerprint file. The same fingerprint is committed at `provenance/release-cert.sha256`. Compare after downloading with:\n```\napksigner verify --print-certs %s\n```\n' "$CERT_FP" "$APK_BASENAME"
+            printf '\n### ⚖️ License and source\nBepInEx Android is licensed under GPL-3.0; see `LICENSE`. BepInEx itself is LGPL-2.1. Third-party native binaries and their licenses are listed in `THIRDPARTY_NATIVE.md`.\n\nCorresponding source for this tag: %s\n' "$SOURCE_URL"
+            printf '\n- **Build Timestamp:** %s\n' "$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
           } > ../release-notes.md
-          gh release create "$TAG_NAME" "$APK_PATH" "$APK_PATH.sha256" "$SBOM_PATH" "$PROV_PATH" "$BUNDLE_NAME" \
+          EXTRA_ARGS=()
+          if [ "$PRERELEASE" = "true" ]; then
+            EXTRA_ARGS+=(--prerelease)
+          fi
+          # --verify-tag makes the tag the only way to create this release: if
+          # the tag is missing, gh fails instead of creating it implicitly.
+          gh release create "$TAG_NAME" \
+            "$APK_PATH" "$APK_PATH.sha256" "$SBOM_PATH" "$PROV_PATH" "$BUNDLE_NAME" \
+            LICENSE THIRDPARTY_NATIVE.md release-cert.pem release-cert.sha256 \
             --title "$RELEASE_TITLE" \
-            --notes-file ../release-notes.md
+            --notes-file ../release-notes.md \
+            --verify-tag \
+            "${EXTRA_ARGS[@]}"
+
+      # A release created with GITHUB_TOKEN does not emit a release event that
+      # starts another workflow (workflow_dispatch and repository_dispatch are
+      # the exceptions). Dispatch the consumer verifier explicitly so every
+      # published tag release is still checked automatically.
+      - name: Dispatch consumer verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
+        run: gh workflow run verify-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$RELEASE_TAG"

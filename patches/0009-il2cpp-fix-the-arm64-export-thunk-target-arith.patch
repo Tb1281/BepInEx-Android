@@ -29,6 +29,8 @@ before a handler could walk anything. Four other explanations were tested and
 ruled out first: thread stack size (reproduced identically on a 64MB stack),
 PreloadIL2CPPInteropAssemblies (disabled, unchanged), detour re-entry (a depth
 counter never reached depth 3) and Harmony support (removed, unchanged).
+
+Depends-On: 0008-build-drop-the-layers-that-cannot-run-on-Android
 ---
  .../Hook/ExportThunkResolver.cs                | 18 +++++++++++++++++-
  1 file changed, 17 insertions(+), 1 deletion(-)

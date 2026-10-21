@@ -41,8 +41,21 @@ alone (accepted data cost, not a regression).
 |---|---|---|
 | `verify-provenance:provenance` | `contents: write` | Moves the `verified` tag on success. |
 | `verify-provenance:patch-queue` | Repo default (`read`) | Patch replay and managed build. |
-| `sync-upstream:sync` | `contents`, `pull-requests`, `issues`, `attestations` write; `id-token` write | Pins, sync PRs, releases, failure notices, attestation. |
+| `sync-upstream:sync` | `contents`, `pull-requests`, `issues` write | Pins, sync PRs, and failure notices; CI artifact only, with no release or attestation. |
 | `fetch-runtime` | `contents: read`; `issues`, `attestations` write; `id-token` write | Runtime pack and drift notices. |
 | `build-bepinex`, `build-native-deps`, `build-launcher-apk` | `contents: read`; `attestations`, `id-token` write | Build inputs and attest them. |
+| `release-tag:build` | `contents: read`; `issues: write` | Builds the tag release; reads the release key from the `release` environment; failure notices. |
+| `release-tag:ship` / `ship-release:ship` | `contents`, `attestations`, `id-token`, `actions` write | Downloads the tag artifact, attests it, creates the release, and dispatches consumer verification; no release key. |
+| `verify-release:consumer-verify` | `contents: read`; `issues: write` | Downloads and verifies the published release; failure notices. |
+| `promote-release:promote` | `contents`, `issues` write | Clears the pre-release flag; failure notices; no release key. |
 
-All jobs declare permissions explicitly; none inherit broad defaults.
+Release jobs declare permissions explicitly. The `patch-queue` job uses the
+repository default, which is read-only; no job inherits a write default. The
+`release` environment is the only place the release key is available, and only
+`release-tag:build` declares it. `scripts/apply_repo_settings.sh` is the source
+of truth for the surrounding controls: `main` requires the `provenance` and
+`patch-queue` checks plus a pull request; the `release-tags` ruleset covers
+`refs/tags/v*` but excludes the moving `refs/tags/verified`; the `release`
+environment accepts only `main` and `v*`; and the default workflow token is
+read-only. Actions may create the sync pull request, but no workflow approves
+pull requests and the required approval count is zero.

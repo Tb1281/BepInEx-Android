@@ -24,11 +24,20 @@
 # is a no-op) but additions and removals are not. A workflow with only one
 # trigger, or with no `paths:` filter at all, is not this fixture's business.
 #
+# It also asserts the release contract's trigger and job shape: the tag release
+# is `v[0-9]*` on a tag push only, `sync-upstream` is schedule/manual only and
+# has exactly one job (no ship job) that never runs `gh release create`,
+# `ship-release` is call-only and verifies the pushed tag, consumer verification
+# is release/manual, promotion is manual only, and every job that reads
+# `secrets.RELEASE_` declares the `release` environment. Those are the triggers
+# and job boundaries that would broaden a release path or reintroduce a sync
+# release without any host-side change.
+#
 # WHAT IT DELIBERATELY DOES NOT CHECK
 #
-# Whether the lists are *complete*. A path that belongs in both lists but is in
-# neither is invisible here - the lists would agree. That is a different question,
-# and the answer to it is a review, not a mechanical check.
+# Whether the path lists are *complete*. A path that belongs in both lists but
+# is in neither is invisible here - the lists would agree. That is a different
+# question, and the answer to it is a review, not a mechanical check.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -100,6 +109,155 @@ for wf in .github/workflows/*.yml; do
         fails=$((fails + 1))
     fi
 done
+
+echo
+echo "== release contract triggers =="
+echo
+
+python3 - <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    import yaml
+except ImportError:
+    print("  skip  release contract triggers (no python/yaml)")
+    raise SystemExit(0)
+
+ROOT = pathlib.Path(".github/workflows")
+failures = 0
+
+
+def load(name):
+    doc = yaml.safe_load((ROOT / name).read_text())
+    # PyYAML resolves the bare key `on` to the boolean True.
+    on = doc.get("on", doc.get(True))
+    return on if isinstance(on, dict) else {}
+
+
+def check(name, condition, detail):
+    global failures
+    if condition:
+        print(f"  ok    {name}")
+    else:
+        print(f"  FAIL  {name}: {detail}")
+        failures += 1
+
+
+release = load("release-tag.yml")
+check("release-tag is tag-push only", set(release) == {"push"}, sorted(release))
+tag_push = release.get("push") or {}
+check(
+    "release-tag matches v[0-9]* and nothing broader",
+    tag_push.get("tags") == ["v[0-9]*"]
+    and "branches" not in tag_push
+    and "paths" not in tag_push,
+    tag_push,
+)
+check(
+    "release-tag cannot match the moving verified tag",
+    tag_push.get("tags") != ["v*"],
+    tag_push.get("tags"),
+)
+
+sync = load("sync-upstream.yml")
+check(
+    "sync-upstream is schedule/manual only",
+    set(sync) == {"schedule", "workflow_dispatch"},
+    sorted(sync),
+)
+check(
+    "sync-upstream has no release or push trigger",
+    "release" not in sync and "push" not in sync and "pull_request" not in sync,
+    sorted(sync),
+)
+
+sync_doc = yaml.safe_load((ROOT / "sync-upstream.yml").read_text())
+sync_jobs = sync_doc.get("jobs", {})
+check(
+    "sync-upstream has exactly one job, named sync",
+    set(sync_jobs) == {"sync"},
+    sorted(sync_jobs),
+)
+sync_text = (ROOT / "sync-upstream.yml").read_text()
+check(
+    "sync-upstream does not create releases",
+    "gh release create" not in sync_text,
+    "gh release create present",
+)
+
+sync_steps = sync_doc.get("jobs", {}).get("sync", {}).get("steps", [])
+pr_steps = [s for s in sync_steps if s.get("name") == "Create PR for pin update"]
+check(
+    "sync-upstream has exactly one pin-bump PR step",
+    len(pr_steps) == 1,
+    len(pr_steps),
+)
+add_paths = str(pr_steps[0].get("with", {}).get("add-paths", "")) if pr_steps else ""
+check(
+    "sync PR commits only the pin and patched-tree hash",
+    set(add_paths.split()) == {
+        "provenance/bepinex.env",
+        "references/patched-tree.sha256",
+    },
+    add_paths,
+)
+
+ship = load("ship-release.yml")
+check("ship-release is call-only", set(ship) == {"workflow_call"}, sorted(ship))
+ship_text = (ROOT / "ship-release.yml").read_text()
+check(
+    "ship-release verifies the pushed tag",
+    "--verify-tag" in ship_text,
+    "--verify-tag missing",
+)
+
+# The release environment is the secret boundary. A job that references a
+# release secret without declaring it reads nothing at runtime, so the failure
+# would surface only on a tag push; assert the boundary statically instead.
+for wf in sorted(ROOT.glob("*.yml")):
+    doc = yaml.safe_load(wf.read_text())
+    jobs = doc.get("jobs") or {}
+    for job_name, job in jobs.items():
+        if "secrets.RELEASE_" not in json.dumps(job):
+            continue
+        env = job.get("environment")
+        if isinstance(env, dict):
+            env = env.get("name")
+        check(
+            f"{wf.name}:{job_name} reads release secrets in the release environment",
+            env == "release",
+            env,
+        )
+
+verify = load("verify-release.yml")
+check(
+    "verify-release is release/manual only",
+    set(verify) <= {"release", "workflow_dispatch"} and "release" in verify,
+    sorted(verify),
+)
+
+promote = load("promote-release.yml")
+check(
+    "promote-release is manual only",
+    set(promote) == {"workflow_dispatch"},
+    sorted(promote),
+)
+
+gate = load("verify-provenance.yml")
+check(
+    "verify-provenance has no release trigger",
+    "release" not in gate,
+    sorted(gate),
+)
+
+raise SystemExit(1 if failures else 0)
+PY
+contract_status=$?
+if [ "$contract_status" -ne 0 ]; then
+    fails=$((fails + 1))
+fi
 
 echo
 if [ "$fails" -eq 0 ]; then

@@ -39,7 +39,7 @@
 ### Phase 5: Build Provenance & Attestation [IN PROGRESS]
 
 - [x] Build provenance attested per producer run; shipping path gated with fixtures.
-- [ ] Public-era: Sigstore/Rekor attestation and consumer-side attestation verification on releases.
+- [x] Public-era: Sigstore/Rekor attestation and consumer-side attestation verification on releases.
 
 ### Phase 6: ARM64 Inline Hook Space Guard & Logging Alignment [COMPLETE]
 
@@ -55,15 +55,29 @@
 
 ## Next Steps
 
+### Priority 0: Release Contract v1 [IN PROGRESS]
+
+- [x] Release contract documented: GitHub Releases only, stable requires build/release/device verification, tag-only releases (ADR-0016 through ADR-0018).
+- [x] Release key generated and registered in the `release` GitHub Environment (2026-10-20).
+- [ ] Offline backup of the release key confirmed by the maintainer.
+- [x] Release signing and application-ID migration; release build fails closed without the release key.
+- [x] Tag-derived `versionCode`/`versionName`, monotonic version check, and `v[0-9]*` trigger.
+- [x] Release preflight: tag on `main`, covered by `verified`, secrets present, `gh release create --verify-tag`.
+- [x] `sync-upstream` stops publishing stable releases; it produces artifacts only.
+- [x] Release notes and assets: install/upgrade, known issues, certificate fingerprint, GPL/LGPL notices, source offer.
+- [x] Repository protections applied: `main` required checks, the `release-tags` ruleset excluding `verified`, the `release` environment restricted to `main`/`v*`, and the default workflow token read-only with Actions PR creation for the sync path (`scripts/apply_repo_settings.sh --apply`, audited 2026-10-20).
+- [x] `v0.0.0-rc1` end-to-end rehearsal and rollback runbook (pre-release verified with nine assets; promotion rejected; advisory retained; 2026-10-20).
+- [ ] Pine license review (stable-release blocker; status quo recorded in [ADR-0019](adr/0019-retain-gpl-and-pine.md)).
+
 ### Priority 1: Trust
 
-- [x] Sigstore/Rekor attestation on all release artifacts (2026-10-14): repo is public and every producer attests officially — verified same-day across runtime, hook engines, managed framework, sync APK, and shipping APK (`Attestation signed using certificate from Public Good Sigstore instance`; consumer gate reports `Sigstore bundle` on all 12 inputs, no fallbacks). SBOM published alongside the APK on both release paths.
-- [x] Egress `block` rollout (2026-10-14): all seven jobs block with measured allow-lists — `verify-provenance:provenance`, `:patch-queue`, `build-bepinex:build`, `build-native-deps:build`, `fetch-runtime:fetch-runtime`, `sync-upstream:sync`, `build-launcher-apk:apk` last. Each graduated after a green blocked run; Sigstore (fulcio/rekor, plus TUF hosts on the consumer side) included from measurement so attestations stay official on the public repo. Rollback per job is one line to `audit`.
+- [x] Sigstore/Rekor attestation on all release artifacts (2026-10-14): repo is public and every producer attests officially — verified same-day across runtime, hook engines, managed framework, sync APK, and shipping APK (`Attestation signed using certificate from Public Good Sigstore instance`; consumer gate reports `Sigstore bundle` on all 12 inputs, no fallbacks). The release SBOM is attested alongside the APK; sync artifacts carry the SBOM in the CI artifact without attestation.
+- [x] Egress `block` rollout (2026-10-14): all nine jobs block with explicit allow-lists — `verify-provenance:provenance`, `:patch-queue`, `build-bepinex:build`, `build-native-deps:build`, `fetch-runtime:fetch-runtime`, `sync-upstream:sync`, `build-launcher-apk:apk`, `release-tag:build`, and `ship-release:ship`. Each build job graduated after a green blocked run; the two release jobs' lists are validated by the tag rehearsal. Sigstore (fulcio/rekor, plus TUF hosts on the consumer side) is included from measurement so attestations stay official on the public repo. Rollback per job is one line to `audit`.
 - [ ] Formal SLSA 3 level once public.
 
 ### Priority 2: CI/CD
 
-- [ ] Release automation: sync-path releases already publish APK plus SBOM plus attestation bundle; remaining work is tag-based general release via a shipping-path refactor.
+- [x] Release automation: tag-based general release via the shared shipping path; sync-path builds are CI artifacts only. The `v0.0.0-rc1` rehearsal exercised the full path and rollback; stable promotion remains blocked by the Pine review.
 - [ ] Test matrix: expand beyond the Unity 6000 / 2022.3 titles already verified.
 - [ ] Keep short artifact retention and no-cache policy under quota; revisit only with quota headroom.
 

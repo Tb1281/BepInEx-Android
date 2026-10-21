@@ -164,3 +164,17 @@ index 0000000..a57a40a
 +        Silent = 8
 +    }
 +}
+
+diff --git a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+index 3aa95c2..40e460b 100644
+--- a/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
++++ b/Runtimes/Unity/BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs
+@@ -22,7 +22,7 @@ public class IL2CPPChainloader : BaseChainloader<BasePlugin>
+
+     private static readonly ConfigEntry<bool> ConfigUnityLogging = ConfigFile.CoreConfig.Bind(
+      "Logging", "UnityLogListening",
+-     true,
++     false,
+      "Enables showing unity log messages in the BepInEx logging system.");
+
+     private static readonly ConfigEntry<bool> ConfigDiskWriteUnityLog = ConfigFile.CoreConfig.Bind(
