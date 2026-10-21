@@ -31,7 +31,7 @@ derivable from the diff (depends-on, ADR) is carried as commit-message
 trailers (`Depends-On:`, `ADR:`) inside the patch itself, so the manifest
 can be regenerated and checked for drift.``
 
-Patches `0001`-`0013` cover: Android paths, logcat logging, the
+Patches `0001`-`0012` cover: Android paths, logcat logging, the
 `AndroidEntrypoint` native entrypoint, libfusion detour routing with export
 thunk resolution, Android solution retargeting, Mono/runtime and console
 driver removal, desktop target stripping, AArch64 export-thunk arithmetic,
