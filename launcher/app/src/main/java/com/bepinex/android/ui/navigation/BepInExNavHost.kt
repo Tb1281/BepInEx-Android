@@ -237,6 +237,7 @@ fun BepInExNavHost(
                 composable<Modpacks> { backStackEntry ->
                     val route = backStackEntry.toRoute<Modpacks>()
                     val packageName = route.packageName
+                    var editingGlobalConfig by remember { mutableStateOf<java.io.File?>(null) }
                     // Refresh modpacks (disk walk: off Main)
                     LaunchedEffect(packageName) {
                         withContext(Dispatchers.IO) {
@@ -293,8 +294,35 @@ fun BepInExNavHost(
                             exportTarget = ExportTarget(packageName, name)
                             exportLauncher.launch("$name.zip")
                         },
-                        onImportModpack = { importModpackLauncher.launch(arrayOf("application/zip", "*/*")) }
+                        onImportModpack = { importModpackLauncher.launch(arrayOf("application/zip", "*/*")) },
+                        onEditGlobalConfig = {
+                            val file = modpackManager.getFrameworkConfigFile(packageName)
+                            if (file.isFile) {
+                                editingGlobalConfig = file
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(R.string.global_config_not_created),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
                     )
+
+                    // Global framework config editor (single copy in the
+                    // runtime config dir - see ModpackManager)
+                    editingGlobalConfig?.let { file ->
+                        ConfigEditorDialog(
+                            configFile = file,
+                            onDismiss = { editingGlobalConfig = null },
+                            onSave = { f, content ->
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    f.writeText(content)
+                                    withContext(Dispatchers.Main) { editingGlobalConfig = null }
+                                }
+                            }
+                        )
+                    }
                 }
 
                 // Modpack detail

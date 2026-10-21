@@ -52,7 +52,20 @@ data class ModpackExportProgress(
  */
 class ModpackManager {
 
+    /** The game's single framework config file (runtime config dir). */
+    fun getFrameworkConfigFile(packageName: String): File =
+        File(BepInExPaths.getConfigDir(packageName), FRAMEWORK_CONFIG_NAME)
+
     companion object {
+        /**
+         * The BepInEx framework config. Unlike plugin configs it is NOT part
+         * of the modpack snapshot cycle: exactly one copy exists per game, in
+         * the runtime config dir, and persist/restore/apply never copy,
+         * overwrite or delete it. It is edited through the launcher's global
+         * config editor (modpack list screen).
+         */
+        const val FRAMEWORK_CONFIG_NAME = "BepInEx.cfg"
+
         const val MODPACK_EXTENSION = "rhp"
         const val MODPACK_MIME_TYPE = "application/octet-stream"
 
@@ -311,10 +324,12 @@ class ModpackManager {
                     }
                 }
 
-                // Overlay config
+                // Overlay config (framework config excluded: single-copy in
+                // the runtime dir, packs never carry it)
                 val modpackConfig = getModpackConfigDir(packageName, modpackName)
                 if (modpackConfig.isDirectory) {
                     modpackConfig.listFiles()?.forEach { cfg ->
+                        if (cfg.name == FRAMEWORK_CONFIG_NAME) return@forEach
                         cfg.copyTo(File(configDir, cfg.name), overwrite = true)
                     }
                 }
@@ -346,23 +361,29 @@ class ModpackManager {
         // Ownership filter: the runtime config dir is merged from every active
         // modpack, so copying it back wholesale would stuff one pack with the
         // other packs' plugin configs. Only persist files that belong to this
-        // pack (BepInEx.cfg is shared framework config and always persists).
+        // pack. The framework config (BepInEx.cfg) is never persisted - its
+        // single copy lives in the runtime config dir.
         val owned = ownedConfigFileNames(packageName, modpackName)
-        copyNewerDirContents(BepInExPaths.getConfigDir(packageName), File(destRoot, "config"), owned)
+        copyNewerDirContents(
+            BepInExPaths.getConfigDir(packageName), File(destRoot, "config"), owned,
+            excludeNames = setOf(FRAMEWORK_CONFIG_NAME)
+        )
         copyRuntimeLogs(packageName, File(destRoot, "logs"))
         BepInExLog.i("Persisted runtime cfg/logs -> ${destRoot.absolutePath}")
     }
 
     /**
-     * Config file names that belong to [modpackName]: "BepInEx.cfg" plus, for
-     * each plugin DLL in the pack, any "<guid>.cfg" whose guid string appears
-     * inside the DLL (BepInEx names plugin config files after the plugin GUID,
-     * and the GUID literal is embedded in the DLL metadata). Returns null for
-     * the vanilla state (no filtering - it is the shared base state).
+     * Config file names that belong to [modpackName]: for each plugin DLL in
+     * the pack, any "<guid>.cfg" whose guid string appears inside the DLL
+     * (BepInEx names plugin config files after the plugin GUID, and the GUID
+     * literal is embedded in the DLL metadata). The framework config
+     * (BepInEx.cfg) belongs to no pack - see [FRAMEWORK_CONFIG_NAME].
+     * Returns null for the vanilla state (no filtering - it is the shared
+     * base state; the framework config is still excluded by the caller).
      */
     private fun ownedConfigFileNames(packageName: String, modpackName: String?): Set<String>? {
         if (modpackName.isNullOrEmpty()) return null
-        val result = mutableSetOf("BepInEx.cfg")
+        val result = mutableSetOf<String>()
         val pluginsDir = getModpackPluginsDir(packageName, modpackName)
         if (!pluginsDir.isDirectory) return result
         val runtimeConfig = BepInExPaths.getConfigDir(packageName)
@@ -404,10 +425,11 @@ class ModpackManager {
      * preserved so the next comparison stays meaningful. When [onlyNames] is
      * non-null, only files whose name is in the set are copied.
      */
-    private fun copyNewerDirContents(source: File, dest: File, onlyNames: Set<String>? = null) {
+    private fun copyNewerDirContents(source: File, dest: File, onlyNames: Set<String>? = null, excludeNames: Set<String> = emptySet()) {
         dest.mkdirs()
         if (!source.isDirectory) return
         source.listFiles()?.forEach { child ->
+            if (child.name in excludeNames) return@forEach
             if (onlyNames != null && !child.isDirectory && child.name !in onlyNames) {
                 return@forEach
             }
@@ -439,7 +461,12 @@ class ModpackManager {
         } else {
             replaceDir(pluginsDir)
         }
-        syncDirContents(File(srcRoot, "config"), configDir)
+        // The framework config is single-copy (runtime dir only): preserve
+        // the runtime file instead of syncing it from the snapshot.
+        syncDirContents(
+            File(srcRoot, "config"), configDir,
+            preserveNames = setOf(FRAMEWORK_CONFIG_NAME)
+        )
         BepInExLog.i("Restored runtime cfg from ${srcRoot.absolutePath}")
     }
 
@@ -476,9 +503,18 @@ class ModpackManager {
         }
     }
 
-    private fun syncDirContents(source: File, dest: File) {
+    private fun syncDirContents(source: File, dest: File, preserveNames: Set<String> = emptySet()) {
         if (!source.isDirectory) {
-            replaceDir(dest)
+            if (preserveNames.isEmpty()) {
+                replaceDir(dest)
+            } else {
+                // No snapshot to sync from: drop everything except preserved
+                // entries (e.g. the single-copy framework config).
+                dest.mkdirs()
+                dest.listFiles()
+                    ?.filter { it.name !in preserveNames }
+                    ?.forEach { it.deleteRecursively() }
+            }
             return
         }
 
@@ -487,12 +523,14 @@ class ModpackManager {
 
         val sourceChildren = source.listFiles()?.associateBy { it.name }.orEmpty()
         dest.listFiles()
-            ?.filter { it.name !in sourceChildren }
+            ?.filter { it.name !in sourceChildren && it.name !in preserveNames }
             ?.forEach { it.deleteRecursively() }
 
-        sourceChildren.values.forEach { child ->
-            syncEntry(child, File(dest, child.name))
-        }
+        sourceChildren.values
+            .filter { it.name !in preserveNames }
+            .forEach { child ->
+                syncEntry(child, File(dest, child.name))
+            }
     }
 
     private fun syncEntry(source: File, target: File) {

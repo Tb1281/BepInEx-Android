@@ -45,6 +45,8 @@
     <string name="modpack_rename">Rename</string>
     <string name="modpack_export">Export</string>
     <string name="modpack_import">Import Modpack</string>
+    <string name="global_config">Global Config (BepInEx.cfg)</string>
+    <string name="global_config_not_created">BepInEx.cfg is created when the game is launched for the first time</string>
     <string name="modpack_select_active">Activate</string>
     <string name="modpack_vanilla">Vanilla (No Mods)</string>
     <string name="modpack_name_hint">Modpack name</string>
