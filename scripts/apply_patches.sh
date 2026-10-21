@@ -145,7 +145,7 @@ LOCK_SRC="$ROOT/references/nuget-locks/bepinex"
 if [ "${BEPINEX_SKIP_TREE_GATE:-0}" = "1" ]; then
     echo "tree gate skipped (BEPINEX_SKIP_TREE_GATE=1); re-record with scripts/record_patched_tree.sh" >&2
 else
-    "$ROOT/scripts/verify_patches.sh" "$BEPINEX_SRC" "$PIN" "$ROOT/references/patched-tree.sha256"
+    "$ROOT/scripts/verify_patches.sh" "$BEPINEX_SRC" "$PIN" "$BEPINEX_PATCHED_TREE_FILE"
 fi
 
 echo "BEPINEX_SRC=$BEPINEX_SRC"

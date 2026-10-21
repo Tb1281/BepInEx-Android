@@ -55,3 +55,11 @@ _Avoid_: version, latest
 **Patch queue**:
 The ordered patches in `patches/` replayed onto the pinned BepInEx commit. Skipping one ships a missing adaptation.
 _Avoid_: fork, diff
+
+**Patch conflict report**:
+The read-only diagnosis printed by `report_patch_conflict.sh` when a queue entry does not replay: the failing patch and its position, each touched file's pre-image blob and base commit, the conflict markers, and upstream's change. It never resolves the conflict.
+_Avoid_: error log, build failure
+
+**Rebaseline**:
+Recording a new patched-tree hash after an intentional queue or pin change, only after a complete, clean replay onto the pin. The tree hash is the lock file for the queue.
+_Avoid_: re-record, rebuild hash
