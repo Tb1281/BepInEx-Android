@@ -196,12 +196,25 @@ check(
 )
 add_paths = str(pr_steps[0].get("with", {}).get("add-paths", "")) if pr_steps else ""
 check(
-    "sync PR commits only the pin and patched-tree hash",
+    "sync PR commits the pin, its generated Pin Table, and the patched-tree hash",
     set(add_paths.split()) == {
         "provenance/bepinex.env",
+        "provenance/SOURCES.md",
         "references/patched-tree.sha256",
     },
     add_paths,
+)
+sync_step_names = {s.get("name") for s in sync_steps if s.get("name")}
+check(
+    "sync-upstream regenerates the Pin Table after a pin bump",
+    "Regenerate the human-readable pin table" in sync_step_names,
+    sorted(sync_step_names),
+)
+check(
+    "sync-upstream checks the regenerated Pin Table",
+    "The human-readable pin table matches the pin" in sync_step_names
+    and "render_sources_pin_table.py --check" in sync_text,
+    sync_text,
 )
 
 ship = load("ship-release.yml")

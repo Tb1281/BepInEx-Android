@@ -122,6 +122,16 @@ jobs:
         id: sync
         run: ./scripts/sync_upstream.sh
 
+      # The Pin Table is a projection of provenance/*.env, not a second authored
+      # pin. Regenerate it in the same workspace as the pin bump, then check the
+      # committed result so a template/renderer defect fails before a PR exists.
+      - name: Regenerate the human-readable pin table
+        if: steps.sync.outputs.moved == 'true'
+        run: ./scripts/render_sources_pin_table.py
+
+      - name: The human-readable pin table matches the pin
+        run: ./scripts/render_sources_pin_table.py --check
+
       # Only proceed with the artifact build if upstream moved or force requested
       - name: Prepare Android SDK and NDK
         if: steps.sync.outputs.moved == 'true' || inputs.force
@@ -261,15 +271,17 @@ jobs:
           branch: upstream-sync
           title: 'sync: BepInEx upstream update (${{ steps.sync.outputs.new }})'
           commit-message: 'sync: BepInEx upstream update to ${{ steps.sync.outputs.new }}'
-          # Only the source pin and the re-recorded tree hash belong in the
-          # pin-bump PR. The SBOM, provenance, and drift report are build
-          # outputs uploaded as artifacts; staging the whole tree would commit
-          # them to the branch on every run.
+          # Only the source pin, its generated human-readable projection, and
+          # the re-recorded tree hash belong in the pin-bump PR. The SBOM,
+          # provenance, and drift report are build outputs uploaded as
+          # artifacts; staging the whole tree would commit them to the branch
+          # on every run.
           add-paths: |
             provenance/bepinex.env
+            provenance/SOURCES.md
             references/patched-tree.sha256
           body: |
-            Automated upstream sync of the BepInEx pin (`provenance/bepinex.env`) with the patch queue replayed on top.
+            Automated upstream sync of the BepInEx pin (`provenance/bepinex.env`) and its generated Pin Table (`provenance/SOURCES.md`) with the patch queue replayed on top.
 
             This workflow produces a CI-only artifact for smoke testing, not a GitHub Release. Download it from run
             [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).

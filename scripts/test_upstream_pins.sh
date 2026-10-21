@@ -13,8 +13,7 @@
 #   url unreachable              -> unknown, exit 0, claims nothing
 #   ref does not exist           -> unknown, exit 0, claims nothing
 #   malformed pin line           -> exit 1
-#   --print-table derives the real table (gitmodules parse, ls-tree,
-#   env sourcing) without a network
+#   --print-table derives the real table from provenance/*.env without a network
 set -uo pipefail
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/pins.XXXXXX")"
@@ -128,11 +127,10 @@ for f in "$REPO"/provenance/*.env; do
     fi
 done
 
-# 6d. The gitlink cross-check must still be live while the submodules exist.
-#     It is skipped under PINS_FILE (the fixtures above override the table with
-#     throwaway local remotes), so the real tree is the only thing that can
-#     exercise it - and it is the thing that catches a gitlink moving without
-#     its pin file following.
+# 6d. The gitlink cross-check must still run even though the submodules are
+#     removed. It is skipped under PINS_FILE (the fixtures above override the
+#     table with throwaway local remotes), so the real tree is the only thing
+#     that can exercise the index-based half-removed-submodule refusal.
 cross="$(GITHUB_STEP_SUMMARY= "$SCRIPT" 2>&1 )"; cross_rc=$?
 if printf '%s' "$cross" | grep -q "gitlink agrees"; then
     echo "ok    gitlink/env cross-check runs and agrees"
@@ -158,9 +156,16 @@ fi
 #
 #     The mutation is applied to a copy of the index via GIT_INDEX_FILE, so the
 #     real index is never touched - this is the one check that would otherwise
-#     require moving submodule directories around to test.
+#     require moving submodule directories around to test. Ask git for the
+#     index path instead of assuming $REPO/.git/index: in a linked worktree,
+#     .git is a file and the real index lives under the main repository's
+#     .git/worktrees/<name>/ directory.
 HALF="$(mktemp -d "${TMPDIR:-/tmp}/halfsub.XXXXXX")"
-cp "$REPO/.git/index" "$HALF/index"
+INDEX_FILE="$(cd "$REPO" && git rev-parse --path-format=absolute --git-path index)"
+if ! cp "$INDEX_FILE" "$HALF/index"; then
+    echo "FAIL  could not copy the index from $INDEX_FILE"
+    fails=$((fails + 1))
+fi
 
 run_with_index() { # run_with_index <index-file>
     ( cd "$REPO" && GITHUB_STEP_SUMMARY= GIT_INDEX_FILE="$1" "$SCRIPT" 2>&1 )
