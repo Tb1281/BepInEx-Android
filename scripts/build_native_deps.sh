@@ -235,11 +235,10 @@ install_so() {
     cp "$found" "$OUT/$so"
     # Strip debug info only (symtab stays). DWARF carries the absolute build
     # directory (DW_AT_comp_dir), so unstripped objects differ per checkout
-    # even with -ffile-prefix-map, which covers __FILE__ but not every
-    # debug section a project's own flags may emit (measured on the previous
-    # Pine build; libdobby ships none and liblsplant is stripped by its own
-    # post-build step, so both are unaffected). AGP strips at packaging
-    # anyway, so nothing at runtime can observe the difference.
+    # unless the build dir is prefix-mapped as well (see the LSPlant
+    # configure below: its build-id is hashed over the unstripped bytes, so
+    # stripping alone leaves the shipped .so checkout-dependent). AGP strips
+    # at packaging anyway, so nothing at runtime can observe the difference.
     "$LLVM_STRIP" -g "$OUT/$so"
     echo "  $so <- ${found#$ROOT/}"
 }
@@ -297,10 +296,20 @@ if(NOT TARGET cxx::cxx)
     include("$LIBCXX_MODULE/include/prefab/cmake-config.cmake")
 endif()
 EOF
+# LSPlant also needs the binary dir mapped, not just the source dir.
+# cmake_configure maps $WORK (sources) only; the LSPlant build emits DWARF
+# whose DW_AT_comp_dir is the binary dir ($BUILD/lsplant), outside $WORK.
+# Stripping does not save reproducibility here: the GNU build-id is hashed
+# at link time over the unstripped bytes, so the shipped .so still differed
+# per checkout (measured: local vs CI builds differed in exactly the 20
+# build-id bytes and nothing else). A later -D replaces cmake_configure's
+# value wholesale, so the $WORK map is repeated alongside the $BUILD one.
 cmake_configure lsplant "$WORK/lsplant/$(pin_field "$ROOT/provenance/lsplant.env" LSPLANT_CMAKE_SOURCE_SUBDIR)" \
     -DANDROID_STL=c++_static \
     -Dcxx_DIR="$WORK/libcxx-cmake" \
-    -DDEBUG_SYMBOLS_PATH="$BUILD/lsplant/symbols"
+    -DDEBUG_SYMBOLS_PATH="$BUILD/lsplant/symbols" \
+    -DANDROID_COMPILER_FLAGS="-ffile-prefix-map=$WORK/= -ffile-prefix-map=$BUILD/=" \
+    -DANDROID_COMPILER_FLAGS_CXX="-ffile-prefix-map=$WORK/= -ffile-prefix-map=$BUILD/="
 install_so lsplant liblsplant.so
 
 echo
