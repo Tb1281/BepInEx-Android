@@ -54,9 +54,9 @@ fi
 #    Values are re-read from the pin files rather than typed, so a pin bump
 #    without an SBOM change fails here instead of passing on stale text.
 pins_ok=1
-for env in bepinex dobby pine monomod il2cppinterop dotnet-runtime; do
+for env in bepinex dobby lsplant monomod il2cppinterop dotnet-runtime; do
     while IFS='=' read -r k v; do
-        case "$k" in UPSTREAM_COMMIT|PINE_SUBMODULE_XZ_COMMIT|DOTNET_RUNTIME_VERSION|MONOMOD_PACKAGE_VERSION|PACKAGE_VERSION|DOTNET_RUNTIME_PACK_SHA256) ;;
+        case "$k" in UPSTREAM_COMMIT|LSPLANT_SUBMODULE_DEXBUILDER_COMMIT|LSPLANT_SUBMODULE_PHASHMAP_COMMIT|DOTNET_RUNTIME_VERSION|MONOMOD_PACKAGE_VERSION|PACKAGE_VERSION|DOTNET_RUNTIME_PACK_SHA256) ;;
             *) continue ;;
         esac
         v="$(printf '%s' "$v" | tr -d "\"' ")"
@@ -65,7 +65,7 @@ for env in bepinex dobby pine monomod il2cppinterop dotnet-runtime; do
             echo "        missing from SBOM: $env $k=$v"
             pins_ok=0
         fi
-    done < <(grep -E '^(UPSTREAM_COMMIT|PINE_SUBMODULE_XZ_COMMIT|DOTNET_RUNTIME_VERSION|MONOMOD_PACKAGE_VERSION|PACKAGE_VERSION|DOTNET_RUNTIME_PACK_SHA256)=' "$REPO/provenance/$env.env")
+    done < <(grep -E '^(UPSTREAM_COMMIT|LSPLANT_SUBMODULE_DEXBUILDER_COMMIT|LSPLANT_SUBMODULE_PHASHMAP_COMMIT|DOTNET_RUNTIME_VERSION|MONOMOD_PACKAGE_VERSION|PACKAGE_VERSION|DOTNET_RUNTIME_PACK_SHA256)=' "$REPO/provenance/$env.env")
 done
 # The commit values above are long SHAs; also assert the short, human-visible
 # package versions appear as versionInfo, not only buried in a comment.
@@ -80,14 +80,14 @@ if [ "$pins_ok" = 1 ]; then ok "all six pins present with exact values"; else fa
 for f in "$REPO"/provenance/*.env; do
     base="$(basename "$f" .env)"
     case "$base" in
-        bepinex|dobby|pine|monomod|il2cppinterop|dotnet-runtime) ok "$base.env is a required SBOM input" ;;
+        bepinex|dobby|lsplant|monomod|il2cppinterop|dotnet-runtime) ok "$base.env is a required SBOM input" ;;
         *) fail "unexpected pin file $base.env is not a declared SBOM input" ;;
     esac
 done
 
 # 5. Gradle catalog entries appear (a sample, not the whole list: the full
 #    list is asserted by the count below).
-if grep -qF "androidx.core:core-ktx" "$OUT" && grep -qF "top.canyie.pine:core" "$OUT"; then
+if grep -qF "androidx.core:core-ktx" "$OUT" && grep -qF "org.jetbrains.kotlinx:kotlinx-coroutines-android" "$OUT"; then
     ok "Gradle catalog libraries appear"
 else
     fail "Gradle catalog libraries missing"
@@ -96,15 +96,15 @@ fi
 # 6. missing pin file fails closed and names the file.
 mkdir -p "$FIX/prov"
 cp "$REPO"/provenance/*.env "$FIX/prov/"
-rm "$FIX/prov/pine.env"
+rm "$FIX/prov/lsplant.env"
 if python3 "$GEN" --provenance-dir "$FIX/prov" --output "$FIX/nope.json" >/dev/null 2>&1; then
     fail "missing pin file exited 0 (fail-open)"
 else
     out="$(python3 "$GEN" --provenance-dir "$FIX/prov" --output "$FIX/nope.json" 2>&1 || true)"
-    if printf '%s' "$out" | grep -qF "pine.env"; then
-        ok "missing pin file fails and names pine.env"
+    if printf '%s' "$out" | grep -qF "lsplant.env"; then
+        ok "missing pin file fails and names lsplant.env"
     else
-        fail "missing pin file failed without naming pine.env"
+        fail "missing pin file failed without naming lsplant.env"
     fi
 fi
 

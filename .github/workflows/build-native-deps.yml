@@ -8,10 +8,8 @@ on:
       # stopped being read from the submodules; keeping it would trigger a build
       # on a gitlink bump that no longer affects what is compiled.
       - 'provenance/dobby.env'
-      - 'provenance/pine.env'
+      - 'provenance/lsplant.env'
       - 'references/dobby-android-log-include.patch'
-      - 'references/pine-scoped-local-ref.patch'
-      - 'references/pine-ndk-cxx-package.patch'
       - 'scripts/build_native_deps.sh'
       - 'scripts/check_elf_alignment.sh'
       - 'provenance/SOURCES.md'
@@ -49,11 +47,12 @@ jobs:
             *.actions.githubusercontent.com
             *.blob.core.windows.net
             dl.google.com
+            repo1.maven.org
             fulcio.sigstore.dev
             rekor.sigstore.dev
 
       # No submodules: build_native_deps.sh clones dobby and Pine from the pins in
-      # provenance/dobby.env and provenance/pine.env, and asserts each clone landed
+      # provenance/dobby.env and provenance/lsplant.env, and asserts each clone landed
       # on the pinned commit before compiling anything.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -61,7 +60,7 @@ jobs:
         run: |
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "ndk;30.0.16248370" "cmake;3.22.1"
+          sdkmanager "ndk;30.0.16248370" "cmake;3.30.3"
 
       - name: Build dobby + Pine from source
         env:
@@ -79,12 +78,12 @@ jobs:
         run: |
           ./scripts/check_elf_alignment.sh \
             launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so \
-            launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
+            launcher/app/src/main/jniLibs/arm64-v8a/liblsplant.so
 
       - name: Record checksums
         run: |
           cd launcher/app/src/main/jniLibs/arm64-v8a
-          sha256sum libdobby.so libpine.so > "$GITHUB_WORKSPACE/native-deps.sha256"
+          sha256sum libdobby.so liblsplant.so > "$GITHUB_WORKSPACE/native-deps.sha256"
           cat "$GITHUB_WORKSPACE/native-deps.sha256"
 
       # Attest before upload, not after: the consumer's gate checks that these
@@ -93,7 +92,7 @@ jobs:
       # consumer can verify.
       #
       # attestations: write is required, and without it this step produces no
-      # statement and the consumer fails closed on libdobby.so and libpine.so.
+      # statement and the consumer fails closed on libdobby.so and liblsplant.so.
       # That is deliberate - a missing attestation must stop the shipping path,
       # not be logged and stepped over.
       - name: Attest the hook engines
@@ -102,14 +101,14 @@ jobs:
           bundle-output: native-deps.attestation.json
           paths: |
             launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so
-            launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
+            launcher/app/src/main/jniLibs/arm64-v8a/liblsplant.so
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: native-deps
           path: |
             launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so
-            launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
+            launcher/app/src/main/jniLibs/arm64-v8a/liblsplant.so
             native-deps.sha256
             native-deps.attestation.json
           retention-days: 1

@@ -86,7 +86,7 @@ check 1 "malformed pin line fails" "malformed pin line"
 out="$(GITHUB_STEP_SUMMARY= "$SCRIPT" --print-table 2>&1)"; rc=$?
 ok=1
 [ "$rc" -eq 0 ] || ok=0
-for name in bepinex pine dobby monomod il2cppinterop; do
+for name in bepinex lsplant dobby monomod il2cppinterop; do
     printf '%s' "$out" | grep -q "^${name}|" || ok=0
 done
 printf '%s' "$out" | grep -q 'provenance' || true
@@ -102,7 +102,7 @@ fi
 #     provenance/*.env would pick up an unrelated file there, and would drop a
 #     renamed pin file without complaint; either would leave this passing while
 #     the report watched something else. Assert the set literally.
-expected_pins="bepinex pine dobby monomod il2cppinterop"
+expected_pins="bepinex lsplant dobby monomod il2cppinterop"
 actual_pins="$(printf '%s' "$out" | awk -F'|' '/\|/ {print $1}' | tr '\n' ' ' | sed 's/ *$//')"
 if [ "$actual_pins" = "$expected_pins" ]; then
     echo "ok    all five pins derived, none extra and none missing"

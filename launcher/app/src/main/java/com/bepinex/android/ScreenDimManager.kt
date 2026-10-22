@@ -107,7 +107,7 @@ class ScreenDimManager : Application.ActivityLifecycleCallbacks {
     }
 
     /**
-     * Called from Pine hook on [Activity.onUserInteraction].
+     * Called from the hook-engine hook on [Activity.onUserInteraction].
      * Restores brightness if dimmed and resets the idle timer.
      */
     fun onUserInteraction() {

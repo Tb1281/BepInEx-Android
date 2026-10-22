@@ -12,14 +12,15 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import com.bepinex.android.BepInExLog
-import top.canyie.pine.Pine
-import top.canyie.pine.callback.MethodHook
+import com.bepinex.android.hooks.HookEngine
+import com.bepinex.android.hooks.CallFrame
+import com.bepinex.android.hooks.MethodHook
 import java.lang.reflect.Constructor
 import java.lang.reflect.Field
 import java.util.concurrent.CountDownLatch
 
 /**
- * Pine hooks on UnityPlayer constructor(s).
+ * LSPlant hooks on UnityPlayer constructor(s).
  *
  * The hook:
  *   1. Wraps the Activity context with [GameContextWrapper] to redirect
@@ -58,7 +59,7 @@ object UnityPlayerHooks {
     )
 
     /**
-     * Install Pine hooks on all UnityPlayer constructors that take a Context.
+     * Install LSPlant hooks on all UnityPlayer constructors that take a Context.
      *
      * @param gameContext The game's package context (from createPackageContext)
      * @param blockUnityKill Whether startup calls to UnityPlayer.kill() should be blocked
@@ -115,11 +116,11 @@ object UnityPlayerHooks {
         for (constructor in constructors) {
             BepInExLog.i("Hooking UnityPlayer constructor: $constructor")
 
-            Pine.hook(constructor, object : MethodHook() {
+            HookEngine.hook(constructor, object : MethodHook() {
                 private var activity: Activity? = null
                 private var loadingOverlay: View? = null
 
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+                override fun beforeCall(callFrame: CallFrame) {
                     try {
                         val firstArg = callFrame.args[0]
                         if (firstArg !is Activity) {
@@ -140,7 +141,7 @@ object UnityPlayerHooks {
                     }
                 }
 
-                override fun afterCall(callFrame: Pine.CallFrame) {
+                override fun afterCall(callFrame: CallFrame) {
                     val act = activity ?: return
 
                     // Hide loading overlay
@@ -196,8 +197,8 @@ object UnityPlayerHooks {
 
             killMethod.isAccessible = true
             killInitTimestamp = System.currentTimeMillis()
-            Pine.hook(killMethod, object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(killMethod, object : MethodHook() {
+                override fun beforeCall(callFrame: CallFrame) {
                     val elapsed = System.currentTimeMillis() - killInitTimestamp
                     if (elapsed < KILL_BLOCK_WINDOW_MS) {
                         BepInExLog.i("UnityPlayer.kill() intercepted at ${elapsed}ms")

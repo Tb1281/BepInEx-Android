@@ -3,7 +3,7 @@
 |---|---|---|
 | BepInEx framework (`BepInEx.Android.zip`) | [BepInEx/BepInEx]({{bepinex.url}}), {{bepinex.ref}} + `{{bepinex.patch_queue}}` via `build-bepinex` | `{{bepinex.commit}}` |
 | `libdobby.so` | [canyie/dobby]({{dobby.url}}), {{dobby.ref}} via `build-native-deps` | `{{dobby.commit}}` |
-| `libpine.so` | [canyie/Pine]({{pine.url}}), {{pine.ref}} via `build-native-deps` | `{{pine.commit}}`, nested xz-embedded `{{pine.xz_commit}}` |
+| `liblsplant.so` | [LSPosed/LSPlant]({{lsplant.url}}), {{lsplant.ref}} via `build-native-deps` | `{{lsplant.commit}}`, nested DexBuilder `{{lsplant.dexbuilder_commit}}`, nested parallel_hashmap `{{lsplant.phashmap_commit}}` |
 | MonoMod packages (`{{monomod.package_version}}`) | [MonoMod/MonoMod]({{monomod.url}}), {{monomod.ref}} + `{{monomod.patch_file}}` | `{{monomod.commit}}` |
 | Il2CppInterop packages (`{{il2cppinterop.package_version}}`) | [BepInEx/Il2CppInterop]({{il2cppinterop.url}}), {{il2cppinterop.ref}} + `{{il2cppinterop.patch_file}}` | `{{il2cppinterop.commit}}` |
 | `libcoreclr.so`, `libclrjit.so`, PALs, BCL (`dotnet.zip`) | `{{dotnet.pack}}` {{dotnet.version}} from nuget.org via `fetch-runtime` | pack SHA-256 `{{dotnet.pack_sha256}}` |

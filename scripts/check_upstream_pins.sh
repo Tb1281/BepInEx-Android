@@ -38,7 +38,7 @@
 #
 # There is one shape of pin in this repository:
 #
-#   provenance/*.env      BepInEx, Pine, dobby, MonoMod, Il2CppInterop (and
+#   provenance/*.env      BepInEx, LSPlant, dobby, MonoMod, Il2CppInterop (and
 #                         the runtime, watched separately by
 #                         scripts/check_runtime_pin.sh)
 #
@@ -92,7 +92,7 @@ PRINT_TABLE=0
 
 PIN_ENV_FILES=(
     provenance/bepinex.env
-    provenance/pine.env
+    provenance/lsplant.env
     provenance/dobby.env
     provenance/monomod.env
     provenance/il2cppinterop.env

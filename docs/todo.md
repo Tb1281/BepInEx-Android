@@ -67,7 +67,7 @@
 - [x] Release notes and assets: install/upgrade, known issues, certificate fingerprint, GPL/LGPL notices, source offer.
 - [x] Repository protections applied: `main` required checks, the `release-tags` ruleset excluding `verified`, the `release` environment restricted to `main`/`v*`, and the default workflow token read-only with Actions PR creation for the sync path (`scripts/apply_repo_settings.sh --apply`, audited 2026-10-20).
 - [x] `v0.0.0-rc1` end-to-end rehearsal and rollback runbook (pre-release verified with nine assets; promotion rejected; advisory retained; 2026-10-20).
-- [ ] Pine license review (stable-release blocker; status quo recorded in [ADR-0019](adr/0019-retain-gpl-and-pine.md)).
+- [x] Pine license review — closed by replacing Pine with LSPlant (LGPL-3.0); see the ADR superseding [ADR-0019](adr/0019-retain-gpl-and-pine.md).
 
 ### Priority 1: Trust
 

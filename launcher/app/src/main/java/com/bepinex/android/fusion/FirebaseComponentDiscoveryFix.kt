@@ -5,8 +5,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import com.bepinex.android.BepInExLog
-import top.canyie.pine.Pine
-import top.canyie.pine.callback.MethodHook
+import com.bepinex.android.hooks.HookEngine
+import com.bepinex.android.hooks.CallFrame
+import com.bepinex.android.hooks.MethodHook
 
 /**
  * Supplies Firebase's component registrars to a hosted game, using the game's own
@@ -136,8 +137,8 @@ object FirebaseComponentDiscoveryFix {
             if (m.name != "getInstance") continue
             try {
                 m.isAccessible = true
-                Pine.hook(m, object : MethodHook() {
-                    override fun afterCall(callFrame: Pine.CallFrame) {
+                HookEngine.hook(m, object : MethodHook() {
+                    override fun afterCall(callFrame: CallFrame) {
                         try {
                             val t = if (callFrame.hasThrowable()) callFrame.throwable else null
                             BepInExLog.i(
@@ -180,8 +181,8 @@ object FirebaseComponentDiscoveryFix {
 
         try {
             retrieve.isAccessible = true
-            Pine.hook(retrieve, object : MethodHook() {
-                override fun afterCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(retrieve, object : MethodHook() {
+                override fun afterCall(callFrame: CallFrame) {
                     try {
                         // Only ever fill in a result that came back empty. Anything else
                         // is a real answer and is left untouched.
@@ -236,8 +237,8 @@ object FirebaseComponentDiscoveryFix {
 
         try {
             fromResource.isAccessible = true
-            Pine.hook(fromResource, object : MethodHook() {
-                override fun afterCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(fromResource, object : MethodHook() {
+                override fun afterCall(callFrame: CallFrame) {
                     try {
                         val original = callFrame.result
                         val hadThrowable = callFrame.hasThrowable() && callFrame.throwable != null
@@ -250,7 +251,7 @@ object FirebaseComponentDiscoveryFix {
                         }
 
                         val res = gameContext?.resources
-                            ?: (callFrame.args?.firstOrNull() as? Context)?.resources
+                            ?: (callFrame.args.firstOrNull() as? Context)?.resources
 
                         fun readString(name: String): String? {
                             if (res == null) return null
