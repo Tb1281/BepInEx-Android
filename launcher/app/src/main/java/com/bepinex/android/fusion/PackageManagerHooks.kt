@@ -2,19 +2,20 @@ package com.bepinex.android.fusion
 
 import android.content.pm.PackageManager
 import com.bepinex.android.BepInExLog
-import top.canyie.pine.Pine
-import top.canyie.pine.callback.MethodHook
+import com.bepinex.android.hooks.HookEngine
+import com.bepinex.android.hooks.CallFrame
+import com.bepinex.android.hooks.MethodHook
 import java.lang.reflect.Method
 
 /**
- * Pine hooks on PackageManager to suppress PlayCore AssetPackDelivery errors.
+ * LSPlant hooks on PackageManager to suppress PlayCore AssetPackDelivery errors.
  *
  * Some Unity games use Google Play Asset Delivery. When running outside
  * the official Play Store environment, calls to PlayCore components fail
  * with "does not exist" errors. We suppress these errors so the game
  * can continue running.
  *
- * Note: Pine cannot hook abstract methods, so we find the concrete
+ * Note: the hook engine cannot hook abstract methods, so we find the concrete
  * implementation (ApplicationPackageManager) and hook that.
  *
  * @see PackageManagerHooks.java in FusionCore main branch
@@ -59,8 +60,8 @@ object PackageManagerHooks {
 
             BepInExLog.i("Hooking PM: ${pmClass.name}.${method.name}")
 
-            Pine.hook(method, object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(method, object : MethodHook() {
+                override fun beforeCall(callFrame: CallFrame) {
                     try {
                         val componentName = callFrame.args[0] as? android.content.ComponentName
                         val className = componentName?.className ?: return
@@ -75,7 +76,7 @@ object PackageManagerHooks {
                     }
                 }
 
-                override fun afterCall(callFrame: Pine.CallFrame) {
+                override fun afterCall(callFrame: CallFrame) {
                     if (callFrame.hasThrowable()) {
                         val throwable = callFrame.throwable
                         if (throwable is IllegalArgumentException &&

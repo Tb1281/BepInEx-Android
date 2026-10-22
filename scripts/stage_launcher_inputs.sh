@@ -14,7 +14,7 @@
 #   <framework-zip>  output of ./scripts/package_bepinex_android.sh
 #                    (out/BepInEx.Android.zip)
 #
-# Hook engines (libdobby.so, libpine.so) are written straight into jniLibs by
+# Hook engines (libdobby.so, liblsplant.so) are written straight into jniLibs by
 # ./scripts/build_native_deps.sh, so they are only asserted here, not copied.
 # libc++_shared.so comes from ANDROID_NDK_HOME (or the pinned NDK under
 # ANDROID_HOME), mirroring the CI install step.
@@ -30,7 +30,7 @@ ASSETS="$ROOT/launcher/app/src/main/assets"
 for f in "$RUNTIME_DIR/native/libcoreclr.so" "$RUNTIME_DIR/dotnet.zip" "$FRAMEWORK_ZIP"; do
     test -f "$f" || { echo "[FAIL] missing input: $f" >&2; exit 1; }
 done
-for f in "$JNI/libdobby.so" "$JNI/libpine.so"; do
+for f in "$JNI/libdobby.so" "$JNI/liblsplant.so"; do
     test -f "$f" || { echo "[FAIL] missing hook engine: $f (run scripts/build_native_deps.sh)" >&2; exit 1; }
 done
 

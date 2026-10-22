@@ -2,12 +2,13 @@ package com.bepinex.android.fusion
 
 import android.util.Log
 import com.bepinex.android.BepInExLog
-import top.canyie.pine.Pine
-import top.canyie.pine.callback.MethodHook
+import com.bepinex.android.hooks.HookEngine
+import com.bepinex.android.hooks.CallFrame
+import com.bepinex.android.hooks.MethodHook
 import java.lang.reflect.Method
 
 /**
- * Manages native library loading redirects via Pine hooks on
+ * Manages native library loading redirects via LSPlant hooks on
  * ClassLoader.findLibrary().
  *
  * ## How it works (FusionCore main branch)
@@ -65,7 +66,7 @@ object NativeLibraryManager {
     }
 
     /**
-     * Install the findLibrary Pine hook.
+     * Install the findLibrary LSPlant hook.
      *
      * Must be called BEFORE UnityPlayer is constructed, because UnityPlayer's
      * constructor triggers System.loadLibrary("main") which calls findLibrary.
@@ -76,8 +77,8 @@ object NativeLibraryManager {
 
         BepInExLog.i("Hooking findLibrary: ${findLibraryMethod.declaringClass.name}.${findLibraryMethod.name}")
 
-        Pine.hook(findLibraryMethod, object : MethodHook() {
-            override fun beforeCall(callFrame: Pine.CallFrame) {
+        HookEngine.hook(findLibraryMethod, object : MethodHook() {
+            override fun beforeCall(callFrame: CallFrame) {
                 val libName = callFrame.args[0].toString()
                 BepInExLog.i("findLibrary: $libName")  // INFO level for debugging
 
@@ -112,7 +113,7 @@ object NativeLibraryManager {
                 }
             }
 
-            override fun afterCall(callFrame: Pine.CallFrame) {
+            override fun afterCall(callFrame: CallFrame) {
                 if (callFrame.hasThrowable()) {
                     Log.w(TAG, "findLibrary threw for ${callFrame.args[0]}", callFrame.throwable)
                 }

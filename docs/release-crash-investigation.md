@@ -95,6 +95,23 @@ those namespaces never see game-loader definitions. So Database embedded
 init still aborts on the production path while debuggable/testing-branch
 runs never enter it.
 
+**Resolved 2026-10-22.** The residual was traced during the LSPlant
+migration (ADR-0021), under which the failure became deterministic. The
+blocker was not the private namespaces: `FirebaseBridgeLoader.defineJar`
+defined the extracted bridge jar's classes in `DexFile.entries()` order,
+which is alphabetical, so `CppChildEventListener` was always attempted
+before its superclass `CppEventListener`. That first failed define is
+sticky in ART — every later retry of the same class (later passes, fresh
+DexFiles, other threads) fails with the recorded linkage error, even
+after the superclass is defined — so the jar never got past 12 of 16
+defines and Database init kept aborting. Under Pine the request pattern
+happened to mask it (a second request reached 16). The fix defines jar
+classes in topological order (superclasses and interfaces first),
+parsed from the jar's own `class_defs`; the database jar now defines
+16/16, `FirebaseDatabase.getInstance` succeeds, and repeated boots show
+no new tombstones. The upstream report (#1936) stands for the C++ side;
+this residual was ours.
+
 ## 7. Options
 
 1. **Observe in production use** (recommended next step): the testing branch

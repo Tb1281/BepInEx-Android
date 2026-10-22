@@ -15,8 +15,9 @@ import android.widget.Toast
 import com.bepinex.android.fusion.*
 import com.bepinex.android.log.LogOverlayService
 import com.bepinex.android.settings.AppSettings
-import top.canyie.pine.Pine
-import top.canyie.pine.callback.MethodHook
+import com.bepinex.android.hooks.HookEngine
+import com.bepinex.android.hooks.CallFrame
+import com.bepinex.android.hooks.MethodHook
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -24,7 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Bootstrap activity that injects BepInEx into the target game process
- * via Pine hooks, custom libmain.so/libfusion.so, and CoreCLR bootstrap.
+ * via LSPlant hooks, custom libmain.so/libfusion.so, and CoreCLR bootstrap.
  */
 class BootstrapActivity : Activity() {
 
@@ -154,9 +155,15 @@ class BootstrapActivity : Activity() {
         floatingLogEnabled = intent.getBooleanExtra(EXTRA_FLOATING_LOG_ENABLED, false)
         preparedConfig = prepareFusionState(targetPackage, gameContext, useOriginalLibUnity)
 
-        // 4. Install base Pine hooks
+        // 4. Install base hook-engine hooks
         updateProgress(getString(R.string.bootstrap_status_installing_hooks), "", 70)
-        BepInExLog.i("Installing Pine hooks...")
+        BepInExLog.i("Installing hook engine hooks (LSPlant)...")
+        if (!HookEngine.isInitialized()) {
+            // Every HookEngine.hook below would return false and the process
+            // would come up unhooked and unredirected; say so once, loudly,
+            // instead of letting each site fail in its own words.
+            BepInExLog.e("LSPlant failed to initialize; Java hooks will not be installed")
+        }
         try {
             // Bridge first, hooks second: the bridge's one-time game-dex
             // warmup (~3k resolutions) runs unhooked, then the loadClass
@@ -251,8 +258,8 @@ class BootstrapActivity : Activity() {
 
             onCreateMethod.isAccessible = true
 
-            Pine.hook(onCreateMethod, object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(onCreateMethod, object : MethodHook() {
+                override fun beforeCall(callFrame: CallFrame) {
                     if (callFrame.thisObject !is Activity) return
 
                     val activity = callFrame.thisObject as Activity
@@ -277,7 +284,7 @@ class BootstrapActivity : Activity() {
                     catch (t: Throwable) { BepInExLog.e("initializeFusion failed", t) }
                 }
 
-                override fun afterCall(callFrame: Pine.CallFrame) {
+                override fun afterCall(callFrame: CallFrame) {
                     if (callFrame.thisObject !is Activity) return
                     val activity = callFrame.thisObject as Activity
                     
@@ -315,15 +322,15 @@ class BootstrapActivity : Activity() {
     // Screen dim: hook onUserInteraction
 
     /**
-     * Hooks [Activity.onUserInteraction] via Pine so that
+     * Hooks [Activity.onUserInteraction] via the hook engine so that
      * [ScreenDimManager] can detect user touch events and
      * reset the idle-dim timer.
      */
     private fun installUserInteractionHook() {
         try {
             val method = Activity::class.java.getDeclaredMethod("onUserInteraction")
-            Pine.hook(method, object : MethodHook() {
-                override fun afterCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(method, object : MethodHook() {
+                override fun afterCall(callFrame: CallFrame) {
                     ScreenDimManager.instance?.onUserInteraction()
                 }
             })

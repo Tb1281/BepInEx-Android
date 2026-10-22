@@ -11,8 +11,9 @@ import android.os.Bundle
 import com.bepinex.android.BepInExLog
 import com.bepinex.android.StubActivity
 import java.lang.reflect.Method
-import top.canyie.pine.Pine
-import top.canyie.pine.callback.MethodHook
+import com.bepinex.android.hooks.HookEngine
+import com.bepinex.android.hooks.CallFrame
+import com.bepinex.android.hooks.MethodHook
 
 /**
  * Hooks [Instrumentation.execStartActivity] and [Instrumentation.newActivity] so
@@ -120,13 +121,13 @@ object InstrumentationHooks {
 
         try {
             hookAllMethodsByName(Instrumentation::class.java, "execStartActivity", object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+                override fun beforeCall(callFrame: CallFrame) {
                     handleExecStartBeforeCall(callFrame)
                 }
             })
 
             hookAllMethodsByName(Instrumentation::class.java, "newActivity", object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+                override fun beforeCall(callFrame: CallFrame) {
                     handleNewActivityBeforeCall(callFrame)
                 }
             })
@@ -206,13 +207,13 @@ object InstrumentationHooks {
         for (method in methods) {
             try {
                 method.isAccessible = true
-                Pine.hook(method, object : MethodHook() {
-                    override fun beforeCall(callFrame: Pine.CallFrame) {
+                HookEngine.hook(method, object : MethodHook() {
+                    override fun beforeCall(callFrame: CallFrame) {
                         val activity = callFrame.thisObject as? Activity
                         if (activity != null) {
                             GameResourceContext.wrapApplication(activity.application, gameContext)
                         }
-                        val args = callFrame.args ?: return
+                        val args = callFrame.args
                         val existing = args.firstOrNull() as? Context ?: return
                         if (existing is GameResourceContext) return
                         args[0] = GameResourceContext(existing, gameContext, storageContext)
@@ -245,7 +246,7 @@ object InstrumentationHooks {
         try {
             for (method in clazz.declaredMethods) {
                 if (method.name == methodName) {
-                    Pine.hook(method, hook)
+                    HookEngine.hook(method, hook)
                 }
             }
         } catch (e: SecurityException) {
@@ -255,14 +256,14 @@ object InstrumentationHooks {
 
     private fun hookActivityOnCreate() {
         val orientationHook = object : MethodHook() {
-            override fun beforeCall(callFrame: Pine.CallFrame) {
+            override fun beforeCall(callFrame: CallFrame) {
                 val activity = callFrame.thisObject as? Activity ?: return
                 applyTargetOrientation(activity)
             }
         }
         try {
-            Pine.hook(Activity::class.java.getDeclaredMethod("onCreate", Bundle::class.java), orientationHook)
-            Pine.hook(Activity::class.java.getDeclaredMethod("onResume"), orientationHook)
+            HookEngine.hook(Activity::class.java.getDeclaredMethod("onCreate", Bundle::class.java), orientationHook)
+            HookEngine.hook(Activity::class.java.getDeclaredMethod("onResume"), orientationHook)
         } catch (e: Exception) {
             BepInExLog.e("Failed to hook Activity lifecycle for orientation: ${e.message}", e)
         }
@@ -292,9 +293,9 @@ object InstrumentationHooks {
         ) ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
-    private fun handleExecStartBeforeCall(callFrame: Pine.CallFrame) {
+    private fun handleExecStartBeforeCall(callFrame: CallFrame) {
         try {
-            val args = callFrame.args ?: return
+            val args = callFrame.args
             val intentIdx = args.indexOfFirst { it is Intent }
             if (intentIdx < 0) {
                 BepInExLog.e("No intent found in execStartActivity")
@@ -340,9 +341,9 @@ object InstrumentationHooks {
         }
     }
 
-    private fun handleNewActivityBeforeCall(callFrame: Pine.CallFrame) {
+    private fun handleNewActivityBeforeCall(callFrame: CallFrame) {
         try {
-            val args = callFrame.args ?: return
+            val args = callFrame.args
             var intentIdx = -1
             var strIdx = -1
             for (i in args.indices) {

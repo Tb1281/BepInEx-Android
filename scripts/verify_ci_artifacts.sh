@@ -27,10 +27,10 @@
 # WHAT IT DOES NOT COVER, stated so nobody assumes otherwise
 #
 #   - The bytes inside the packaged APK. AGP strips native libraries while
-#     packaging, so for libdobby.so, libpine.so and libc++_shared.so the shipped
+#     packaging, so for libdobby.so, liblsplant.so and libc++_shared.so the shipped
 #     bytes are NOT the bytes recorded here - measured, in docs/progress.md
-#     under the AGP native-strip note: libpine.so goes from
-#     926,544 bytes to 71,912. This gate covers the inputs to packaging, not the
+#     under the AGP native-strip note (on libpine.so, the hook engine
+#     shipped at the time): 926,544 bytes to 71,912. This gate covers the inputs to packaging, not the
 #     package. It is still worth having: it is the last point at which a mismatch
 #     is attributable to a named producing run rather than to packaging, and the
 #     only place a substituted artifact is compared to anything at all.
@@ -86,7 +86,7 @@ echo "============================================================"
 # conventions, because each writes from the directory it happened to stand in:
 #
 #   bepinex-managed.sha256 : launcher/app/src/main/assets/BepInEx.Android.zip
-#   native-deps.sha256     : libdobby.so, libpine.so
+#   native-deps.sha256     : libdobby.so, liblsplant.so
 #   coreclr.sha256        : libcoreclr.so, ... then out/runtime/dotnet.zip
 #
 # The consumer, though, installs by kind: every .so into jniLibs, every archive

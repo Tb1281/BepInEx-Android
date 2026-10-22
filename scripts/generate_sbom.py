@@ -5,7 +5,7 @@ Generate an SPDX 2.3 source SBOM from this repository's pinned inputs.
 Why a source SBOM, and why this script instead of syft:
 
   The shipped APK is assembled from six pins in provenance/*.env (BepInEx,
-  dobby, Pine + nested xz-embedded, MonoMod, Il2CppInterop, .NET runtime),
+  dobby, LSPlant + nested DexBuilder/parallel_hashmap, MonoMod, Il2CppInterop, .NET runtime),
   the Gradle version catalog, and a pinned toolchain (AGP/Kotlin/NDK/CMake/
   .NET SDK/JDK). Those pins are the entire dependency list: nothing else is
   fetched at build time. A scanner such as syft inventories the *built*
@@ -62,7 +62,7 @@ TOOL = "Tool: BepInEx-generate_sbom"
 REQUIRED_ENV_FILES = (
     "bepinex.env",
     "dobby.env",
-    "pine.env",
+    "lsplant.env",
     "monomod.env",
     "il2cppinterop.env",
     "dotnet-runtime.env",
@@ -71,7 +71,7 @@ REQUIRED_ENV_FILES = (
 
 def parse_env_file(path):
     """Parse a shell-style KEY=VALUE file, honouring single-quoted multiline
-    values (PINE_PATCH_FILES, MONOMOD_COMPONENTS). Returns a dict."""
+    values (LSPLANT_PATCH_FILE, MONOMOD_COMPONENTS). Returns a dict."""
     values = {}
     with open(path, "r", encoding="utf-8") as fp:
         lines = fp.read().splitlines()
@@ -254,7 +254,7 @@ def main():
     try:
         bepinex = parse_env_file(os.path.join(prov, "bepinex.env"))
         dobby = parse_env_file(os.path.join(prov, "dobby.env"))
-        pine = parse_env_file(os.path.join(prov, "pine.env"))
+        lsplant = parse_env_file(os.path.join(prov, "lsplant.env"))
         monomod = parse_env_file(os.path.join(prov, "monomod.env"))
         interop = parse_env_file(os.path.join(prov, "il2cppinterop.env"))
         runtime = parse_env_file(os.path.join(prov, "dotnet-runtime.env"))
@@ -263,10 +263,12 @@ def main():
         bepinex_commit = require(bepinex, "UPSTREAM_COMMIT", "bepinex.env")
         dobby_url = require(dobby, "UPSTREAM_URL", "dobby.env")
         dobby_commit = require(dobby, "UPSTREAM_COMMIT", "dobby.env")
-        pine_url = require(pine, "UPSTREAM_URL", "pine.env")
-        pine_commit = require(pine, "UPSTREAM_COMMIT", "pine.env")
-        xz_url = require(pine, "PINE_SUBMODULE_XZ_URL", "pine.env")
-        xz_commit = require(pine, "PINE_SUBMODULE_XZ_COMMIT", "pine.env")
+        lsplant_url = require(lsplant, "UPSTREAM_URL", "lsplant.env")
+        lsplant_commit = require(lsplant, "UPSTREAM_COMMIT", "lsplant.env")
+        dexbuilder_url = require(lsplant, "LSPLANT_SUBMODULE_DEXBUILDER_URL", "lsplant.env")
+        dexbuilder_commit = require(lsplant, "LSPLANT_SUBMODULE_DEXBUILDER_COMMIT", "lsplant.env")
+        phashmap_url = require(lsplant, "LSPLANT_SUBMODULE_PHASHMAP_URL", "lsplant.env")
+        phashmap_commit = require(lsplant, "LSPLANT_SUBMODULE_PHASHMAP_COMMIT", "lsplant.env")
         monomod_url = require(monomod, "UPSTREAM_URL", "monomod.env")
         monomod_commit = require(monomod, "UPSTREAM_COMMIT", "monomod.env")
         monomod_ver = require(monomod, "MONOMOD_PACKAGE_VERSION", "monomod.env")
@@ -313,11 +315,14 @@ def main():
                                  bepinex_url, bepinex_commit))
     packages.append(upstream_pkg("SPDXRef-Upstream-Dobby", "canyie/dobby",
                                  dobby_url, dobby_commit))
-    packages.append(upstream_pkg("SPDXRef-Upstream-Pine", "canyie/Pine",
-                                 pine_url, pine_commit))
-    packages.append(upstream_pkg("SPDXRef-Upstream-Pine-XZ", "tukaani-project/xz-embedded",
-                                 xz_url, xz_commit,
-                                 comment="nested submodule compiled into libpine.so"))
+    packages.append(upstream_pkg("SPDXRef-Upstream-LSPlant", "LSPosed/LSPlant",
+                                 lsplant_url, lsplant_commit))
+    packages.append(upstream_pkg("SPDXRef-Upstream-LSPlant-DexBuilder", "LSPosed/DexBuilder",
+                                 dexbuilder_url, dexbuilder_commit,
+                                 comment="nested submodule compiled into liblsplant.so"))
+    packages.append(upstream_pkg("SPDXRef-Upstream-LSPlant-ParallelHashmap", "greg7mdp/parallel-hashmap",
+                                 phashmap_url, phashmap_commit,
+                                 comment="nested submodule of DexBuilder compiled into liblsplant.so"))
     packages.append(upstream_pkg("SPDXRef-Upstream-MonoMod", "MonoMod/MonoMod",
                                  monomod_url, monomod_commit))
     packages.append(upstream_pkg("SPDXRef-Upstream-Il2CppInterop", "BepInEx/Il2CppInterop",
@@ -371,7 +376,7 @@ def main():
         ("SPDXRef-Tool-AGP", "com.android.application (AGP)", versions.get("agp", "unknown")),
         ("SPDXRef-Tool-Kotlin", "org.jetbrains.kotlin", versions.get("kotlin", "unknown")),
         ("SPDXRef-Tool-NDK", "Android NDK", "30.0.16248370"),
-        ("SPDXRef-Tool-CMake", "CMake", "3.22.1"),
+        ("SPDXRef-Tool-CMake", "CMake", "3.30.3"),
         ("SPDXRef-Tool-DotnetSDK", ".NET SDK", sdk_version),
         ("SPDXRef-Tool-JDK", "Eclipse Temurin JDK", "17"),
     ]

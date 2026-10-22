@@ -5,8 +5,9 @@ import android.os.Looper
 import com.bepinex.android.BepInExLog
 import org.json.JSONArray
 import org.json.JSONObject
-import top.canyie.pine.Pine
-import top.canyie.pine.callback.MethodHook
+import com.bepinex.android.hooks.HookEngine
+import com.bepinex.android.hooks.CallFrame
+import com.bepinex.android.hooks.MethodHook
 import java.lang.reflect.Constructor
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -40,25 +41,24 @@ import java.lang.reflect.Method
  * ## Why the callbacks below allocate almost nothing
  *
  * The hooks fire on the game's own threads — binder and threadpool workers running
- * store SDK init bursts — while Pine holds the intercepted frame as raw register
- * addresses. Pine converts those addresses to references lazily inside its bridge
- * (`Pine.getObject` -> native `AddLocalRef`, no validity check), so anything that
- * moves objects between frame capture and conversion (a GC triggered by allocation
- * on that same thread) turns the raw address stale and ART dies in
+ * store SDK init bursts. Under Pine, the previous engine, the intercepted frame was
+ * held as raw register addresses and converted to references lazily inside its
+ * bridge (`Pine.getObject` -> native `AddLocalRef`, no validity check), so anything
+ * that moved objects between frame capture and conversion (a GC triggered by
+ * allocation on that same thread) turned the raw address stale and ART died in
  * `CheckReferenceResult` (SIGSEGV fault 0x60, observed 2026-10-12 on The Tower,
  * timing- and thread-variant, A/B-exonerated from the managed bytes).
  *
- * The callbacks therefore do no class/method/field LOOKUPS on the calling thread:
- * everything resolvable is resolved once in [install] (same loader, same search
- * order as before) and every per-class shape (dispatch methods, params fields,
- * id/type accessors) is cached on first use under one lock. What still allocates
- * per call is only what differs per call — the mock JSON payloads and the posted
- * Runnable — plus one small map key. Failure paths keep their logs; the hot path
- * stays quiet by design, not by accident.
- *
- * This shrinks the danger window; it does not close Pine's inherent race (raw
- * addresses predate the callback entirely). A full close needs GC safety in the
- * bridge itself, which lives upstream, not here.
+ * LSPlant, the current engine, closes that race structurally: its callbacks are
+ * ordinary Java methods holding real references, so there is no raw-address
+ * window. The allocation discipline below is retained anyway — the callbacks
+ * still do no class/method/field LOOKUPS on the calling thread: everything
+ * resolvable is resolved once in [install] (same loader, same search order as
+ * before) and every per-class shape (dispatch methods, params fields, id/type
+ * accessors) is cached on first use under one lock. What still allocates per
+ * call is only what differs per call — the mock JSON payloads and the posted
+ * Runnable — plus one small map key. Failure paths keep their logs; the hot
+ * path stays quiet by design, not by accident.
  */
 object PlayBillingFix {
 
@@ -74,7 +74,7 @@ object PlayBillingFix {
 
     /**
      * Everything resolvable without per-call data, resolved once in [install]
-     * with the game's class loader. Set before any `Pine.hook` call, so hook
+     * with the game's class loader. Set before any `HookEngine.hook` call, so hook
      * callbacks (which only run on later method entries) always see it via the
      * volatile write below. Null members mean "that billing shape is absent";
      * per-call code treats them exactly as today's failed lookups did.
@@ -283,8 +283,8 @@ object PlayBillingFix {
 
         try {
             isReadyMethod.isAccessible = true
-            Pine.hook(isReadyMethod, object : MethodHook() {
-                override fun afterCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(isReadyMethod, object : MethodHook() {
+                override fun afterCall(callFrame: CallFrame) {
                     callFrame.result = true
                 }
             })
@@ -301,8 +301,8 @@ object PlayBillingFix {
 
         try {
             startConnectionMethod.isAccessible = true
-            Pine.hook(startConnectionMethod, object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(startConnectionMethod, object : MethodHook() {
+                override fun beforeCall(callFrame: CallFrame) {
                     val listener = callFrame.args.firstOrNull() ?: return
                     BepInExLog.i("$TAG: startConnection intercepted on ${clazz.name}")
 
@@ -343,8 +343,8 @@ object PlayBillingFix {
 
         try {
             queryMethod.isAccessible = true
-            Pine.hook(queryMethod, object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(queryMethod, object : MethodHook() {
+                override fun beforeCall(callFrame: CallFrame) {
                     val params = callFrame.args.getOrNull(0) ?: return
                     val listener = callFrame.args.getOrNull(1) ?: return
                     BepInExLog.i("$TAG: queryProductDetailsAsync intercepted on ${clazz.name}")
@@ -515,8 +515,8 @@ object PlayBillingFix {
 
         try {
             queryMethod.isAccessible = true
-            Pine.hook(queryMethod, object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(queryMethod, object : MethodHook() {
+                override fun beforeCall(callFrame: CallFrame) {
                     val listener = callFrame.args.getOrNull(1) ?: return
                     BepInExLog.i("$TAG: queryPurchasesAsync intercepted on ${clazz.name}")
                     val okResult = createBillingResultOk(gameClassLoader)
@@ -554,8 +554,8 @@ object PlayBillingFix {
 
         try {
             queryMethod.isAccessible = true
-            Pine.hook(queryMethod, object : MethodHook() {
-                override fun beforeCall(callFrame: Pine.CallFrame) {
+            HookEngine.hook(queryMethod, object : MethodHook() {
+                override fun beforeCall(callFrame: CallFrame) {
                     val params = callFrame.args.getOrNull(0) ?: return
                     val listener = callFrame.args.getOrNull(1) ?: return
                     BepInExLog.i("$TAG: querySkuDetailsAsync intercepted on ${clazz.name}")

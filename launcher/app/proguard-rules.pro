@@ -55,3 +55,8 @@
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
 
+
+# LSPlant hook facade: Hooker.callback is looked up by name through
+# reflection and invoked from LSPlant's generated stub classes, and
+# HookEngine's native methods must keep their names for JNI registration.
+-keep class com.bepinex.android.hooks.** { *; }

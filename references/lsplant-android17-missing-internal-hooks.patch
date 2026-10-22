@@ -1,0 +1,19 @@
+diff --git a/lsplant/src/main/jni/art/runtime/jit/jit_code_cache.cxx b/lsplant/src/main/jni/art/runtime/jit/jit_code_cache.cxx
+index fd0d517..67d4126 100644
+--- a/lsplant/src/main/jni/art/runtime/jit/jit_code_cache.cxx
++++ b/lsplant/src/main/jni/art/runtime/jit/jit_code_cache.cxx
+@@ -54,8 +54,13 @@ public:
+             }
+         }
+         if (sdk_int >= kSdkNougat) [[likely]] {
++            // Downstream patch: the Android 17 ART this project targets
++            // removed both collection entry points in its JIT code cache
++            // rework, so there is nothing to hook. The hook only moved
++            // hooked methods' data ahead of a cache collection; skipping
++            // it is not an initialization failure.
+             if (!handler(GarbageCollectCache_, DoCollection_)) [[unlikely]] {
+-                return false;
++                LOGD("No JIT code cache collection hook available in this ART; continuing");
+             }
+         }
+         return true;

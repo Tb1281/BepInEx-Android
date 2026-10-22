@@ -33,5 +33,5 @@ f9cd03d3f33db429bbf50d4e34415028e76284ef1e25b4f602d11170382cea0a  launcher/app/s
 204d78f00559e3e1b6f53632d2ac37708c26ba90c89585b1acf4a63555353f52  launcher/app/src/main/jniLibs/arm64-v8a/libdobby.so
 6b66fd0e7cf786018235a4598e2d6f615906cb424827896911f088a9e97ffe17  launcher/app/src/main/jniLibs/arm64-v8a/libmscordaccore.so
 fbdb676420badeb5fd2a80581011224ff5e49288bc0a7286b985e49368fcdaee  launcher/app/src/main/jniLibs/arm64-v8a/libmscordbi.so
-2caa0d88b81b6854847266deb44a0e3cffe4d4c018d88140697b112ce2cd4e36  launcher/app/src/main/jniLibs/arm64-v8a/libpine.so
+f44a401e51ef3913d95d692903fbb6559ede3a94b60bde1409589f3eeccea8a5  launcher/app/src/main/jniLibs/arm64-v8a/liblsplant.so
 7cc6b0937b26254335f83299d15b045d127bf3099b5e731d3a01c16228c4dbe0  launcher/app/src/main/assets/dotnet.zip

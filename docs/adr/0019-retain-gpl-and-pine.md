@@ -1,6 +1,6 @@
 # Retain GPL-3.0 and Pine until the license review closes
 
-Status: accepted (2026-10-21)
+Status: superseded by ADR-0021 (2026-10-22)
 
 The launcher and native injection code (`libmain`, `libfusion`) are GPL-3.0. Pine is linked into the same APK as `libpine.so` and its Java API, and is licensed Anti 996 v1.0. Its conditions are not among the additional terms GPL-3.0 permits, so whether the combination is compatible remains an open legal review. Two alternatives were considered: replacing Pine with LSPlant (LGPL-3.0), or relicensing the project away from GPL-3.0.
 

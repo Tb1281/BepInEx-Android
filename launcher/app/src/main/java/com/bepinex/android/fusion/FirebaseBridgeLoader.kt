@@ -61,7 +61,7 @@ object FirebaseBridgeLoader {
     /**
      * Eager warmup entry point. Call BEFORE installing the loadClass hook:
      * the thousands of warmup resolutions then run unhooked, keeping ART
-     * pressure (and Pine bridge traffic) off the hooked path. Safe to call
+     * pressure (and hook bridge traffic) off the hooked path. Safe to call
      * any time; runs at most once per process.
      */
     fun prime() {
@@ -256,28 +256,47 @@ object FirebaseBridgeLoader {
         return null
     }
 
-    /** Define every Firebase class in [jar] into the game loader. Passes
-     *  repeat so children whose superclass lives in the same jar resolve
-     *  later; missing supertypes are preloaded first (see [noteFailures]).
-     *  Individually failing classes are skipped, never fatal. */
+    /** Get-or-open the DexFile for [jar], keyed by a content snapshot so a
+     *  rewritten jar is re-opened instead of serving a stale mapping. */
     // Same deliberate DexFile usage as warmApk above: entry inspection only.
     @Suppress("DEPRECATION")
-    private fun defineJar(jar: File, target: ClassLoader) {
+    private fun openDexFor(jar: File): DexFile? {
         val key = liveKey(jar)
-        val dex = synchronized(this) {
-            val cached = openDex[jar.absolutePath]
-            if (cached != null && cached.first == key) {
-                cached.second
-            } else {
+        synchronized(openDex) {
+            val cur = openDex[jar.absolutePath]
+            if (cur != null && cur.first == key) return cur.second
+            if (cur != null) {
                 try {
-                    cached?.second?.close()
+                    cur.second.close()
                 } catch (_: Exception) {
                 }
-                val fresh = DexFile.loadDex(jar.absolutePath, null, 0)
-                openDex[jar.absolutePath] = key to fresh
-                fresh
             }
+            val dex = try {
+                DexFile.loadDex(jar.absolutePath, null, 0)
+            } catch (_: Exception) {
+                return null
+            }
+            openDex[jar.absolutePath] = Pair(key, dex)
+            return dex
         }
+    }
+
+    /** Define every Firebase class in [jar] into the game loader.
+     *
+     *  Order matters, critically: entries are defined SUPERCLASSES FIRST
+     *  (topological order over the jar's own class_defs). Dex entries()
+     *  order is alphabetical, which attempts e.g. CppChildEventListener
+     *  before its superclass CppEventListener — and that first failed
+     *  define is sticky: ART records the linkage failure and every later
+     *  retry of the same class (later passes, fresh DexFiles, other
+     *  threads) fails with the recorded error, even after the superclass
+     *  is defined. Defining the superclass first avoids the failure
+     *  entirely. Passes still repeat as a safety net, and missing
+     *  supertypes named by failures are preloaded (see [noteFailures]).
+     *  Individually failing classes are skipped, never fatal. */
+    @Suppress("DEPRECATION")
+    private fun defineJar(jar: File, target: ClassLoader) {
+        val dex = openDexFor(jar) ?: return
         val m = DexFile::class.java.getMethod(
             "loadClassBinaryName",
             String::class.java,
@@ -289,9 +308,10 @@ object FirebaseBridgeLoader {
         } catch (_: Exception) {
             return
         }
+        val ordered = supertypesFirst(jar, entries)
         var defined = 0
         repeat(4) {
-            for (entry in entries) {
+            for (entry in ordered) {
                 if (!entry.startsWith("com.google.firebase.")) continue
                 try {
                     val suppressed = ArrayList<Throwable>()
@@ -309,6 +329,94 @@ object FirebaseBridgeLoader {
             }
         }
         BepInExLog.i("FirebaseBridgeLoader: defined $defined classes from " + jar.name)
+    }
+
+    /** Order [entries] so that a class never precedes a superclass or
+     *  interface that lives in the same jar. Edges come from parsing the
+     *  jar's classes.dex class_defs (name -> supertype names). Stable:
+     *  entries with no unmet in-jar dependency keep their relative order;
+     *  any cyclic remainder is appended in original order. Falls back to
+     *  the original order when the dex cannot be parsed. */
+    private fun supertypesFirst(jar: File, entries: List<String>): List<String> {
+        val deps = jarSupertypes(jar) ?: return entries
+        val inJar = entries.toHashSet()
+        val emitted = HashSet<String>()
+        val out = ArrayList<String>(entries.size)
+        val pending = entries.toMutableList()
+        var progressed = true
+        while (pending.isNotEmpty() && progressed) {
+            progressed = false
+            val it = pending.iterator()
+            while (it.hasNext()) {
+                val name = it.next()
+                val needs = deps[name].orEmpty()
+                if (needs.none { d -> d in inJar && d !in emitted }) {
+                    out.add(name)
+                    emitted.add(name)
+                    it.remove()
+                    progressed = true
+                }
+            }
+        }
+        out.addAll(pending)
+        return out
+    }
+
+    /** Parse [jar]'s classes.dex: class name -> its superclass and
+     *  interface names (dotted). Null when unreadable or not a dex. */
+    private fun jarSupertypes(jar: File): Map<String, Set<String>>? {
+        val bytes = try {
+            ZipFile(jar).use { zip ->
+                val entry = zip.getEntry("classes.dex") ?: return null
+                zip.getInputStream(entry).readBytes()
+            }
+        } catch (_: Exception) {
+            return null
+        }
+        if (!isDex(bytes)) return null
+        return try {
+            val stringIdsOff = readLe32(bytes, 60)
+            val typeIdsOff = readLe32(bytes, 68)
+            val classDefsSize = readLe32(bytes, 96)
+            val classDefsOff = readLe32(bytes, 100)
+            fun stringAt(idx: Int): String {
+                val off = readLe32(bytes, stringIdsOff + idx * 4)
+                var p = off
+                // Skip the ULEB128 utf16 length; class descriptors are
+                // ASCII, so reading to the NUL terminator is exact.
+                do {
+                    p++
+                } while (bytes[p - 1].toInt() and 0x80 != 0)
+                val start = p
+                while (bytes[p].toInt() != 0) p++
+                return String(bytes, start, p - start, Charsets.UTF_8)
+            }
+            fun typeName(idx: Int): String {
+                val desc = stringAt(readLe32(bytes, typeIdsOff + idx * 4))
+                return desc.trimStart('L').trimEnd(';').replace('/', '.')
+            }
+            val out = HashMap<String, Set<String>>()
+            for (i in 0 until classDefsSize) {
+                val base = classDefsOff + i * 32
+                val name = typeName(readLe32(bytes, base))
+                val needs = HashSet<String>()
+                val superIdx = readLe32(bytes, base + 8)
+                if (superIdx != -1) needs.add(typeName(superIdx))
+                val ifacesOff = readLe32(bytes, base + 12)
+                if (ifacesOff != 0) {
+                    val n = readLe32(bytes, ifacesOff)
+                    for (j in 0 until n) {
+                        val tIdx = (bytes[ifacesOff + 4 + j * 2].toInt() and 0xff) or
+                            ((bytes[ifacesOff + 5 + j * 2].toInt() and 0xff) shl 8)
+                        needs.add(typeName(tIdx))
+                    }
+                }
+                out[name] = needs
+            }
+            out
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /** Collect a failure and its causes into [out]. */
@@ -349,7 +457,6 @@ object FirebaseBridgeLoader {
             if (dotted.isEmpty() || dotted.startsWith("java.")) continue
             try {
                 target.loadClass(dotted)
-                BepInExLog.d("FirebaseBridgeLoader: preloaded supertype " + dotted)
             } catch (_: Throwable) {
             }
         }
@@ -399,4 +506,3 @@ object FirebaseBridgeLoader {
             ((b[off + 2].toInt() and 0xff) shl 16) or
             ((b[off + 3].toInt() and 0xff) shl 24)
 }
-// touchcheck

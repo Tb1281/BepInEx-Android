@@ -1,12 +1,13 @@
 package com.bepinex.android.fusion
 
 import com.bepinex.android.BepInExLog
-import top.canyie.pine.Pine
-import top.canyie.pine.callback.MethodHook
+import com.bepinex.android.hooks.HookEngine
+import com.bepinex.android.hooks.CallFrame
+import com.bepinex.android.hooks.MethodHook
 import java.lang.reflect.Method
 
 /**
- * Pine hooks on ClassLoader.loadClass() for bidirectional class loading.
+ * LSPlant hooks on ClassLoader.loadClass() for bidirectional class loading.
  *
  * This is necessary because:
  *   1. Our code needs to load game Activity classes (from game DEX)
@@ -48,11 +49,11 @@ object ClassLoaderHooks {
         BepInExLog.i("  Our loader: ${myClassLoader.javaClass.name}")
         BepInExLog.i("  Game loader: ${gameClassLoader.javaClass.name}")
 
-        Pine.hook(loadClassMethod, object : MethodHook() {
-            override fun beforeCall(callFrame: Pine.CallFrame) {
+        HookEngine.hook(loadClassMethod, object : MethodHook() {
+            override fun beforeCall(callFrame: CallFrame) {
                 // loadClass() takes binary names; a JNI-style name can never
                 // resolve and only obscures the real lookup. See class KDoc.
-                val args = callFrame.args ?: return
+                val args = callFrame.args
                 if (args.isNotEmpty()) {
                     val name = args[0] as? String
                     if (name != null && name.indexOf('/') >= 0) {
@@ -63,7 +64,7 @@ object ClassLoaderHooks {
                 }
             }
 
-            override fun afterCall(callFrame: Pine.CallFrame) {
+            override fun afterCall(callFrame: CallFrame) {
                 try {
                     // Only attempt fallback if class was not found
                     if (callFrame.throwable !is ClassNotFoundException) return
