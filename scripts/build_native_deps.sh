@@ -11,7 +11,7 @@
 # `echo >>` against the submodule in place, which made a build non-repeatable and
 # impossible to audit.
 #
-# Requires: Android NDK r25+ (r30 LTS recommended), CMake 3.22.1 (pinned by
+# Requires: Android NDK r25+ (r30 LTS recommended), CMake 3.30.3 (pinned by
 # this script; see the CMAKE_BIN selection below), a Linux x86_64 host,
 # and network access to github.com - the sources are cloned from their upstream
 # URLs, not read out of third_party/.
@@ -40,8 +40,12 @@ CMAKE_POLICY_VERSION_MINIMUM="${CMAKE_POLICY_VERSION_MINIMUM:-3.5}"
 # the first section offset on, with an identical compiler). Prefer the
 # SDK-pinned CMake next to the NDK; override with CMAKE_BIN for a deliberate
 # toolchain move, which then rebaselines the manifest like any pin change.
+# 3.30.3 is preferred: LSPlant requires >= 3.28, and 3.22.1 is kept only for
+# the launcher Gradle build (which pins it in build.gradle.kts).
 if [ -z "${CMAKE_BIN:-}" ]; then
-    if [ -x "$NDK/../../cmake/3.22.1/bin/cmake" ]; then
+    if [ -x "$NDK/../../cmake/3.30.3/bin/cmake" ]; then
+        CMAKE_BIN="$NDK/../../cmake/3.30.3/bin/cmake"
+    elif [ -x "$NDK/../../cmake/3.22.1/bin/cmake" ]; then
         CMAKE_BIN="$NDK/../../cmake/3.22.1/bin/cmake"
     else
         CMAKE_BIN="$(command -v cmake)"
@@ -49,12 +53,14 @@ if [ -z "${CMAKE_BIN:-}" ]; then
 fi
 CMAKE_VERSION="$("$CMAKE_BIN" --version | head -1)"
 # LSPlant's master snapshot (see provenance/lsplant.env) requires CMake
-# 3.28+ for its C++ module build, so the accepted range is 3.22.x (the old
-# pin) or anything >= 3.28. Moving between them rebaselines the manifest
-# like any pin change.
+# 3.28+ for its C++ module build, so nothing older is accepted at all -
+# the 3.22.1 fallback in the selection above exists only so the file can
+# be found for the Gradle build's pin, never for this script to use.
+# Moving between accepted versions rebaselines the manifest like any
+# pin change.
 case "$CMAKE_VERSION" in
-    *" 3.22."*|*" 3.2"[89]"."*|*" 3."[3-9]*|*" 4."*) ;;
-    *) echo "refusing: $CMAKE_BIN reports '$CMAKE_VERSION'; need CMake 3.22.x or >= 3.28 (set CMAKE_BIN to override)" >&2; exit 1 ;;
+    *" 3.2"[89]"."*|*" 3."[3-9]*|*" 4."*) ;;
+    *) echo "refusing: $CMAKE_BIN reports '$CMAKE_VERSION'; need CMake >= 3.28 (pin: 3.30.3; set CMAKE_BIN to override)" >&2; exit 1 ;;
 esac
 echo "cmake: $CMAKE_BIN ($CMAKE_VERSION)"
 LLVM_STRIP="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"

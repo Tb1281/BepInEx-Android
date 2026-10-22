@@ -47,6 +47,7 @@ jobs:
             *.actions.githubusercontent.com
             *.blob.core.windows.net
             dl.google.com
+            repo1.maven.org
             fulcio.sigstore.dev
             rekor.sigstore.dev
 

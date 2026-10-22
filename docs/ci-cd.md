@@ -67,13 +67,14 @@ not guarantee on-device playability, which requires manual device validation.
 ### `build-native-deps.yml`
 
 Compiles the native hook engines from the pins in `provenance/dobby.env`
-and `provenance/pine.env` (`UPSTREAM_URL` + `UPSTREAM_COMMIT`), asserting
+and `provenance/lsplant.env` (`UPSTREAM_URL` + `UPSTREAM_COMMIT`), asserting
 `rev-parse HEAD` equals the pin before compiling and applying the patches
-named in the same pin files. Pine's nested `xz-embedded` submodule is pinned
-and asserted separately. Environment: Ubuntu 24.04, JDK 17, NDK
-`30.0.16248370`, CMake `3.22.1` (pinned by the script, not PATH),
+named in the same pin files. LSPlant's nested DexBuilder and
+parallel_hashmap submodules are pinned and asserted separately.
+Environment: Ubuntu 24.04, JDK 17, NDK
+`30.0.16248370`, CMake `3.30.3` (pinned by the script, not PATH),
 `-Wl,-z,max-page-size=16384`, and `-ffile-prefix-map` so checked-out paths
-do not leak into `.rodata`. Artifacts: `libdobby.so`, `libpine.so`,
+do not leak into `.rodata`. Artifacts: `libdobby.so`, `liblsplant.so`,
 `native-deps.sha256`, attestation bundle.
 
 ### `fetch-runtime.yml`
