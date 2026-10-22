@@ -69,16 +69,16 @@ ADR 2 for why .NET 10 is the pinned one.
 | Binary | Upstream | Built by | License |
 | :--- | :--- | :--- | :--- |
 | `libdobby.so` | `provenance/dobby.env` → [canyie/dobby](https://github.com/canyie/dobby) | `build-native-deps` | Apache-2.0 |
-| `libpine.so` | `provenance/pine.env` → [canyie/Pine](https://github.com/canyie/Pine) | `build-native-deps` | Anti 996 v1.0 |
+| `liblsplant.so` | `provenance/lsplant.env` → [LSPosed/LSPlant](https://github.com/LSPosed/LSPlant) | `build-native-deps` | LGPL-3.0 |
 
-> License compatibility is an open review item, not a resolved claim: the
-> GPL-3.0 launcher links the Anti 996-licensed Pine (native `libpine.so` and
-> the Java API). Tracked alongside the Pine R8 vendoring decision in
-> `docs/todo.md`.
+> The license review that ADR-0019 left open is closed: Pine (Anti 996 v1.0,
+> incompatible with this project's GPL-3.0) was replaced by LSPlant
+> (LGPL-3.0). See the ADR superseding `docs/adr/0019-retain-gpl-and-pine.md`.
 
 Dobby is the inline hook engine behind `libfusion`'s `hook`/`unhook` exports, and
-is what the managed `NativeDetour` drives through Il2CppInterop. Pine hooks the ART
-side (`ClassLoader.findLibrary`, `PackageManager`, `UnityPlayer`).
+is what the managed `NativeDetour` drives through Il2CppInterop. LSPlant hooks the
+ART side (`ClassLoader.findLibrary`, `PackageManager`, `UnityPlayer`), with Dobby as
+its inline-hook backend, through the facade in `com.bepinex.android.hooks`.
 
 ### C. Android NDK
 
@@ -117,7 +117,7 @@ No proprietary game binary is in this repository.
 2. **Dynamic code cave**: `fusion.cpp` allocates a 1 MB pool in app data
    (`allocate_setup_injected`) to place relocatable code on Android 14+ W^X
    restrictions.
-3. **Pine redirects** intercept `ClassLoader.findLibrary` so Unity and game
+3. **LSPlant redirects** intercept `ClassLoader.findLibrary` so Unity and game
    libraries resolve to the installed APK paths.
 
 ---

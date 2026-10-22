@@ -7,7 +7,7 @@
         │
         ├──> verify-provenance.yml (quality and integrity gate)
         │
-        ├──> build-native-deps.yml (NDK: libdobby.so, libpine.so) ──┐
+        ├──> build-native-deps.yml (NDK: libdobby.so, liblsplant.so) ──┐
         │                                                          │
         ├──> fetch-runtime.yml    (.NET 10 Android runtime pack)   ├──> build-launcher-apk.yml
         │                                                          │     (CI artifact APK)

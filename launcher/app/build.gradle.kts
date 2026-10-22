@@ -225,8 +225,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
 
-    // Pine — ART Java hook framework (FusionCore approach)
-    implementation(libs.pine.core)
+    // Java hooks run through the in-repo HookEngine facade over LSPlant
+    // (native, staged as liblsplant.so) — see ADR-0021. No Java dependency.
 
     // Pure cfg parser (metadata model + round-trip editing) behind the
     // Framework Config form editor — see ADR-0001.
@@ -262,7 +262,7 @@ val preparePrebuilts = tasks.register("preparePrebuilts") {
         "libSystem.Native.so",
         "libSystem.Globalization.Native.so", "libSystem.IO.Compression.Native.so",
         "libSystem.Security.Cryptography.Native.Android.so",
-        "libdobby.so", "libpine.so", "libc++_shared.so",
+        "libdobby.so", "liblsplant.so", "libc++_shared.so",
         "libmscordaccore.so", "libmscordbi.so"
     )
     val requiredAssets = listOf("BepInEx.Android.zip", "dotnet.zip")
