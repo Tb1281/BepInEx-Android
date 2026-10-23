@@ -8,3 +8,4 @@ ADR-0001 through ADR-0015 are recorded in [`docs/progress.md`](../progress.md). 
 - [ADR-0019: Retain GPL-3.0 and Pine until the license review closes](0019-retain-gpl-and-pine.md)
 - [ADR-0020: Generate the human-readable Pin Table from the Source pins](0020-generate-pin-table-from-source-pins.md)
 - [ADR-0021: Replace Pine with LSPlant as the ART hook engine](0021-replace-pine-with-lsplant.md)
+- [ADR-0022: Diagnostics export is a curated report, not a mirror of the storage tree](0022-diagnostics-export-is-a-curated-report.md)

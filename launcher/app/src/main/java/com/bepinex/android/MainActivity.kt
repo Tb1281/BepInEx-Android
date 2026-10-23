@@ -185,7 +185,7 @@ class MainActivity : AppCompatActivity() {
                         packageName = crash.packageName,
                         onExport = {
                             viewModel.dismissCrashDialog()
-                            exportCrashDiagnostics(crash.packageName)
+                            exportCrashDiagnostics(crash)
                         },
                         onDismiss = {
                             viewModel.dismissCrashDialog()
@@ -280,7 +280,11 @@ class MainActivity : AppCompatActivity() {
                 AppSettings.setLastLaunchedModpacks(this@MainActivity, game.packageName, modpackNames)
             }
             try {
-                CrashDiagnostics.markLaunch(this@MainActivity, game.packageName)
+                // Snapshot the launch exactly as it is about to be sent:
+                // the same names, in the same order as the intent extras
+                // below, so the pending record describes this launch even
+                // if a later one replaces the active state before export.
+                CrashDiagnostics.markLaunch(this@MainActivity, game.packageName, modpackNames.toList())
                 val intent = Intent(this@MainActivity, BootstrapActivity::class.java).apply {
                     putExtra(BootstrapActivity.EXTRA_TARGET_PACKAGE, game.packageName)
                     putExtra(BootstrapActivity.EXTRA_USE_ORIGINAL_LIBUNITY, useOriginalLibUnity)
@@ -300,10 +304,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun exportCrashDiagnostics(packageName: String) {
+    private fun exportCrashDiagnostics(pending: CrashDiagnostics.PendingLaunch) {
+        val packageName = pending.packageName
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val file = CrashDiagnostics.export(this@MainActivity, packageName)
+                val file = CrashDiagnostics.export(this@MainActivity, pending)
                 CrashDiagnostics.clearPending(this@MainActivity)
                 withContext(Dispatchers.Main) {
                     val uri = FileProvider.getUriForFile(
