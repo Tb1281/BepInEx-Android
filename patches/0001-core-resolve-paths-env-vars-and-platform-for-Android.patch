@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 6b9549ee6f7f6ee37a718e707a417434e2c86c72 Mon Sep 17 00:00:00 2001
 From: port <port@local>
 Date: Sun, 4 Oct 2026 15:43:52 +0900
 Subject: [PATCH 1/8] core: resolve paths, env vars and platform for Android
@@ -13,16 +13,16 @@ PlatformUtils gains an Android branch so PlatformDetection reports
 OSKind.Android, which is what selects the IL2CPP runtime, the Android console
 driver and the native detour provider.
 ---
- BepInEx.Core/Paths.cs                         | 34 ++++----
+ BepInEx.Core/Paths.cs                         | 31 +++----
  BepInEx.Core/Utility.cs                       | 37 ++++----
  BepInEx.Preloader.Core/EnvVars.cs             | 40 ++++-----
  .../Logging/ChainloaderLogHelper.cs           | 41 +++------
  BepInEx.Preloader.Core/PlatformUtils.cs       | 87 ++++---------------
  .../Unity/BepInEx.Unity.Common/UnityInfo.cs   | 16 +++-
- 6 files changed, 97 insertions(+), 158 deletions(-)
+ 6 files changed, 97 insertions(+), 155 deletions(-)
 
 diff --git a/BepInEx.Core/Paths.cs b/BepInEx.Core/Paths.cs
-index a1a44eb..51efe76 100644
+index 5fbbc98..99e7164 100644
 --- a/BepInEx.Core/Paths.cs
 +++ b/BepInEx.Core/Paths.cs
 @@ -19,12 +19,6 @@ public static class Paths
@@ -38,7 +38,7 @@ index a1a44eb..51efe76 100644
      /// <summary>
      ///     The path to the Managed folder that contains the main managed assemblies.
      /// </summary>
-@@ -108,26 +102,30 @@ public static class Paths
+@@ -108,22 +102,29 @@ public static class Paths
          ExecutablePath = executablePath;
          ProcessName = Path.GetFileNameWithoutExtension(executablePath);
  
@@ -75,12 +75,8 @@ index a1a44eb..51efe76 100644
 +                    GameDataPath = Path.Combine(GameRootPath, "Data");
 +            }
          }
--        
--        if (string.IsNullOrEmpty(GameDataPath) || !Directory.Exists(GameDataPath))
--            throw new DirectoryNotFoundException("Failed to extract valid GameDataPath from executablePath: " + executablePath);
  
-         ManagedPath = managedPath ?? Path.Combine(GameDataPath, "Managed");
-         BepInExRootPath = bepinRootPath ?? Path.Combine(GameRootPath, "BepInEx");
+         if (string.IsNullOrEmpty(GameDataPath) || !Directory.Exists(GameDataPath))
 diff --git a/BepInEx.Core/Utility.cs b/BepInEx.Core/Utility.cs
 index ed2774b..25d868d 100644
 --- a/BepInEx.Core/Utility.cs

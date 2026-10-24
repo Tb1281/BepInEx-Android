@@ -1,4 +1,4 @@
-From 615d37e99bea4015e5179282e5797107bccdfaed Mon Sep 17 00:00:00 2001
+From 645237585b154491bd49516900a7f278b155a565 Mon Sep 17 00:00:00 2001
 From: port <port@local>
 Date: Sun, 4 Oct 2026 15:48:04 +0900
 Subject: [PATCH 8/8] build: drop the layers that cannot run on Android
@@ -32,7 +32,7 @@ Depends-On: 0004-il2cpp-hook-through-libfusion-and-resolve-export-stu, 0006-core
  .../BepInEx.NET.Common.csproj                 |  18 -
  .../NET/BepInEx.NET.Common/NetChainloader.cs  |  37 --
  .../BepInEx.NET.CoreCLR.csproj                |  17 -
- .../NET/BepInEx.NET.CoreCLR/HookEntrypoint.cs | 176 ---------
+ .../NET/BepInEx.NET.CoreCLR/HookEntrypoint.cs | 176 --------
  .../BepInEx.NET.CoreCLR/NetCorePreloader.cs   |  77 ----
  .../BepInEx.NET.Framework.Launcher/App.config |   6 -
  .../BepInEx.NET.Framework.Launcher.csproj     |  21 -
@@ -44,22 +44,22 @@ Depends-On: 0004-il2cpp-hook-through-libfusion-and-resolve-export-stu, 0006-core
  .../BepInEx.NET.Shared/SharedEntrypoint.cs    | 144 -------
  .../Hook/ExportThunkResolver.cs               |  17 +-
  .../BepInEx.Unity.IL2CPP/IL2CPPChainloader.cs |   1 +
- .../Bootstrap/UnityChainloader.cs             | 175 ---------
+ .../Bootstrap/UnityChainloader.cs             | 175 --------
  .../Logging/UnityLogSource.cs                 | 114 ------
  .../Unity/Doorstop/doorstop_config_il2cpp.ini |  47 ---
  .../Unity/Doorstop/doorstop_config_mono.ini   |  39 --
- Runtimes/Unity/Doorstop/run_bepinex_il2cpp.sh | 350 -----------------
- Runtimes/Unity/Doorstop/run_bepinex_mono.sh   | 350 -----------------
+ Runtimes/Unity/Doorstop/run_bepinex_il2cpp.sh | 350 ----------------
+ Runtimes/Unity/Doorstop/run_bepinex_mono.sh   | 350 ----------------
  build.cmd                                     |   7 -
  build.ps1                                     |   2 -
  build.sh                                      |   1 -
  build/Build.csproj                            |  18 -
- build/DependencyCache.cs                      |  22 --
+ build/DependencyCache.cs                      |  22 -
  build/DistributionTarget.cs                   |  57 ---
  build/DownloadTasks.cs                        |  89 -----
  build/GitTasks.cs                             |  12 -
- build/Program.cs                              | 368 ------------------
- 32 files changed, 10 insertions(+), 2663 deletions(-)
+ build/Program.cs                              | 377 ------------------
+ 32 files changed, 10 insertions(+), 2672 deletions(-)
  delete mode 100644 Runtimes/NET/BepInEx.NET.Common/BasePlugin.cs
  delete mode 100644 Runtimes/NET/BepInEx.NET.Common/BepInEx.NET.Common.csproj
  delete mode 100644 Runtimes/NET/BepInEx.NET.Common/NetChainloader.cs
@@ -2659,15 +2659,16 @@ index d793567..0000000
 -}
 diff --git a/build/Program.cs b/build/Program.cs
 deleted file mode 100644
-index 1013790..0000000
+index 2bdc404..0000000
 --- a/build/Program.cs
 +++ /dev/null
-@@ -1,368 +0,0 @@
+@@ -1,377 +0,0 @@
 -#pragma warning disable CS1591
 -// ReSharper disable ClassNeverInstantiated.Global
 -using System;
 -using System.Collections.Generic;
 -using System.IO;
+-using System.IO.Compression;
 -using System.Linq;
 -using System.Text;
 -using Cake.Common;
@@ -2994,10 +2995,18 @@ index 1013790..0000000
 -        foreach (var dist in ctx.Distributions)
 -        {
 -            var targetZipName = $"BepInEx-{dist.Target}-{ctx.BuildPackageVersion}.zip";
+-            var targetZipPath = ctx.DistributionDirectory.CombineWithFilePath(targetZipName);
 -            ctx.Log.Information($"Packing {targetZipName}");
--            ctx.Zip(ctx.DistributionDirectory.Combine(dist.Target),
--                    ctx.DistributionDirectory
--                       .CombineWithFilePath(targetZipName));
+-            ctx.Zip(ctx.DistributionDirectory.Combine(dist.Target), targetZipPath);
+-
+-            // Cake's Zip doesn't keep file modes, so mark the start script as executable by hand
+-            if (dist.Os is "linux" or "macos")
+-            {
+-                using var archive = ZipFile.Open(targetZipPath.FullPath, ZipArchiveMode.Update);
+-                var startScript = archive.GetEntry("run_bepinex.sh");
+-                if (startScript != null)
+-                    startScript.ExternalAttributes = Convert.ToInt32("100755", 8) << 16;
+-            }
 -        }
 -
 -
