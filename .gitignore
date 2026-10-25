@@ -28,3 +28,9 @@ LogOutput.log
 /failure.body
 # Test screenshots (not for commit)
 screenshots/
+
+# Agent workspace configuration (local only)
+/.agents/
+/AGENTS.md
+/docs/agents/
+/skills-lock.json
