@@ -112,8 +112,8 @@ check "ship-release notes name the release package" \
     grep -q "installs as .com.bepinex.android." "$WF_SHIP"
 check "ship-release notes list The Tower crash" \
     grep -q "Firebase RTDB" "$WF_SHIP"
-check "ship-release notes list the Pine review" \
-    grep -q "Pine license review" "$WF_SHIP"
+check "ship-release notes omit the closed Pine review" \
+    bash -c '! grep -q "Pine license review" "$1"' _ "$WF_SHIP"
 check "ship-release notes state GPL and LGPL" \
     bash -c 'grep -q "GPL-3.0" "$1" && grep -q "LGPL-2.1" "$1"' _ "$WF_SHIP"
 

@@ -9,9 +9,9 @@
 # sync-upstream.yml asks about it every six hours, and the .NET runtime moved
 # because scripts/check_runtime_pin.sh asks Microsoft once a week. MonoMod's
 # pin went 131 commits behind origin/reorganize while nothing anywhere asked
-# the question - the drift was found by hand, not by a job. Il2CppInterop,
-# Pine and dobby were in the same unwatched state; it is luck, not a system,
-# that they happen to be in sync today.
+# the question - the drift was found by hand, not by a job. Il2CppInterop and
+# dobby were in the same unwatched state; it is luck, not a system, that they
+# happen to be in sync today.
 #
 # This script asks the question for every pin this repository consumes and
 # prints a report. It runs inside sync-upstream.yml, which is already
@@ -120,9 +120,9 @@ derive_pins() {
 # Gitlink agreement - the check that makes the migration window safe.
 #
 # docs/todo.md Phase 3 replaces submodule gitlinks with these env files, but the
-# gitlinks are only deleted in the *last* task. For every step in between, each
-# of BepInEx/Pine/dobby has a pin in two places: the gitlink that the build
-# actually checks out, and the env file this script reports on.
+# gitlinks are only deleted in the *last* task. During that window a dependency
+# can have a pin in two places: the gitlink that the build actually checks out,
+# and the env file this script reports on.
 #
 # Once derive_pins reads only the env files, a gitlink that moves without its
 # env file following is invisible here: the report would say "current" about a

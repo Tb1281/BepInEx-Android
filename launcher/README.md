@@ -13,7 +13,7 @@ Android launcher app for running BepInEx mods in Unity IL2CPP games.
 
 ## How it works
 
-The launcher uses Pine (ART hook framework) to intercept the game's ClassLoader, native library loading, and UnityPlayer initialization. A custom `libmain.so` and `libfusion.so` control the dlopen order to install an `il2cpp_init` hook before Unity starts. The hook launches CoreCLR and the BepInEx preloader.
+The launcher uses LSPlant (ART hook framework) to intercept the game's ClassLoader, native library loading, and UnityPlayer initialization. A custom `libmain.so` and `libfusion.so` control the dlopen order to install an `il2cpp_init` hook before Unity starts. The hook launches CoreCLR and the BepInEx preloader.
 
 ## Requirements
 
@@ -53,4 +53,4 @@ The injection chain follows the approach described by Starlight's FusionCore.
 
 - Launcher and injection code: GPL-3.0
 - BepInEx: LGPL-2.1
-- dotnet/runtime, Dobby, Pine, .NET BCL: MIT / Apache-2.0
+- dotnet/runtime and .NET BCL: MIT; Dobby: Apache-2.0; LSPlant: LGPL-3.0

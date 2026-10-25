@@ -138,9 +138,9 @@ the repository.
 Device verification is recorded in the release issue using the matrix in
 `docs/progress.md`. The workflow enforces only the stable tag, remote `verified`
 coverage, the full asset set, the certificate/fingerprint, and the recorded
-device-verification confirmation. The Pine license review and the device matrix
-are a maintainer checklist, not an automated gate: complete them before
-promotion, but a green workflow does not prove them.
+device-verification confirmation. The device matrix is a maintainer checklist,
+not an automated gate: complete it before promotion, but a green workflow does
+not prove it.
 
 ```bash
 gh workflow run promote-release.yml \
@@ -237,12 +237,11 @@ signature and published an unsigned APK (PR #21), and a release created with
 `GITHUB_TOKEN` did not trigger the `release: published` verifier (PR #21). The
 failed release and tag were withdrawn. A third fix grants `actions: write` to
 the `release-tag` ship job so the explicit verifier dispatch is permitted
-(PR #22). Stable promotion remains blocked by the Pine license review.
+(PR #22). Stable promotion remains gated on the recorded device matrix.
 
 ## Known issues
 
 - **The Tower**: the production Firebase RTDB path still aborts in `DeleteInternal` on the pinned Firebase C++ SDK. See `docs/release-crash-investigation.md`. Publish as a known issue until resolved.
-- **Pine license**: the GPL-3.0 launcher and Anti-996 Pine compatibility review is unresolved. Stable promotion is blocked until it closes; the status-quo decision is recorded in [ADR-0019](adr/0019-retain-gpl-and-pine.md).
 
 ## Assets expected on a release
 

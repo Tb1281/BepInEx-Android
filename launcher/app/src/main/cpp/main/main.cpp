@@ -2,7 +2,7 @@
  * BepInEx.Android — libmain.so, bridges Unity native loading to BepInEx.
  *
  * This is a CUSTOM libmain.so that replaces the game's original libmain.so.
- * It is loaded BY the game's ClassLoader (via findLibrary Pine hook redirect),
+ * It is loaded BY the game's ClassLoader (via the LSPlant findLibrary redirect),
  * so JNI FindClass here searches the GAME's DEX —therefore we can find
  * com.unity3d.player.NativeLoader directly.
  *

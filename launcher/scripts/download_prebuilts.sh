@@ -38,7 +38,7 @@ if [ ! -f "${ARCHIVE_PATH}" ]; then
         echo "[INFO] and RELEASE_BASE_URL is unset."
         echo ""
         echo "       Populate the tree from CI output instead:"
-        echo "         .github/workflows/build-native-deps.yml  -> libdobby.so, libpine.so"
+        echo "         .github/workflows/build-native-deps.yml  -> libdobby.so, liblsplant.so"
         echo "         .github/workflows/fetch-runtime.yml      -> libcoreclr.so, PAL shims, dotnet.zip"
         echo "         .github/workflows/build-bepinex.yml       -> BepInEx.Android.zip"
         echo ""

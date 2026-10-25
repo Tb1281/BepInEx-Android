@@ -9,7 +9,7 @@
 
 # 2. Disable Aggressive Bytecode Optimization:
 # Prevents method inlining, argument elimination, and class merging,
-# which ensures Pine dynamic ART hooks find exact method descriptors.
+# which ensures LSPlant dynamic ART hooks find exact method descriptors.
 -dontoptimize
 
 # 3. Preserve Essential Metadata & Attributes:
@@ -38,11 +38,7 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 
-# 9. Keep Pine hook framework
--keep class top.canyie.pine.** { *; }
--dontwarn top.canyie.pine.**
-
-# 10. Keep Firebase, Google Play Services, and Billing SDKs
+# 9. Keep Firebase, Google Play Services, and Billing SDKs
 -keep class com.google.firebase.** { *; }
 -dontwarn com.google.firebase.**
 -keep class com.google.android.gms.** { *; }
@@ -50,7 +46,7 @@
 -keep class com.android.billingclient.** { *; }
 -dontwarn com.android.billingclient.**
 
-# 11. Keep Kotlin coroutines
+# 10. Keep Kotlin coroutines
 -keep class kotlinx.coroutines.** { *; }
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}

@@ -196,7 +196,7 @@ jobs:
         # engines, copies the runtime .so set plus both zips into jniLibs
         # and assets, and copies libc++ from the NDK (replacing the manual
         # cp that used to live in the step above). Without it jniLibs holds
-        # only dobby/pine and the crypto-PAL gate fails on the missing
+        # only dobby/lsplant and the crypto-PAL gate fails on the missing
         # libcoreclr.so — found by the second force run to reach this path
         # (38555599435), same never-exercised shape as the missing
         # restore_and_build step above.

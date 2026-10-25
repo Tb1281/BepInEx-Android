@@ -3,7 +3,7 @@
 Unofficial community port of [BepInEx](https://github.com/BepInEx/BepInEx) (LGPL-2.1)
 to arm64 Android IL2CPP games. Targets the official
 `Microsoft.NETCore.App.Runtime.android-arm64` pack (.NET 10 LTS) with the
-`canyie/dobby` and `canyie/Pine` native hook engines.
+`canyie/dobby` and `LSPosed/LSPlant` native hook engines.
 
 ---
 
@@ -47,7 +47,7 @@ never automatically.
 | MonoMod | `provenance/monomod.env` | Rebuilt to local NuGet feed |
 | Il2CppInterop | `provenance/il2cppinterop.env` | Rebuilt to local NuGet feed |
 | Dobby | `provenance/dobby.env` | 16 KB page aligned |
-| Pine | `provenance/pine.env` | 16 KB page aligned, nested `xz-embedded` pinned |
+| LSPlant | `provenance/lsplant.env` | 16 KB page aligned, nested DexBuilder/parallel_hashmap pinned |
 
 ---
 
@@ -83,7 +83,7 @@ local builds stage outputs into the gitignored directories above.
 ## Building from Source
 
 ```bash
-# 1. Native hook engines (libdobby.so, libpine.so), 16 KB aligned
+# 1. Native hook engines (libdobby.so, liblsplant.so), 16 KB aligned
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370
 ./scripts/build_native_deps.sh
 
@@ -147,11 +147,11 @@ adb logcat | grep -E '\[Error:Unity\]|\[Error:Il2CppInterop\]'
 - [BepInEx](https://github.com/BepInEx/BepInEx) — upstream modding framework.
   This port tracks upstream plus a patch queue instead of forking it.
 - [FusionCore](https://github.com/All-Of-Us-Mods/FusionCore) (Starlight team) —
-  reference for the injection chain, Pine hooks, and native-loader
+  reference for the injection chain, native hook integration, and native-loader
   architecture. Several launcher classes are direct ports, noted at each file.
 - [NextBep BepInEx.Android.Launcher](https://github.com/NextBep/BepInEx.Android.Launcher) —
   reference for launcher UI and features.
-- [Pine](https://github.com/canyie/Pine), [Dobby](https://github.com/canyie/dobby) —
+- [LSPlant](https://github.com/LSPosed/LSPlant), [Dobby](https://github.com/canyie/dobby) —
   hook engines.
 - [MonoMod](https://github.com/MonoMod/MonoMod),
   [Il2CppInterop](https://github.com/BepInEx/Il2CppInterop) — detours and
@@ -175,5 +175,5 @@ adb logcat | grep -E '\[Error:Unity\]|\[Error:Il2CppInterop\]'
 - **BepInEx framework**: [LGPL-2.1](https://github.com/BepInEx/BepInEx/blob/master/LICENSE)
 - **.NET runtime and BCL**: [MIT](https://github.com/dotnet/runtime/blob/main/LICENSE.TXT)
 - **Dobby**: [Apache-2.0](https://github.com/canyie/dobby/blob/master/LICENSE)
-- **Pine**: [Anti 996 v1.0](https://github.com/996icu/996.ICU/blob/master/LICENSE) —
-  see `launcher/THIRDPARTY_NATIVE.md` for the compatibility note.
+- **LSPlant**: [LGPL-3.0](https://github.com/LSPosed/LSPlant/blob/master/LICENSE) —
+  see `launcher/THIRDPARTY_NATIVE.md` for the third-party native inventory.

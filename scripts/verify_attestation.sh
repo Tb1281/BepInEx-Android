@@ -163,7 +163,7 @@ verify_one "$JNI/libmscordbi.so" fetch-runtime.yml
 verify_one "$AS/dotnet.zip" fetch-runtime.yml
 
 verify_one "$JNI/libdobby.so" build-native-deps.yml
-verify_one "$JNI/libpine.so" build-native-deps.yml
+verify_one "$JNI/liblsplant.so" build-native-deps.yml
 
 verify_one "$AS/BepInEx.Android.zip" build-bepinex.yml
 

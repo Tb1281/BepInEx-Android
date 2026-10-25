@@ -69,7 +69,7 @@ if has "load: COMPLETE"; then
     ok "load: COMPLETE"
 else
     fail "the bootstrap never completed (no 'load: COMPLETE')"
-    echo "         Pine did not redirect findLibrary(\"main\"), or fusion failed to stage"
+    echo "         LSPlant did not redirect findLibrary(\"main\"), or fusion failed to stage"
 fi
 
 echo ""
