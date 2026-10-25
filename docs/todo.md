@@ -27,7 +27,7 @@
 
 ### Phase 3: Declarative `.env` Pin Migration [COMPLETE]
 
-- [x] All upstream deps (BepInEx, Pine, dobby, MonoMod, Il2CppInterop, .NET runtime) pinned as text in `provenance/*.env`; submodule gitlinks removed.
+- [x] All upstream deps (BepInEx, Pine, dobby, MonoMod, Il2CppInterop, .NET runtime) pinned as text in `provenance/*.env`; submodule gitlinks removed. Pine was later replaced by LSPlant (ADR-0021).
 - [x] Post-clone pin assertions, nested Pine submodule pin, scratch-clone patch replay, workflow retargeting, and full local end-to-end rebuild verified.
 
 ### Phase 4: Storage Access Framework (SAF) Migration [COMPLETE]
@@ -77,11 +77,11 @@
 
 ### Priority 2: CI/CD
 
-- [x] Release automation: tag-based general release via the shared shipping path; sync-path builds are CI artifacts only. The `v0.0.0-rc1` rehearsal exercised the full path and rollback; stable promotion remains blocked by the Pine review.
+- [x] Release automation: tag-based general release via the shared shipping path; sync-path builds are CI artifacts only. The `v0.0.0-rc1` rehearsal exercised the full path and rollback; stable promotion remains gated on the recorded device matrix.
 - [ ] Test matrix: expand beyond the Unity 6000 / 2022.3 titles already verified.
 - [ ] Keep short artifact retention and no-cache policy under quota; revisit only with quota headroom.
 
 ### Priority 3: APK Size
 
-- Decision pending on the Pine keep-rule: Pine ships a keep rule matching every class with native methods, which keeps the whole tree and largely neuters shrinking (release stays near 60 MB instead of the low-50s floor). Options: vendor Pine's Java API (drop the rule, keep pinned native) or accept current size. The under-40 MB target is dropped — the floor is the pinned runtime itself, and trimming framework bytes is forbidden by design.
-- License review open: Pine is Anti 996 v1.0 (not MIT); GPL-3.0 compatibility of linking it is undecided. Tracked with the vendoring decision above; see `launcher/THIRDPARTY_NATIVE.md`.
+- The Pine keep-rule was removed with the LSPlant migration (ADR-0021); LSPlant ships as a native library and adds no Java keep rule. The under-40 MB target stays dropped — the floor is the pinned runtime itself, and trimming framework bytes is forbidden by design.
+- License review closed: LSPlant is LGPL-3.0; see ADR-0021 and `launcher/THIRDPARTY_NATIVE.md`.

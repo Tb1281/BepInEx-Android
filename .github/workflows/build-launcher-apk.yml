@@ -300,7 +300,7 @@ jobs:
       #
       # Every attestation above describes a file that goes *into* the APK. That
       # leaves the gap this repository has already measured: AGP strips
-      # libdobby.so, libpine.so and libc++_shared.so while packaging, so the bytes
+      # libdobby.so, liblsplant.so and libc++_shared.so while packaging, so the bytes
       # inside the APK are not the bytes those attestations cover. The gate in
       # scripts/verify_attestation.sh speaks about "inputs to packaging", and
       # until now nothing attested the artifact a tester actually installs.

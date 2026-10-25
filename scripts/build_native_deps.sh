@@ -142,29 +142,13 @@ stage() {
 
     # Nested submodules. The clone above does not fetch them; each one the pin
     # file names is fetched here, at the checked-out tree's gitlink, and asserted.
-    # Pine compiles xz-embedded's C sources straight into libpine.so, which makes
-    # that pin part of what this build produces - otherwise the checked-out commit
-    # is identical between two runs while the compiled .so can differ, and no hash
-    # in this repository would catch it, because the hash is of the top-level commit.
-    if grep -q '^PINE_SUBMODULE_XZ_COMMIT=' "$env_file" 2>/dev/null; then
-        local sub_commit sub_path sub_head
-        sub_commit="$(pin_field "$env_file" PINE_SUBMODULE_XZ_COMMIT)"
-        sub_path="$dst/core/src/main/cpp/external/xz-embedded"
-        git -C "$dst" submodule update --quiet --init --force "$sub_path" >/dev/null 2>&1 || true
-        git -C "$sub_path" fetch --quiet origin "$sub_commit" >/dev/null 2>&1 || true
-        git -C "$sub_path" checkout --quiet --detach "$sub_commit"
-        sub_head="$(git -C "$sub_path" rev-parse HEAD)"
-        if [ "$sub_head" != "$sub_commit" ]; then
-            echo "ERROR: $name nested xz-embedded is $sub_head but is pinned to $sub_commit" >&2
-            exit 1
-        fi
-        echo "  xz-embedded pinned ${sub_commit:0:10}"
-    fi
-
-    # LSPlant's DexBuilder submodule, same hole and same fix as xz above: sync
-    # submodules to the *checked-out* tree's gitlinks first (the clone resolved
-    # them at the default branch), then assert both nested HEADs - DexBuilder
-    # and its own parallel_hashmap - against the pin file.
+    # LSPlant's DexBuilder and parallel_hashmap are build inputs: DexBuilder
+    # generates the hook stubs, so two runs of the same top-level pin could
+    # otherwise compile different code without any tracked hash noticing.
+    #
+    # Sync submodules to the *checked-out* tree's gitlinks first (the clone
+    # resolved them at the default branch), then assert both nested HEADs
+    # against the pin file.
     if grep -q '^LSPLANT_SUBMODULE_DEXBUILDER_COMMIT=' "$env_file" 2>/dev/null; then
         local dex_path phash_path dex_head phash_head
         dex_path="$(pin_field "$env_file" LSPLANT_SUBMODULE_DEXBUILDER_PATH)"
@@ -247,8 +231,8 @@ install_so() {
 # Dobby — the inline hook engine behind libfusion's hook/unhook exports.
 # ---------------------------------------------------------------------------
 echo "==> dobby"
-# The patch is named in provenance/dobby.env (DOBBY_PATCH_FILE) for the same reason
-# Pine's two are: the pin file is the single record of what is adapted.
+# The patch is named in provenance/dobby.env (DOBBY_PATCH_FILE): the pin file is
+# the single record of what is adapted.
 stage dobby "$ROOT/provenance/dobby.env"
 echo "  applying $(basename "$(pin_field "$ROOT/provenance/dobby.env" DOBBY_PATCH_FILE)")"
 git -C "$WORK/dobby" apply --3way "$ROOT/$(pin_field "$ROOT/provenance/dobby.env" DOBBY_PATCH_FILE)"

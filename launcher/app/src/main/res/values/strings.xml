@@ -140,11 +140,11 @@
     <string name="about_project_bepinex_name">BepInEx</string>
     <string name="about_project_bepinex_desc">Unity IL2CPP modding framework — the core plugin loader. BepInEx 6.0.0-pre.2 by BepInEx team.</string>
     <string name="about_project_fusioncore_name">FusionCore</string>
-    <string name="about_project_fusioncore_desc">Starlight team\'s Android Unity IL2CPP Runtime Container. Main reference for injection chain, Pine hooks, and NativeLoader architecture.</string>
+    <string name="about_project_fusioncore_desc">Starlight team\'s Android Unity IL2CPP Runtime Container. Main reference for injection chain, native hook integration, and NativeLoader architecture.</string>
     <string name="about_project_dotnet_name">dotnet/runtime</string>
     <string name="about_project_dotnet_desc">Microsoft .NET Runtime (CoreCLR + BCL) built from source for android-arm64. Crypto uses the platform BoringSSL PAL.</string>
-    <string name="about_project_pine_name">Pine</string>
-    <string name="about_project_pine_desc">ART Java method hook framework (top.canyie.pine:core:0.3.0). Used for ClassLoader, PackageManager, and UnityPlayer hooks.</string>
+    <string name="about_project_lsplant_name">LSPlant</string>
+    <string name="about_project_lsplant_desc">ART Java method hook framework (LGPL-3.0). Used for ClassLoader, PackageManager, and UnityPlayer hooks.</string>
     <string name="about_project_dobby_name">Dobby</string>
     <string name="about_project_dobby_desc">Native hook framework for ARM64. Used for il2cpp_init hook in libfusion.</string>
     <string name="about_project_cpp2il_name">Cpp2IL</string>
@@ -157,7 +157,7 @@
     <string name="about_url_bepinex">https://github.com/BepInEx/BepInEx</string>
     <string name="about_url_fusioncore">https://github.com/All-Of-Us-Mods/FusionCore</string>
     <string name="about_url_dotnet">https://github.com/dotnet/runtime</string>
-    <string name="about_url_pine">https://github.com/canyie/Pine</string>
+    <string name="about_url_lsplant">https://github.com/LSPosed/LSPlant</string>
     <string name="about_url_dobby">https://github.com/canyie/dobby</string>
     <string name="about_url_cpp2il">https://github.com/SamboyCoding/Cpp2IL</string>
 

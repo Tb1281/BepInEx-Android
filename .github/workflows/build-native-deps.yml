@@ -51,7 +51,7 @@ jobs:
             fulcio.sigstore.dev
             rekor.sigstore.dev
 
-      # No submodules: build_native_deps.sh clones dobby and Pine from the pins in
+      # No submodules: build_native_deps.sh clones Dobby and LSPlant from the pins in
       # provenance/dobby.env and provenance/lsplant.env, and asserts each clone landed
       # on the pinned commit before compiling anything.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -62,7 +62,7 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;30.0.16248370" "cmake;3.30.3"
 
-      - name: Build dobby + Pine from source
+      - name: Build Dobby + LSPlant from source
         env:
           ANDROID_NDK_HOME: ${{ github.workspace }}/launcher/app/src/main/ndk-placeholder
         run: |

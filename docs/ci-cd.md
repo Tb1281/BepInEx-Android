@@ -208,8 +208,8 @@ requires a stable tag and recorded device verification, consumer-verifies the
 pre-release, runs `gh release edit --prerelease=false`, and consumer-verifies
 with `--require-stable`. If the post-check fails it restores the pre-release
 flag and fails the run. Device verification is recorded in the release issue
-using the matrix in `docs/progress.md`; the Pine license review remains a
-stable blocker.
+using the matrix in `docs/progress.md`; the recorded device matrix remains the
+stable-promotion gate.
 
 ### `sync-upstream.yml`
 

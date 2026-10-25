@@ -98,7 +98,7 @@ stage() {
     for f in libcoreclr.so libclrjit.so libSystem.Native.so \
              libSystem.Globalization.Native.so libSystem.IO.Compression.Native.so \
              libSystem.Security.Cryptography.Native.Android.so \
-             libmscordaccore.so libmscordbi.so libdobby.so libpine.so; do
+             libmscordaccore.so libmscordbi.so libdobby.so liblsplant.so; do
         printf 'native:%s\n' "$f" > "$JNI/$f"
         echo "$f ok" >> "$FIX/attested"
     done
@@ -158,10 +158,10 @@ check_out "and reports every file" "every installed artifact carries a provenanc
 # 2. ONE unsigned file among signed ones fails, and is named
 : > "$FIX/attested"
 stage
-sed -i '/^libpine\.so ok$/d' "$FIX/attested"
+sed -i '/^liblsplant\.so ok$/d' "$FIX/attested"
 run_gate > "$FIX/out"
 check_rc 1 "one unsigned file fails the gate"
-check_out "and names the file" "libpine.so"
+check_out "and names the file" "liblsplant.so"
 check_out "and says what is missing" "no valid provenance attestation"
 
 # 3. an attestation from another repository fails
@@ -314,10 +314,10 @@ $FIX/launcher/app/src/main/assets/*.zip" \
     --repository "BepInEx-Android/BepInEx-Android" \
     --commit "$COMMIT" \
     --run-id "99999" >/dev/null
-printf 'tampered_content\n' >> "$FIX/launcher/app/src/main/jniLibs/arm64-v8a/libpine.so"
+printf 'tampered_content\n' >> "$FIX/launcher/app/src/main/jniLibs/arm64-v8a/liblsplant.so"
 run_gate > "$FIX/out"
 check_rc 1 "tampered file with fallback bundle fails"
-check_out "and names the tampered file" "libpine.so"
+check_out "and names the tampered file" "liblsplant.so"
 
 echo ""
 if [ "$fails" -eq 0 ]; then echo "ALL FIXTURE CASES PASSED"; else echo "$fails CASE(S) FAILED"; fi

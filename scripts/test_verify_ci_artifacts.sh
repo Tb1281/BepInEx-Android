@@ -36,7 +36,7 @@ build_clean() {
     mkdir -p "$PB" "$PN" "$PR/native"
     printf 'managed-framework\n' > "$PB/BepInEx.Android.zip"
     printf 'dobby-bytes\n' > "$PN/libdobby.so"
-    printf 'pine-bytes\n'  > "$PN/libpine.so"
+    printf 'lsplant-bytes\n'  > "$PN/liblsplant.so"
     printf 'coreclr\n' > "$PR/native/libcoreclr.so"
     printf 'clrjit\n'  > "$PR/native/libclrjit.so"
     printf 'pal\n'     > "$PR/native/libSystem.Security.Cryptography.Native.Android.so"
@@ -46,7 +46,7 @@ build_clean() {
     ( cd "$FIX/stage/bepinex" \
       && sha256sum launcher/app/src/main/assets/BepInEx.Android.zip \
          > "$FIX/incoming/bepinex-managed/bepinex-managed.sha256" )
-    ( cd "$PN" && sha256sum libdobby.so libpine.so \
+    ( cd "$PN" && sha256sum libdobby.so liblsplant.so \
          > "$FIX/incoming/native-deps/native-deps.sha256" )
     # shellcheck disable=SC2035  # mirrors fetch-runtime.yml's own `sha256sum *.so`
     ( cd "$PR/native" && sha256sum *.so > "$FIX/incoming/runtime-android/coreclr.sha256" )
@@ -105,14 +105,14 @@ build_clean; printf 'tampered\n' >> "$JNI/libcoreclr.so"
                   run 1 "tampered .so is caught"              "[MISMATCH] runtime-android: libcoreclr.so"
 build_clean; printf 'tampered\n' >> "$AS/dotnet.zip"
                   run 1 "tampered dotnet.zip is caught"       "[MISMATCH] runtime-android: dotnet.zip"
-build_clean; printf 'tampered\n' >> "$JNI/libpine.so"
-                  run 1 "tampered native lib is caught"       "[MISMATCH] native-deps: libpine.so"
+build_clean; printf 'tampered\n' >> "$JNI/liblsplant.so"
+                  run 1 "tampered native lib is caught"       "[MISMATCH] native-deps: liblsplant.so"
 build_clean; printf 'tampered\n' >> "$AS/BepInEx.Android.zip"
                   run 1 "tampered managed framework is caught" "[MISMATCH] bepinex-managed: BepInEx.Android.zip"
 
 # A swap between two files of the same producer: every file is present, every
 # name is correct, every count matches, and both carry the other's bytes.
-build_clean; cp "$JNI/libpine.so" "$JNI/libdobby.so"
+build_clean; cp "$JNI/liblsplant.so" "$JNI/libdobby.so"
                   run 1 "swapped bytes between two files"    "[MISMATCH] native-deps: libdobby.so"
 
 build_clean; rm "$JNI/libclrjit.so"

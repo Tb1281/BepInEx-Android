@@ -18,7 +18,7 @@ against it. The pins plus the manifest are the baseline.
 |---|---|---|
 | BepInEx framework (`BepInEx.Android.zip`) | [BepInEx/BepInEx](https://github.com/BepInEx/BepInEx), master + `patches/*.patch` via `build-bepinex` | `b782da4ac54e1072d2857f4a2f77c80c3ef08005` |
 | `libdobby.so` | [canyie/dobby](https://github.com/canyie/dobby), master via `build-native-deps` | `6813ca76ddeafcaece525bf8c6cde7ff4c21d3ce` |
-| `liblsplant.so` | [LSPosed/LSPlant](https://github.com/LSPosed/LSPlant), 6ac2280d8d88e14f0864c26ac97c1dc96713bde1 via `build-native-deps` | `6ac2280d8d88e14f0864c26ac97c1dc96713bde1`, nested DexBuilder `ac7fb2230954ee311808bad469b0db501f31bfb8`, nested parallel_hashmap `0cd57d29a959256ed66b2afdd1009928fc625d09` |
+| `liblsplant.so` | [LSPosed/LSPlant](https://github.com/LSPosed/LSPlant), master via `build-native-deps` | `6ac2280d8d88e14f0864c26ac97c1dc96713bde1`, nested DexBuilder `ac7fb2230954ee311808bad469b0db501f31bfb8`, nested parallel_hashmap `0cd57d29a959256ed66b2afdd1009928fc625d09` |
 | MonoMod packages (`25.3.7-android.1`) | [MonoMod/MonoMod](https://github.com/MonoMod/MonoMod), reorganize + `references/monomod-android.patch` | `d2f2fd91f0daababe41b81239b3d53a4be77cd43` |
 | Il2CppInterop packages (`1.5.3-android.1`) | [BepInEx/Il2CppInterop](https://github.com/BepInEx/Il2CppInterop), master + `references/il2cppinterop-arm64-disarm.patch` | `81a6f78c8b653e0da4a3420ac4cd00819e8b6292` |
 | `libcoreclr.so`, `libclrjit.so`, PALs, BCL (`dotnet.zip`) | `microsoft.netcore.app.runtime.android-arm64` 10.0.12 from nuget.org via `fetch-runtime` | pack SHA-256 `7f67905e5e5324e0c2b03920b62a3b09c036737ba84f9e7cb61f7e058d285ad3` |
