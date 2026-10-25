@@ -23,7 +23,8 @@ import java.util.zip.ZipFile
  * Detection algorithm:
  *   1. Query all launchable activities via PackageManager
  *   2. Deduplicate by package name, skip system + our own app
- *   3. For each candidate APK, open as ZIP and check for libil2cpp.so
+ *   3. For each candidate, open its APKs (base + splits) as ZIP and check
+ *      for libil2cpp.so; fall back to the extracted native library dir
  */
 object GameDetector {
 
@@ -100,8 +101,13 @@ object GameDetector {
             val apkPath = appInfo.sourceDir ?: continue
             if (!File(apkPath).exists()) continue
 
-            // Check for libil2cpp.so in the APK
-            val hasIl2Cpp = checkForIl2Cpp(apkPath)
+            // Check for libil2cpp.so in the base APK and every split APK.
+            // Play-distributed games ship native libraries in the ABI split
+            // (e.g. split_config.arm64_v8a.apk), not the base APK, and with
+            // extractNativeLibs=false nothing is extracted either — checking
+            // the base APK alone misses those games entirely.
+            val apkPaths = listOf(apkPath) + (appInfo.splitSourceDirs?.toList() ?: emptyList())
+            val hasIl2Cpp = apkPaths.any { checkForIl2Cpp(it) }
             if (!hasIl2Cpp) {
                 // Also try the native library directory
                 val libCheck = File(appInfo.nativeLibraryDir, "libil2cpp.so")
