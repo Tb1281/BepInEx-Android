@@ -1,6 +1,6 @@
 # BepInEx Android
 
-BepInEx Android hosts the BepInEx IL2CPP modding framework inside Unity Android games. This glossary fixes the vocabulary used by release, verification, and distribution work.
+BepInEx Android hosts the BepInEx IL2CPP modding framework inside Unity Android games. This glossary fixes the vocabulary used by release, verification, distribution, and PairIP hosting work.
 
 ## Release and distribution
 
@@ -37,6 +37,24 @@ _Avoid_: tested, works
 **Verified tag** (`verified`):
 A moving git tag that marks the most recent commit that passed `verify-provenance`. It is not a release tag and does not imply device-verified.
 _Avoid_: release tag, stable tag
+
+## PairIP hosting
+
+**Hosted launch**:
+A launch where the game runs inside the launcher's process under the launcher's control, with BepInEx active.
+_Avoid_: normal launch, launcher launch, modded launch
+
+**Bare launch**:
+A diagnostic launch where the game starts in its own process with no launcher layers.
+_Avoid_: stock launch, vanilla launch
+
+**PairIP**:
+The integrity runtime embedded in some Play-installed games that starts during application startup and inspects the process before Unity initializes.
+_Avoid_: anti-cheat, DRM, anti-tamper
+
+**Integrity shield**:
+The launcher's native layer that hides host-only modules from a game's loaded-module enumeration.
+_Avoid_: hider, stealth
 
 ## Source and signing
 
