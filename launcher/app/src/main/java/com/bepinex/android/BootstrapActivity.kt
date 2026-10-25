@@ -18,9 +18,12 @@ import com.bepinex.android.settings.AppSettings
 import com.bepinex.android.hooks.HookEngine
 import com.bepinex.android.hooks.CallFrame
 import com.bepinex.android.hooks.MethodHook
+import com.bepinex.android.hooks.PairIpExperiment
+import com.bepinex.android.hooks.PairIpShield
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -54,6 +57,8 @@ class BootstrapActivity : Activity() {
     private var targetPackage: String? = null
     private var screenDimEnabled = false
     private var floatingLogEnabled = false
+    @Volatile
+    private var pairIpStackTraceHooked = false
 
     private var tvStep: TextView? = null
     private var tvDetail: TextView? = null
@@ -71,6 +76,19 @@ class BootstrapActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        PairIpExperiment.configure(this, intent)
+        BepInExLog.i("PairIP experiment: ${PairIpExperiment.describe()}")
+
+        // Debug-only: frida-gadget renamed to look like a system lib.
+        if (PairIpExperiment.gadget) {
+            try {
+                System.loadLibrary("audiopolicy")
+                BepInExLog.i("Diagnostic gadget loaded")
+            } catch (t: Throwable) {
+                BepInExLog.w("Diagnostic gadget failed: ${t.message}")
+            }
+        }
 
         // Runs in :game, a different process from MainActivity, so the static
         // path resolver has to be primed in each one.
@@ -153,64 +171,146 @@ class BootstrapActivity : Activity() {
         // unlike DataStore, which this process must not open.
         screenDimEnabled = intent.getBooleanExtra(EXTRA_SCREEN_DIM_ENABLED, false)
         floatingLogEnabled = intent.getBooleanExtra(EXTRA_FLOATING_LOG_ENABLED, false)
-        preparedConfig = prepareFusionState(targetPackage, gameContext, useOriginalLibUnity)
+        val prepared = prepareFusionState(targetPackage, gameContext, useOriginalLibUnity)
+        preparedConfig = prepared
+
+        // Integrity VMs such as PairIP enumerate loaded ELF objects during
+        // their first startup program and treat host libraries as tampering.
+        // Install the module shield after Fusion has resolved the game's
+        // native libraries (ABI splits may have been extracted into host
+        // storage), and pass that directory as allowed so the game still sees
+        // its own modules. This still runs before the game class loader exists.
+        if (!PairIpExperiment.noShield) {
+            PairIpShield.install(
+                this,
+                gameContext,
+                listOf(prepared.gameLibraryDirectory),
+            )
+        } else {
+            BepInExLog.i("PairIP experiment: module shield disabled")
+        }
 
         // 4. Install base hook-engine hooks
         updateProgress(getString(R.string.bootstrap_status_installing_hooks), "", 70)
-        BepInExLog.i("Installing hook engine hooks (LSPlant)...")
-        if (!HookEngine.isInitialized()) {
-            // Every HookEngine.hook below would return false and the process
-            // would come up unhooked and unredirected; say so once, loudly,
-            // instead of letting each site fail in its own words.
-            BepInExLog.e("LSPlant failed to initialize; Java hooks will not be installed")
+        if (!PairIpExperiment.noHooks && !PairIpExperiment.lateHooks) {
+            BepInExLog.i("Installing hook engine hooks (LSPlant)...")
+            if (!HookEngine.isInitialized()) {
+                // Every HookEngine.hook below would return false and the process
+                // would come up unhooked and unredirected; say so once, loudly,
+                // instead of letting each site fail in its own words.
+                BepInExLog.e("LSPlant failed to initialize; Java hooks will not be installed")
+            }
+        } else if (PairIpExperiment.noHooks) {
+            BepInExLog.i("PairIP experiment: hook engine skipped")
+        } else {
+            BepInExLog.i("PairIP experiment: LSPlant preflight deferred until after PairIP VMs")
         }
-        try {
-            // Bridge first, hooks second: the bridge's one-time game-dex
-            // warmup (~3k resolutions) runs unhooked, then the loadClass
-            // hook only sees live Firebase traffic.
-            FirebaseBridgeLoader.install(this, gameContext.classLoader, targetPackage)
-            FirebaseBridgeLoader.prime()
-            ClassLoaderHooks.installHooks(gameContext.classLoader)
-            PackageManagerHooks.installHooks(packageManager)
-            // The game package bounds which activities InstrumentationHooks may
-            // redirect into StubActivity. Passing it is what keeps a library activity
-            // (Play Services sign-in, ad SDKs) out of this process.
-            InstrumentationHooks.gameContextRef = gameContext
-            InstrumentationHooks.storageContextRef = this
-            InstrumentationHooks.install(targetPackage)
-            UnityPlayerHooks.installHooks(gameContext, blockUnityKill, floatingLogEnabled)
-            // A hosted game cannot run its own Firebase discovery service, so Firebase
-            // finds no components and aborts the game during startup. Supply the
-            // registrars the game declares, read from its own manifest.
-            // See FirebaseComponentDiscoveryFix.
-            FirebaseComponentDiscoveryFix.setPackageManagerSource(this)
-            FirebaseComponentDiscoveryFix.install(gameContext.classLoader, targetPackage, gameContext)
-            PlayBillingFix.install(gameContext.classLoader)
-            BepInExLog.i("Base hooks installed")
-        } catch (e: Exception) {
-            throw IllegalStateException("Failed to install base hooks", e)
+        // PairIP starts its VM from the game's app-component factory static
+        // initializer. LoadedApk runs that while building the game class
+        // loader, before the game Application exists, so VMRunner's fallback
+        // binds to this process's LoadedApk (the launcher's). Seed the game
+        // context first so the VM sees the hosted package.
+        // PairIP's VM inspects the Java stack. A normal app creates the
+        // Application on the framework's main thread; run this part there so
+        // the stack bottom is Looper/ActivityThread rather than a worker.
+        val gameClassLoader = if (PairIpExperiment.contextSeed || PairIpExperiment.skipFactory) {
+            onMainThread { seedPairIpContext(targetPackage, gameContext) }
+        } else {
+            BepInExLog.i("PairIP experiment: context seeding disabled")
+            gameContext.classLoader
+        }
+
+        if (PairIpExperiment.threadDump) {
+            dumpPairIpScheduler("after startup program", gameClassLoader)
+            Thread.sleep(1_500)
+            dumpPairIpScheduler("after startup program + 1.5 s", gameClassLoader)
+        }
+
+        if (PairIpExperiment.preload) {
+            updateProgress(
+                getString(R.string.bootstrap_status_installing_hooks),
+                "Running PairIP startup programs",
+                60
+            )
+            runPairIpPreload(gameClassLoader)
+        }
+
+        if (!PairIpExperiment.noHooks) {
+            if (PairIpExperiment.lateHooks && PairIpExperiment.hiddenApi) {
+                // Deferred until PairIP's startup programs have finished.
+                disableHiddenApiEnforcement()
+            }
+            try {
+                // Bridge first, hooks second: the bridge's one-time game-dex
+                // warmup (~3k resolutions) runs unhooked, then the loadClass
+                // hook only sees live Firebase traffic.
+                FirebaseBridgeLoader.install(this, gameClassLoader, targetPackage)
+                FirebaseBridgeLoader.prime()
+                ClassLoaderHooks.installHooks(gameClassLoader)
+                PackageManagerHooks.installHooks(packageManager)
+                // The game package bounds which activities InstrumentationHooks may
+                // redirect into StubActivity. Passing it is what keeps a library activity
+                // (Play Services sign-in, ad SDKs) out of this process.
+                InstrumentationHooks.gameContextRef = gameContext
+                InstrumentationHooks.storageContextRef = this
+                InstrumentationHooks.install(targetPackage)
+                UnityPlayerHooks.installHooks(gameContext, blockUnityKill, floatingLogEnabled)
+                // A hosted game cannot run its own Firebase discovery service, so Firebase
+                // finds no components and aborts the game during startup. Supply the
+                // registrars the game declares, read from its own manifest.
+                // See FirebaseComponentDiscoveryFix.
+                FirebaseComponentDiscoveryFix.setPackageManagerSource(this)
+                FirebaseComponentDiscoveryFix.install(gameClassLoader, targetPackage, gameContext)
+                PlayBillingFix.install(gameClassLoader)
+                BepInExLog.i("Base hooks installed")
+            } catch (e: Exception) {
+                throw IllegalStateException("Failed to install base hooks", e)
+            }
+        } else {
+            BepInExLog.i("PairIP experiment: base hooks skipped")
         }
 
         // 4b. Install onUserInteraction hook if screen dim is enabled
-        if (screenDimEnabled) {
+        if (screenDimEnabled && !PairIpExperiment.noHooks) {
             installUserInteractionHook()
         }
 
         // 5. Hook game launcher's onCreate
         updateProgress(getString(R.string.bootstrap_status_installing_hooks), "", 85)
         val launcherClassName = launcher.className
-        installLauncherOnCreateHook(gameContext, gameContext.classLoader, launcherClassName)
+        if (!PairIpExperiment.noHooks) {
+            installLauncherOnCreateHook(gameContext, gameClassLoader, launcherClassName)
+        } else {
+            BepInExLog.i("PairIP experiment: launcher onCreate hook skipped")
+        }
 
         // 6. Start game launcher Activity via StubActivity
         updateProgress(getString(R.string.bootstrap_status_launching), "", 95)
         try {
-            val launcherClass = gameContext.classLoader.loadClass(launcherClassName)
+            val launcherClass = gameClassLoader.loadClass(launcherClassName)
             BepInExLog.i("Starting game launcher: ${launcherClass.name}")
-            initializeFusion(null, null)
+            if (!PairIpExperiment.bare) {
+                initializeFusion(null, null)
+            }
 
             runOnMainThread {
                 try {
                     isGameLaunched = true
+                    if (PairIpExperiment.bare) {
+                        // No hosting hooks exist, so the game must start in its
+                        // own process exactly as a stock launch. This keeps the
+                        // launcher's :game process alive with only PairIP's
+                        // factory state, which is the isolation this experiment
+                        // needs.
+                        startActivity(Intent(launchIntent).apply {
+                            putExtra(
+                                InstrumentationHooks.EXTRA_TARGET_ORIENTATION,
+                                targetOrientation
+                            )
+                        })
+                        finish()
+                        return@runOnMainThread
+                    }
                     val intent = Intent(this, launcherClass).apply {
                         putExtra(InstrumentationHooks.EXTRA_TARGET_ORIENTATION, targetOrientation)
                     }
@@ -228,6 +328,420 @@ class BootstrapActivity : Activity() {
         } catch (e: Exception) {
             throw IllegalStateException("Failed to load launcher class: $launcherClassName", e)
         }
+    }
+
+    // PairIP context seeding
+
+    /**
+     * PairIP-protected APKs replace the app-component factory with
+     * `androidx.core.app.CoreComponentFactory`, whose static initializer calls
+     * `StartupLauncher.launch()`. LoadedApk loads that factory while creating
+     * the game class loader, i.e. before a game Application exists, so
+     * VMRunner's null-context fallback (`InitContextProvider`) binds to the
+     * host process's own LoadedApk -- the launcher's, not the game's.
+     *
+     * Build the game class loader once with the factory temporarily detached,
+     * then seed VMRunner with the already-created game Context before loading
+     * the factory. This keeps the class loader and factory coming from the
+     * game APK while giving PairIP the correct notion of "current app".
+     */
+    /**
+     * PairIP's VM reads the Java stack trace and expects the ordinary
+     * framework app-launch chain. Hosting the game puts LSPlant's bridge
+     * frames (`Method.invoke`, `Hooker.*`, `LSPHooker_*`) and this
+     * activity's frames between `LoadedApk.createAppFactory` and
+     * `ActivityThread.handleBindApplication`, which is a tamper signal.
+     *
+     * Replace the trace only for exceptions created inside
+     * `VMRunner.executeVM`; every other stack trace in the process stays
+     * untouched. The fabricated chain is the exact one the framework
+     * produces for an application launch on this device.
+     */
+    private fun installPairIpStackTraceHook() {
+        if (pairIpStackTraceHooked) return
+        try {
+            val getStackTrace = Throwable::class.java.getDeclaredMethod("getStackTrace")
+            val installed = HookEngine.hook(getStackTrace, object : MethodHook() {
+                override fun beforeCall(callFrame: CallFrame) {
+                    val throwable = callFrame.thisObject as? Throwable ?: return
+                    val real = try {
+                        callFrame.invokeOriginalMethod(throwable) as? Array<*>
+                    } catch (_: Throwable) {
+                        null
+                    } ?: return
+                    val fromPairIp = real.any {
+                        it is StackTraceElement &&
+                            it.className == "com.pairip.VMRunner" &&
+                            it.methodName == "executeVM"
+                    }
+                    if (fromPairIp) {
+                        callFrame.result = pairIpLaunchStack()
+                    }
+                }
+            })
+            pairIpStackTraceHooked = installed
+            BepInExLog.i("PairIP: stack-trace hook installed=$installed")
+        } catch (t: Throwable) {
+            BepInExLog.e("PairIP: stack-trace hook failed", t)
+        }
+    }
+
+    private fun pairIpLaunchStack(): Array<StackTraceElement> = arrayOf(
+        StackTraceElement("com.pairip.VMRunner", "executeVM", null, -2),
+        StackTraceElement("com.pairip.VMRunner", "invoke", "VMRunner.java", 69),
+        StackTraceElement("com.pairip.StartupLauncher", "launch", "StartupLauncher.java", 14),
+        StackTraceElement("androidx.core.app.CoreComponentFactory", "<clinit>", "CoreComponentFactory.java", 0),
+        StackTraceElement("java.lang.Class", "newInstance", null, -2),
+        StackTraceElement("android.app.LoadedApk", "createAppFactory", "LoadedApk.java", 317),
+        StackTraceElement("android.app.LoadedApk", "createOrUpdateClassLoaderLocked", "LoadedApk.java", 1204),
+        StackTraceElement("android.app.LoadedApk", "getClassLoader", "LoadedApk.java", 1300),
+        StackTraceElement("android.app.LoadedApk", "makeApplicationInner", "LoadedApk.java", 1780),
+        StackTraceElement("android.app.LoadedApk", "makeApplicationInner", "LoadedApk.java", 1712),
+        StackTraceElement("android.app.ActivityThread", "handleBindApplication", "ActivityThread.java", 9233),
+        StackTraceElement("android.app.ActivityThread", "-" + '$' + '$' + "Nest" + '$' + "mhandleBindApplication", "ActivityThread.java", 0),
+        StackTraceElement("android.app.ActivityThread\$H", "handleMessage", "ActivityThread.java", 3095),
+        StackTraceElement("android.os.Handler", "dispatchMessageImpl", "Handler.java", 142),
+        StackTraceElement("android.os.Handler", "dispatchMessage", "Handler.java", 125),
+        StackTraceElement("android.os.Looper", "loopOnce", "Looper.java", 321),
+        StackTraceElement("android.os.Looper", "loop", "Looper.java", 422),
+        StackTraceElement("android.app.ActivityThread", "main", "ActivityThread.java", 10616),
+        StackTraceElement("java.lang.reflect.Method", "invoke", null, -2),
+        StackTraceElement("com.android.internal.os.RuntimeInit\$MethodAndArgsCaller", "run", "RuntimeInit.java", 635),
+        StackTraceElement("com.android.internal.os.ZygoteInit", "main", "ZygoteInit.java", 982)
+    )
+
+    private fun seedPairIpContext(targetPackage: String, gameContext: Context): ClassLoader {
+        return try {
+            if (PairIpExperiment.delayMs > 0L) {
+                // Debug-only window so a tracer can attach before PairIP runs.
+                Thread.sleep(PairIpExperiment.delayMs)
+            }
+            if (!PairIpExperiment.noHooks && !PairIpExperiment.lateHooks &&
+                PairIpExperiment.stackSpoof
+            ) {
+                installPairIpStackTraceHook()
+            }
+            val packageInfoField = findField(gameContext.javaClass, "mPackageInfo")
+                ?: return gameContext.classLoader
+            packageInfoField.isAccessible = true
+            val loadedApk = packageInfoField.get(gameContext)
+                ?: return gameContext.classLoader
+            val applicationInfoField = findField(loadedApk.javaClass, "mApplicationInfo")
+                ?: return gameContext.classLoader
+            applicationInfoField.isAccessible = true
+            val applicationInfo = applicationInfoField.get(loadedApk)
+                as? android.content.pm.ApplicationInfo ?: return gameContext.classLoader
+
+            val factory = applicationInfo.appComponentFactory
+            if (factory == null) {
+                BepInExLog.i("PairIP: no appComponentFactory; game loader will be created normally")
+                return gameContext.classLoader
+            }
+
+            if (PairIpExperiment.lateHooks) {
+                // PairIP's startup programs hash their own bytecode and react
+                // to LSPlant/Dobby modifications with a decoy path that
+                // dereferences uninitialised VM variables. Run the factory
+                // before any Java hooks exist; the hosting hooks are installed
+                // by the caller once the startup programs have returned.
+                BepInExLog.i("PairIP experiment: late hooks - running factory before LSPlant")
+                applicationInfo.appComponentFactory = null
+                val loader = try {
+                    gameContext.classLoader
+                } finally {
+                    applicationInfo.appComponentFactory = factory
+                }
+                seedVmRunner(loader, gameContext)
+                Class.forName(factory, true, loader)
+                BepInExLog.i(
+                    "PairIP: seeded VMRunner context and started factory for $targetPackage"
+                )
+                return loader
+            }
+
+            if (PairIpExperiment.stockBoundContext) {
+                // Stock-faithful boot: PairIP itself creates VMRunner.context.
+                // Its InitContextProvider reads ActivityThread.mBoundApplication
+                // .info, so point that at the game LoadedApk for the duration of
+                // the factory's static initializer. This runs InitContextProvider
+                // (and PairIP's Instrumentation replacement) exactly as a normal
+                // launch does, instead of pre-seeding a createPackageContext
+                // Context.
+                val activityThreadClass = Class.forName("android.app.ActivityThread")
+                val currentThread = activityThreadClass
+                    .getMethod("currentActivityThread").invoke(null)
+                val bindDataField = findField(activityThreadClass, "mBoundApplication")
+                    ?: throw IllegalStateException("ActivityThread.mBoundApplication missing")
+                bindDataField.isAccessible = true
+                val bindData = bindDataField.get(currentThread)
+                    ?: throw IllegalStateException("mBoundApplication is null")
+                val infoField = findField(bindData.javaClass, "info")
+                    ?: throw IllegalStateException("AppBindData.info missing")
+                infoField.isAccessible = true
+                val previousInfo = infoField.get(bindData)
+                infoField.set(bindData, loadedApk)
+                BepInExLog.i("PairIP experiment: stock-bound InitContextProvider path")
+                try {
+                    val loader = gameContext.classLoader
+                    try {
+                        Class.forName(factory, true, loader)
+                    } catch (t: Throwable) {
+                        BepInExLog.w("PairIP: factory init after stock-bound load failed: $t")
+                    }
+                    enableVmRunnerLogging(loader)
+                    return loader
+                } finally {
+                    infoField.set(bindData, previousInfo)
+                    BepInExLog.i("PairIP experiment: restored mBoundApplication.info")
+                }
+            }
+
+            if (PairIpExperiment.skipFactory) {
+                // Candidate neutralization: build the game class loader with the
+                // factory detached, then never load it. PairIP's startup program
+                // runs from that factory, so this keeps the VM out of the process.
+                applicationInfo.appComponentFactory = null
+                val loader = try {
+                    gameContext.classLoader
+                } finally {
+                    applicationInfo.appComponentFactory = factory
+                }
+                BepInExLog.i("PairIP experiment: app-component factory skipped")
+                return loader
+            }
+
+            // LoadedApk creates the app-component factory from
+            // createAppFactory() while it builds the game class loader.
+            // Seed VMRunner immediately before that call, so the factory's
+            // static initializer sees the game Context and the same
+            // android.app.LoadedApk stack frames as a normal app launch.
+            val factoryCreated = AtomicBoolean(false)
+            val hookInstalled = if (PairIpExperiment.noHooks) {
+                false
+            } else {
+                if (PairIpExperiment.hiddenApi) disableHiddenApiEnforcement()
+                val createAppFactory = HookEngine.findMethod(
+                    loadedApk.javaClass,
+                    "createAppFactory",
+                    "(Landroid/content/pm/ApplicationInfo;Ljava/lang/ClassLoader;)" +
+                        "Landroid/app/AppComponentFactory;",
+                    false
+                )
+                createAppFactory != null &&
+                    HookEngine.hook(createAppFactory, object : MethodHook() {
+                        override fun beforeCall(callFrame: CallFrame) {
+                            try {
+                                val info = callFrame.args.getOrNull(0)
+                                    as? android.content.pm.ApplicationInfo ?: return
+                                if (info.packageName != targetPackage) return
+                                val loader = callFrame.args.getOrNull(1) as? ClassLoader ?: return
+                                seedVmRunner(loader, gameContext)
+                                factoryCreated.set(true)
+                            } catch (t: Throwable) {
+                                BepInExLog.e("PairIP: createAppFactory hook failed", t)
+                            }
+                        }
+
+                        override fun afterCall(callFrame: CallFrame) {
+                            BepInExLog.i(
+                                "PairIP: LoadedApk.createAppFactory returned " +
+                                    "${callFrame.result?.javaClass?.name}"
+                            )
+                        }
+                    })
+            }
+            if (!hookInstalled) {
+                BepInExLog.w(
+                    "PairIP: could not hook LoadedApk.createAppFactory; " +
+                        "using direct factory load"
+                )
+            }
+
+            val loader: ClassLoader
+            if (hookInstalled) {
+                loader = gameContext.classLoader
+                if (!factoryCreated.get()) {
+                    // The loader already existed, so createAppFactory never
+                    // ran. Fall back to loading the factory ourselves.
+                    BepInExLog.w("PairIP: LoadedApk did not create the factory; loading directly")
+                    seedVmRunner(loader, gameContext)
+                    Class.forName(factory, true, loader)
+                }
+            } else {
+                // Fallback for frameworks where the hook is unavailable:
+                // detach the factory while the loader is created, seed
+                // VMRunner, then load the factory directly.
+                applicationInfo.appComponentFactory = null
+                loader = try {
+                    gameContext.classLoader
+                } finally {
+                    applicationInfo.appComponentFactory = factory
+                }
+                seedVmRunner(loader, gameContext)
+                Class.forName(factory, true, loader)
+            }
+
+            BepInExLog.i("PairIP: seeded VMRunner context and started factory for $targetPackage")
+            loader
+        } catch (t: Throwable) {
+            BepInExLog.e("PairIP: context seeding failed", t)
+            gameContext.classLoader
+        }
+    }
+
+    private fun runPairIpPreload(gameClassLoader: ClassLoader) {
+        val config = preparedConfig
+            ?: throw IllegalStateException("Fusion config was not prepared")
+
+        val stagedFile = FusionConfigStore.write(this, config)
+        BepInExLog.i("PairIP preload: config staged at ${stagedFile.absolutePath}")
+
+        val libmainPath = File(applicationInfo.nativeLibraryDir, "libmain.so")
+            .absolutePath
+        val nativeLoader = gameClassLoader.loadClass("com.unity3d.player.NativeLoader")
+        val loadMethod = nativeLoader.getMethod("load", String::class.java)
+
+        onMainThread {
+            val loadError = PairIpShield.loadIntoClassLoader(gameClassLoader, libmainPath)
+            if (loadError != null) {
+                throw IllegalStateException(
+                    "Could not load $libmainPath into the game loader: $loadError"
+                )
+            }
+            val loaded = loadMethod.invoke(null, PairIpExperiment.PRELOAD_MARKER) as? Boolean
+            if (loaded != true) {
+                throw IllegalStateException("libmain preload entry returned $loaded")
+            }
+        }
+        BepInExLog.i(
+            "PairIP preload: libunity/libil2cpp DT_INIT programs ran before LSPlant"
+        )
+
+        // PairIP's startup program schedules a delayed VM program on the
+        // process-wide scheduled executor (VMRunner.job). It repeats every
+        // 30 seconds and crashes once LSPlant has touched the process. The
+        // startup programs have already run, so drop the scheduled job before
+        // installing the hosting hooks.
+        cancelPairIpDelayedJob(gameClassLoader)
+    }
+
+    private fun cancelPairIpDelayedJob(gameClassLoader: ClassLoader) {
+        try {
+            val vmRunner = gameClassLoader.loadClass("com.pairip.VMRunner")
+            val job = vmRunner.getMethod("getJob").invoke(null)
+            if (job is java.util.concurrent.Future<*>) {
+                val cancelled = job.cancel(true)
+                BepInExLog.i(
+                    "PairIP: delayed job ${job.javaClass.name} " +
+                        "done=${job.isDone} cancelled=$cancelled"
+                )
+            } else {
+                BepInExLog.i("PairIP: no delayed job to cancel (job=$job)")
+            }
+        } catch (t: Throwable) {
+            BepInExLog.e("PairIP: failed to cancel delayed job", t)
+        }
+    }
+
+    private fun dumpPairIpScheduler(stage: String, gameClassLoader: ClassLoader) {
+        BepInExLog.i("PairIP scheduler dump: $stage")
+        try {
+            Thread.getAllStackTraces().forEach { (thread, stack) ->
+                val interesting = thread.name.contains("Thread-") ||
+                    thread.name.contains("pool", ignoreCase = true) ||
+                    thread.name.contains("sched", ignoreCase = true) ||
+                    thread.name.contains("timer", ignoreCase = true) ||
+                    stack.any {
+                        it.className.contains("pairip", ignoreCase = true) ||
+                            it.className.contains("Scheduled", ignoreCase = true) ||
+                            it.className.contains("Handler", ignoreCase = true) ||
+                            it.className.contains("Future", ignoreCase = true)
+                    }
+                if (interesting) {
+                    BepInExLog.i(
+                        "PairIP thread ${thread.name} state=${thread.state} " +
+                            "daemon=${thread.isDaemon}"
+                    )
+                    stack.take(16).forEach { frame ->
+                        BepInExLog.i("    at $frame")
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            BepInExLog.e("PairIP thread dump failed", t)
+        }
+
+        try {
+            val vmRunner = gameClassLoader.loadClass("com.pairip.VMRunner")
+            val job = vmRunner.getMethod("getJob").invoke(null)
+            BepInExLog.i("PairIP job: $job class=${job?.javaClass?.name}")
+            if (job is java.util.concurrent.Future<*>) {
+                BepInExLog.i(
+                    "PairIP job: done=${job.isDone} cancelled=${job.isCancelled} " +
+                        "class=${job.javaClass.name}"
+                )
+                if (PairIpExperiment.cancelJob) {
+                    val cancelled = job.cancel(true)
+                    BepInExLog.i("PairIP job cancel(true) -> $cancelled")
+                }
+            }
+        } catch (t: Throwable) {
+            BepInExLog.e("PairIP job dump failed", t)
+        }
+    }
+
+    /**
+     * Loads VMRunner from the game class loader and gives it the hosted game
+     * Context. The static initializer only loads libpairipcore; the VM starts
+     * later, when the app-component factory is initialized.
+     */
+    private fun seedVmRunner(loader: ClassLoader, gameContext: Context) {
+        val vmRunner = loader.loadClass("com.pairip.VMRunner")
+        vmRunner.getMethod("setContext", Context::class.java).invoke(null, gameContext)
+        enableVmRunnerLogging(vmRunner)
+    }
+
+    private fun enableVmRunnerLogging(loader: ClassLoader) {
+        enableVmRunnerLogging(loader.loadClass("com.pairip.VMRunner"))
+    }
+
+    private fun enableVmRunnerLogging(vmRunner: Class<*>) {
+        try {
+            vmRunner.getDeclaredField("loggingEnabled").apply { isAccessible = true }
+                .set(null, "true")
+        } catch (_: Throwable) {
+        }
+    }
+
+    /**
+     * Framework internals that are not part of the public SDK are blocked by
+     * ART's hidden-API policy, including JNI lookups on recent releases.
+     * VMRuntime exposes the same exemption list the platform test harness
+     * uses; "L" matches every reference type.
+     */
+    private fun disableHiddenApiEnforcement() {
+        if (HookEngine.disableHiddenApi()) {
+            BepInExLog.i("Hidden API checks disabled")
+        } else {
+            BepInExLog.w("Hidden API checks could not be disabled")
+        }
+    }
+
+    /**
+     * Finds a declared field by walking the superclass chain. `Class.forName`
+     * cannot see hidden framework classes here, but an instance's own class
+     * can still expose its declared fields.
+     */
+    private fun findField(cls: Class<*>, name: String): java.lang.reflect.Field? {
+        var current: Class<*>? = cls
+        while (current != null) {
+            try {
+                return current.getDeclaredField(name)
+            } catch (_: NoSuchFieldException) {
+                current = current.superclass
+            }
+        }
+        return null
     }
 
     // Launcher onCreate hook
@@ -379,11 +893,16 @@ class BootstrapActivity : Activity() {
         gameContext: Context,
         useOriginalLibUnity: Boolean
     ): FusionConfig {
-        val gameLibDir = gameContext.applicationInfo.nativeLibraryDir
         val appLibDir = applicationInfo.nativeLibraryDir
 
         // Per-game internal data dir
         val appDataDir = BepInExPaths.getAppDataDir(targetPackage)
+
+        // ABI-split installs keep their .so files inside split_config.<abi>.apk
+        // and leave nativeLibraryDir empty. Resolve or extract them before
+        // Fusion builds absolute libunity/libil2cpp paths.
+        val gameLibs = GameNativeLibraries.ensureAvailable(gameContext, appDataDir)
+        val gameLibDir = gameLibs.directory
 
         // Per-game storage root (FusionCore pattern)
         val dataOnSdCard = BepInExPaths.getGameRootDir(targetPackage)
@@ -518,6 +1037,7 @@ class BootstrapActivity : Activity() {
 
         return FusionConfig(
             gameLibraryDirectory = gameLibDir,
+            gameUnityLibraryPath = gameLibs.unityLibraryPath,
             appLibraryDirectory = appLibDir,
             appDataDirectory = appDataDir.absolutePath,
             bepInExDirectory = bepInExDir.absolutePath,
@@ -643,6 +1163,26 @@ class BootstrapActivity : Activity() {
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
             finish()
         }
+    }
+
+    private fun <T> onMainThread(block: () -> T): T {
+        if (Looper.myLooper() == Looper.getMainLooper()) return block()
+        val latch = CountDownLatch(1)
+        var result: T? = null
+        var failure: Throwable? = null
+        runOnUiThread {
+            try {
+                result = block()
+            } catch (t: Throwable) {
+                failure = t
+            } finally {
+                latch.countDown()
+            }
+        }
+        latch.await()
+        failure?.let { throw it }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
 
     private fun runOnMainThread(runnable: Runnable) {

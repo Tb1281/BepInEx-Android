@@ -66,6 +66,7 @@
     </queries>
 
     <application
+        android:name=".DiagnosticApp"
         android:allowBackup="false"
         android:largeHeap="true"
         android:requestLegacyExternalStorage="true"

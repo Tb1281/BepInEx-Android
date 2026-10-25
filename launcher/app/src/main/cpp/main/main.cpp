@@ -42,6 +42,7 @@ static std::string override_il2cpp_path;
 static void *unityLibHandle = nullptr;
 static void *il2cppLibHandle = nullptr;
 static void *originalMainHandle = nullptr;
+static bool preloadedGameLibraries = false;
 
 static void nlog(const char *msg) {
     ::bepinex::log_tag(ANDROID_LOG_ERROR, "LibMain", "%s", msg);
@@ -394,6 +395,81 @@ jboolean internal_unload(JNIEnv *env, void **libHandle)
     return JNI_TRUE;
 }
 
+/* Calls JNI_OnLoad on a library that was already dlopen'd. Plain native
+ * dlopen does not run JNI_OnLoad; UnityPlayer's own NativeLoader.load call
+ * still has to do that, but the libraries are already mapped by then. */
+static bool call_jni_on_load(JNIEnv *env, void *handle, const char *label)
+{
+    if (!handle) {
+        LOGI("%s: no handle for JNI_OnLoad", label);
+        return false;
+    }
+    auto onLoad = reinterpret_cast<JNI_OnLoad_t>(dlsym(handle, "JNI_OnLoad"));
+    if (!onLoad) {
+        LOGI("%s: no JNI_OnLoad", label);
+        return true;
+    }
+    JavaVM *vm = nullptr;
+    if (env->GetJavaVM(&vm) != JNI_OK) {
+        LOGI("%s: GetJavaVM failed", label);
+        return false;
+    }
+    LOGI("%s: calling JNI_OnLoad", label);
+    jint result = onLoad(vm, nullptr);
+    LOGI("%s: JNI_OnLoad returned %d", label, result);
+    return result >= JNI_VERSION_1_6;
+}
+
+/* Preload-only experiment for PairIP:
+ *
+ * Stage Fusion and dlopen libunity.so/libil2cpp.so while LSPlant has not
+ * modified the process yet. DL_INIT programs in both libraries (PairIP's
+ * klB1/Afdq) run during dlopen. JNI_OnLoad and Fusion bootstrap are deferred
+ * until UnityPlayer's real NativeLoader.load call.
+ */
+static bool preload_game_libraries(JNIEnv *env)
+{
+    nlog("preload: begin");
+
+    FusionStageFromConfigPath_t stageFromConfig = nullptr;
+    FusionBootstrapFromLibMain_t bootstrap = nullptr;
+    if (!resolve_fusion_symbols(&stageFromConfig, &bootstrap)) {
+        nlog("preload: FAILED to resolve fusion symbols");
+        return false;
+    }
+    (void)bootstrap;
+
+    std::string configPath = resolve_staged_config_path(env);
+    if (configPath.empty()) {
+        nlog("preload: FAILED to resolve config path");
+        return false;
+    }
+
+    nlog("preload: staging fusion");
+    if (!stageFromConfig(configPath.c_str())) {
+        nlog("preload: stageFromConfig FAILED");
+        return false;
+    }
+
+    nlog("preload: dlopen libunity (DT_INIT only, JNI_OnLoad deferred)");
+    unityLibHandle = dlopen(override_unity_path.c_str(), RTLD_LAZY | RTLD_LOCAL);
+    if (!unityLibHandle) {
+        LOGI("preload: dlopen libunity FAILED: %s", dlerror());
+        return false;
+    }
+
+    nlog("preload: dlopen libil2cpp (DT_INIT only, JNI_OnLoad deferred)");
+    il2cppLibHandle = dlopen(override_il2cpp_path.c_str(), RTLD_LAZY | RTLD_LOCAL);
+    if (!il2cppLibHandle) {
+        LOGI("preload: dlopen libil2cpp FAILED: %s", dlerror());
+        return false;
+    }
+
+    preloadedGameLibraries = true;
+    nlog("preload: COMPLETE (JNI_OnLoad/bootstrap deferred)");
+    return true;
+}
+
 // Exports
 
 extern "C" {
@@ -437,7 +513,13 @@ load(JNIEnv *env, jclass clazz, jstring path)
 {
     nlog("load() called");
     (void)clazz;
-    (void)path;
+
+    const std::string requestedPath = jstring_to_string(env, path);
+    LOGI("load: path '%s'", requestedPath.c_str());
+
+    if (requestedPath == "bepinex-preload") {
+        return preload_game_libraries(env) ? JNI_TRUE : JNI_FALSE;
+    }
 
     /* 1. Resolve libfusion symbols */
     nlog("load: resolving fusion symbols");
@@ -449,40 +531,55 @@ load(JNIEnv *env, jclass clazz, jstring path)
     }
     nlog("load: fusion symbols resolved OK");
 
-    /* 2. Read staged config */
-    nlog("load: resolving config path");
-    std::string configPath = resolve_staged_config_path(env);
-    if (configPath.empty()) {
-        nlog("load: FAILED to resolve config path");
-        return JNI_FALSE;
-    }
-    nlog("load: config path OK");
+    if (preloadedGameLibraries) {
+        /* The experiment already staged Fusion and ran the game libraries'
+         * DT_INIT programs. Staging again would rewrite the patched il2cpp
+         * file while its mapping is live, so only run the deferred parts. */
+        nlog("load: using preloaded game libraries");
+        if (!call_jni_on_load(env, unityLibHandle, "libunity")) {
+            nlog("load: libunity JNI_OnLoad FAILED");
+            return JNI_FALSE;
+        }
+        if (!call_jni_on_load(env, il2cppLibHandle, "libil2cpp")) {
+            nlog("load: libil2cpp JNI_OnLoad FAILED");
+            return JNI_FALSE;
+        }
+    } else {
+        /* 2. Read staged config */
+        nlog("load: resolving config path");
+        std::string configPath = resolve_staged_config_path(env);
+        if (configPath.empty()) {
+            nlog("load: FAILED to resolve config path");
+            return JNI_FALSE;
+        }
+        nlog("load: config path OK");
 
-    /* 3. Stage fusion */
-    nlog("load: calling fusion_stage_from_config_path");
-    if (!stageFromConfig(configPath.c_str())) {
-        nlog("load: fusion_stage_from_config_path FAILED");
-        return JNI_FALSE;
-    }
-    nlog("load: fusion staged OK");
+        /* 3. Stage fusion */
+        nlog("load: calling fusion_stage_from_config_path");
+        if (!stageFromConfig(configPath.c_str())) {
+            nlog("load: fusion_stage_from_config_path FAILED");
+            return JNI_FALSE;
+        }
+        nlog("load: fusion staged OK");
 
-    /* 4. Load Unity first, THEN IL2CPP.
-     * Loading patched libil2cpp with RTLD_NOW before libunity runs IL2CPP
-     * constructors too early and crashes some Unity Android forks (PVZ). */
-    nlog("load: loading libunity");
-    if (!internal_load(env, override_unity_path.c_str(), &unityLibHandle)) {
-        nlog("load: FAILED to load libunity.so");
-        return JNI_FALSE;
-    }
-    nlog("load: libunity OK");
+        /* 4. Load Unity first, THEN IL2CPP.
+         * Loading patched libil2cpp with RTLD_NOW before libunity runs IL2CPP
+         * constructors too early and some Unity Android forks (PVZ) crash. */
+        nlog("load: loading libunity");
+        if (!internal_load(env, override_unity_path.c_str(), &unityLibHandle)) {
+            nlog("load: FAILED to load libunity.so");
+            return JNI_FALSE;
+        }
+        nlog("load: libunity OK");
 
-    nlog("load: loading libil2cpp");
-    if (!internal_load(env, override_il2cpp_path.c_str(), &il2cppLibHandle)) {
-        internal_unload(env, &unityLibHandle);
-        nlog("load: FAILED to load libil2cpp.so");
-        return JNI_FALSE;
+        nlog("load: loading libil2cpp");
+        if (!internal_load(env, override_il2cpp_path.c_str(), &il2cppLibHandle)) {
+            internal_unload(env, &unityLibHandle);
+            nlog("load: FAILED to load libil2cpp.so");
+            return JNI_FALSE;
+        }
+        nlog("load: libil2cpp OK");
     }
-    nlog("load: libil2cpp OK");
 
     /* 5. Bootstrap fusion */
     nlog("load: calling fusion_bootstrap_from_libmain");

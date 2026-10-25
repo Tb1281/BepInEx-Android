@@ -20,6 +20,7 @@
 
 struct FusionConfig {
     std::string gameLibraryDir;
+    std::string gameUnityLibraryPath;
     std::string appLibraryDir;
     std::string appDataDir;
     std::string bepInExDir;

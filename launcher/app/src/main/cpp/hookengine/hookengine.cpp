@@ -245,6 +245,59 @@ bool InlineUnhooker(void *func) { return DobbyDestroy(func) == 0; }
 
 bool g_lsplant_ok = false;
 
+// ---------------------------------------------------------------------------
+// Hidden-API policy bypass.
+//
+// Android denies managed reflection of non-SDK framework members, and recent
+// releases apply the same policy to JNI lookups. Protection layers such as
+// PairIP need those members, so install a process-wide allow policy by
+// replacing ART's decision points with a function that always returns false
+// ("do not deny"). The targets are resolved from the libart symbol table that
+// ParseArtSymbols() already extracted from .gnu_debugdata, so this works on
+// stripped retail builds without a debuggable system image.
+// ---------------------------------------------------------------------------
+
+bool HiddenApiAllow() { return false; }
+
+bool g_hidden_api_disabled = false;
+
+bool DisableHiddenApiChecks() {
+    if (g_hidden_api_disabled) return true;
+    if (!g_art_ready) {
+        LOGE("hiddenapi bypass: libart symbol table unavailable");
+        return false;
+    }
+    static const char *kTargets[] = {
+        // JNI GetFieldID/GetMethodID path.
+        "_ZN3art9hiddenapi27ShouldDenyJniAccessToMemberINS_9ArtMethodEEEbNS_6HandleINS_6mirror5ClassEEEPT_PNS_6ThreadENS0_12AccessMethodEPv",
+        "_ZN3art9hiddenapi27ShouldDenyJniAccessToMemberINS_8ArtFieldEEEbNS_6HandleINS_6mirror5ClassEEEPT_PNS_6ThreadENS0_12AccessMethodEPv",
+        // Reflection path (two overloads for methods, one for fields).
+        "_ZN3art9hiddenapi24ShouldDenyAccessToMemberINS_9ArtMethodEEEbNS_6HandleINS_6mirror5ClassEEEPT_RKNSt3__18functionIFNS0_13AccessContextEvEEENS0_12AccessMethodE",
+        "_ZN3art9hiddenapi24ShouldDenyAccessToMemberINS_9ArtMethodEEEbNS_6HandleINS_6mirror5ClassEEEPT_RKNS0_13AccessContextENS0_12AccessMethodE",
+        "_ZN3art9hiddenapi24ShouldDenyAccessToMemberINS_8ArtFieldEEEbNS_6HandleINS_6mirror5ClassEEEPT_RKNSt3__18functionIFNS0_13AccessContextEvEEENS0_12AccessMethodE",
+        // Shared implementation, in case a caller reaches it directly.
+        "_ZN3art9hiddenapi6detail28ShouldDenyAccessToMemberImplINS_9ArtMethodEEEbNS_6HandleINS_6mirror5ClassEEEPT_NS0_7ApiListEjRKNS0_13AccessContextESD_NS0_12AccessMethodE",
+        "_ZN3art9hiddenapi6detail28ShouldDenyAccessToMemberImplINS_8ArtFieldEEEbNS_6HandleINS_6mirror5ClassEEEPT_NS0_7ApiListEjRKNS0_13AccessContextESD_NS0_12AccessMethodE",
+    };
+    int installed = 0;
+    for (const char *name : kTargets) {
+        void *target = ResolveArtSymbol(name, false);
+        if (target == nullptr) {
+            LOGI("hiddenapi symbol not present: %s", name);
+            continue;
+        }
+        if (InlineHooker(target, reinterpret_cast<void *>(HiddenApiAllow)) != nullptr) {
+            installed++;
+        } else {
+            LOGE("hiddenapi hook failed: %s", name);
+        }
+    }
+    LOGI("hiddenapi bypass: %d/%zu hooks installed", installed,
+         sizeof(kTargets) / sizeof(kTargets[0]));
+    g_hidden_api_disabled = installed > 0;
+    return g_hidden_api_disabled;
+}
+
 }  // namespace
 
 extern "C" {
@@ -279,6 +332,35 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
 JNIEXPORT jboolean JNICALL
 Java_com_bepinex_android_hooks_HookEngine_nativeIsInitialized(JNIEnv *, jobject) {
     return g_lsplant_ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_bepinex_android_hooks_HookEngine_nativeDisableHiddenApi(JNIEnv *, jobject) {
+    return DisableHiddenApiChecks() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Resolves a method through JNI and returns it as java.lang.reflect.Method.
+// Managed reflection is subject to the hidden-API policy; GetMethodID is not,
+// so this is the supported way to reach framework internals that the SDK
+// intentionally hides (for example LoadedApk.createAppFactory).
+JNIEXPORT jobject JNICALL
+Java_com_bepinex_android_hooks_HookEngine_nativeFindMethod(
+    JNIEnv *env, jobject, jclass clazz, jstring name, jstring signature, jboolean is_static) {
+    if (clazz == nullptr || name == nullptr || signature == nullptr) return nullptr;
+    const char *name_chars = env->GetStringUTFChars(name, nullptr);
+    const char *sig_chars = env->GetStringUTFChars(signature, nullptr);
+    if (name_chars == nullptr || sig_chars == nullptr) {
+        if (name_chars != nullptr) env->ReleaseStringUTFChars(name, name_chars);
+        if (sig_chars != nullptr) env->ReleaseStringUTFChars(signature, sig_chars);
+        return nullptr;
+    }
+    jmethodID method = is_static
+        ? env->GetStaticMethodID(clazz, name_chars, sig_chars)
+        : env->GetMethodID(clazz, name_chars, sig_chars);
+    env->ReleaseStringUTFChars(name, name_chars);
+    env->ReleaseStringUTFChars(signature, sig_chars);
+    if (method == nullptr) return nullptr;
+    return env->ToReflectedMethod(clazz, method, is_static);
 }
 
 JNIEXPORT jobject JNICALL Java_com_bepinex_android_hooks_HookEngine_nativeHook(
