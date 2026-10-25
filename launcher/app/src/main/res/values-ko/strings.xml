@@ -139,11 +139,11 @@
     <string name="about_project_bepinex_name">BepInEx</string>
     <string name="about_project_bepinex_desc">Unity IL2CPP 모딩 프레임워크 — 핵심 플러그인 로더. BepInEx 팀의 BepInEx 6.0.0-pre.2 기반.</string>
     <string name="about_project_fusioncore_name">FusionCore</string>
-    <string name="about_project_fusioncore_desc">Starlight 팀의 Android Unity IL2CPP 런타임 컨테이너. 인젝션 체인, Pine 훅 및 NativeLoader 아키텍처 주요 참고.</string>
+    <string name="about_project_fusioncore_desc">Starlight 팀의 Android Unity IL2CPP 런타임 컨테이너. 인젝션 체인, 네이티브 훅 통합 및 NativeLoader 아키텍처 주요 참고.</string>
     <string name="about_project_dotnet_name">dotnet/runtime</string>
     <string name="about_project_dotnet_desc">Microsoft .NET 런타임(CoreCLR + BCL)을 android-arm64용으로 소스 빌드. 암호화는 플랫폼 BoringSSL PAL을 사용.</string>
-    <string name="about_project_pine_name">Pine</string>
-    <string name="about_project_pine_desc">ART Java 메서드 후킹 프레임워크 (top.canyie.pine:core:0.3.0). ClassLoader, PackageManager, UnityPlayer 후킹에 사용.</string>
+    <string name="about_project_lsplant_name">LSPlant</string>
+    <string name="about_project_lsplant_desc">ART Java 메서드 후킹 프레임워크 (LGPL-3.0). ClassLoader, PackageManager, UnityPlayer 후킹에 사용.</string>
     <string name="about_project_dobby_name">Dobby</string>
     <string name="about_project_dobby_desc">ARM64 네이티브 인라인 훅 프레임워크. libfusion의 il2cpp_init 후킹에 사용.</string>
     <string name="about_project_cpp2il_name">Cpp2IL</string>
@@ -152,7 +152,7 @@
     <string name="about_url_bepinex">https://github.com/BepInEx/BepInEx</string>
     <string name="about_url_fusioncore">https://github.com/All-Of-Us-Mods/FusionCore</string>
     <string name="about_url_dotnet">https://github.com/dotnet/runtime</string>
-    <string name="about_url_pine">https://github.com/canyie/Pine</string>
+    <string name="about_url_lsplant">https://github.com/LSPosed/LSPlant</string>
     <string name="about_url_dobby">https://github.com/canyie/dobby</string>
     <string name="about_url_cpp2il">https://github.com/SamboyCoding/Cpp2IL</string>
     <string name="about_dev_section">주요 개발자</string>

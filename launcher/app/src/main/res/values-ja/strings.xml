@@ -139,11 +139,11 @@
     <string name="about_project_bepinex_name">BepInEx</string>
     <string name="about_project_bepinex_desc">Unity IL2CPP MODフレームワーク — コアプラグインローダー。BepInEx チームによる BepInEx 6.0.0-pre.2。</string>
     <string name="about_project_fusioncore_name">FusionCore</string>
-    <string name="about_project_fusioncore_desc">Starlight チームの Android Unity IL2CPP ランタイムコンテナ。インジェクションチェーン、Pineフック、NativeLoaderアーキテクチャの主要な参考元。</string>
+    <string name="about_project_fusioncore_desc">Starlight チームの Android Unity IL2CPP ランタイムコンテナ。インジェクションチェーン、ネイティブフック統合、NativeLoaderアーキテクチャの主要な参考元。</string>
     <string name="about_project_dotnet_name">dotnet/runtime</string>
     <string name="about_project_dotnet_desc">Microsoft .NET ランタイム (CoreCLR + BCL) を android-arm64 向けにソースビルド。暗号化はプラットフォームの BoringSSL PAL を使用。</string>
-    <string name="about_project_pine_name">Pine</string>
-    <string name="about_project_pine_desc">ART Javaメソッドフックフレームワーク (top.canyie.pine:core:0.3.0)。ClassLoader、PackageManager、UnityPlayerフックに使用。</string>
+    <string name="about_project_lsplant_name">LSPlant</string>
+    <string name="about_project_lsplant_desc">ART Javaメソッドフックフレームワーク (LGPL-3.0)。ClassLoader、PackageManager、UnityPlayerフックに使用。</string>
     <string name="about_project_dobby_name">Dobby</string>
     <string name="about_project_dobby_desc">ARM64向けネイティブインラインフックフレームワーク。libfusionのil2cpp_initフックに使用。</string>
     <string name="about_project_cpp2il_name">Cpp2IL</string>

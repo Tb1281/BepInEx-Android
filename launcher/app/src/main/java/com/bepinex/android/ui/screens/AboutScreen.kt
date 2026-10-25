@@ -141,8 +141,8 @@ fun AboutScreen(
                 desc = stringResource(R.string.about_project_dotnet_desc)
             )
             ProjectCard(
-                name = stringResource(R.string.about_project_pine_name),
-                desc = stringResource(R.string.about_project_pine_desc)
+                name = stringResource(R.string.about_project_lsplant_name),
+                desc = stringResource(R.string.about_project_lsplant_desc)
             )
             ProjectCard(
                 name = stringResource(R.string.about_project_dobby_name),

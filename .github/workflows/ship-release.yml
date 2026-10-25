@@ -194,7 +194,6 @@ jobs:
             printf '\nThe matrix records the devices used for release verification, not a guarantee for every title. Device results are recorded before stable promotion.\n'
             printf '\n### ⚠️ Known issues\n'
             printf -- '- **The Tower:** the production Firebase RTDB path aborts in `DeleteInternal` on the pinned Firebase C++ SDK. See [`docs/release-crash-investigation.md`](%s/docs/release-crash-investigation.md).\n' "$SOURCE_URL"
-            printf -- '- **Pine license review:** the GPL-3.0 launcher and Anti-996 Pine compatibility review must be closed before stable promotion.\n'
             printf '\n### 🔒 Checksums (SHA-256)\n```\n'
             cat "$APK_PATH.sha256"
             # Basenames, not the caller's staging paths: a user who downloads

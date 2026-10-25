@@ -29,7 +29,7 @@ identity for OS/GMS IPC (`getOpPackageName` stays host-aligned).
 
 **Layer 4: Play Billing retry loop.** The store client queries products under
 the host package, which is unlisted, so per-frame retries leak JNI global
-references until ART aborts (limit 51200). Fix: `PlayBillingFix` (via Pine)
+references until ART aborts (limit 51200). Fix: `PlayBillingFix` (via LSPlant)
 mocks `isReady`, connection setup, product/sku queries (empty or mock data),
 and purchase queries. Scope: prevents boot crashes only; real checkout
 (`launchBillingFlow`) remains unsupported and needs mod-level handling.
