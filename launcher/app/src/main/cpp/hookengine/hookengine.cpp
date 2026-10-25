@@ -39,6 +39,7 @@
 
 #define LOG_TAG "HookEngine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace {
@@ -247,15 +248,27 @@ bool InlineUnhooker(void *func) { return DobbyDestroy(func) == 0; }
 bool g_lsplant_ok = false;
 bool g_lsplant_init_attempted = false;
 
+bool DisableHiddenApiChecks();
+
 // LSPlant patches ART entrypoints and is what PairIP reacts to, so it must not
-// run while PairIP's startup programs are still executing. JNI_OnLoad can be
-// triggered early by the hidden-API bypass alone; initialize LSPlant lazily on
-// the first hook query instead.
+// run while PairIP's startup programs are still executing. Initialize LSPlant
+// lazily on the first hook query instead of in JNI_OnLoad.
+//
+// On Android 17 the hidden-API policy applies to JNI GetMethodID too. A
+// JNI_OnLoad call is exempt (the baseline initialization path), but this lazy
+// initialization is a normal JNI call, and LSPlant's InitJNI looks up the
+// package-private DexFile.<init> with GetMethodID. Install the process-wide
+// allow policy first; otherwise that lookup is denied and InitJNI reports
+// "Failed to find DexFile.<init>".
 bool EnsureLsplantInitialized(JNIEnv *env) {
     static std::mutex mutex;
     std::lock_guard<std::mutex> lock(mutex);
     if (g_lsplant_init_attempted) return g_lsplant_ok;
     g_lsplant_init_attempted = true;
+
+    if (!DisableHiddenApiChecks()) {
+        LOGW("LSPlant init: hidden-API bypass unavailable; DexFile.<init> lookup may be denied");
+    }
 
     lsplant::InitInfo info{
         .inline_hooker = InlineHooker,
