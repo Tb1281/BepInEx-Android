@@ -31,13 +31,35 @@ object HookEngine {
     fun isInitialized(): Boolean = nativeIsInitialized()
 
     /**
+     * Installs the process-wide hidden-API allow policy. Must be called
+     * before resolving framework internals that the SDK does not expose.
+     */
+    fun disableHiddenApi(): Boolean = nativeDisableHiddenApi()
+
+    /**
+     * Resolves a method through JNI, bypassing the managed hidden-API policy.
+     * Returns a [Method] that [hook] can install directly.
+     */
+    fun findMethod(
+        clazz: Class<*>,
+        name: String,
+        signature: String,
+        isStatic: Boolean
+    ): Method? = nativeFindMethod(clazz, name, signature, isStatic)
+
+    /**
      * Hooks [member] (a [Method] or [java.lang.reflect.Constructor]) with
      * [callback]. Returns false if the engine is not initialized or LSPlant
      * refused the hook; returns true if the member is already hooked.
      */
     fun hook(member: Member, callback: MethodHook): Boolean {
         hookers[member]?.let { return true }
-        (member as? AccessibleObject)?.isAccessible = true
+        try {
+            (member as? AccessibleObject)?.isAccessible = true
+        } catch (_: Throwable) {
+            // JNI-resolved framework methods may refuse the accessibility
+            // change; LSPlant hooks the underlying jmethodID regardless.
+        }
         val hooker = Hooker(member, callback)
         if (hookers.putIfAbsent(member, hooker) != null) return true
         val backup = nativeHook(member, hooker, callbackMethod)
@@ -57,6 +79,15 @@ object HookEngine {
     fun isHooked(member: Member): Boolean = hookers.containsKey(member)
 
     private external fun nativeIsInitialized(): Boolean
+
+    private external fun nativeDisableHiddenApi(): Boolean
+
+    private external fun nativeFindMethod(
+        clazz: Class<*>,
+        name: String,
+        signature: String,
+        isStatic: Boolean
+    ): Method?
 
     private external fun nativeHook(target: Member, hooker: Hooker, callbackMethod: Method): Method?
 

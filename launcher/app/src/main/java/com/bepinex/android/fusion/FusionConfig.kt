@@ -10,6 +10,13 @@ data class FusionConfig(
     /** Directory where the GAME's native libraries are located (Among Us APK lib/arm64-v8a) */
     val gameLibraryDirectory: String,
 
+    /**
+     * Explicit path for the game's `libunity.so`. This may be an APK entry path
+     * (`<apk>!/lib/<abi>/libunity.so`) so the module keeps the path it has in a
+     * normal game launch. Empty means `gameLibraryDirectory/libunity.so`.
+     */
+    val gameUnityLibraryPath: String = "",
+
     /** Directory where OUR native libraries are located (this APK's nativeLibraryDir) */
     val appLibraryDirectory: String,
 
@@ -41,6 +48,7 @@ data class FusionConfig(
      */
     fun toConfigFile(): String = buildString {
         appendLine("gameLibraryDirectory=${gameLibraryDirectory}")
+        appendLine("gameUnityLibraryPath=${gameUnityLibraryPath}")
         appendLine("appLibraryDirectory=${appLibraryDirectory}")
         appendLine("appDataDirectory=${appDataDirectory}")
         appendLine("bepInExDirectory=${bepInExDirectory}")

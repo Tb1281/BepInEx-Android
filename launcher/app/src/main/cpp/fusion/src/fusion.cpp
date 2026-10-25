@@ -111,6 +111,7 @@ static bool parse_fusion_config(const char *text, FusionConfig *out)
 
         /* Assign */
         if (key == "gameLibraryDirectory") out->gameLibraryDir = value;
+        else if (key == "gameUnityLibraryPath") out->gameUnityLibraryPath = value;
         else if (key == "appLibraryDirectory") out->appLibraryDir = value;
         else if (key == "appDataDirectory") out->appDataDir = value;
         else if (key == "bepInExDirectory") out->bepInExDir = value;
@@ -130,6 +131,7 @@ static bool stage_fusion_config(const FusionConfig &config)
 {
     LOGI("=== Staging Fusion ===");
     LOGI("  gameLibDir:   %s", config.gameLibraryDir.c_str());
+    LOGI("  gameUnity:    %s", config.gameUnityLibraryPath.c_str());
     LOGI("  appLibDir:    %s", config.appLibraryDir.c_str());
     LOGI("  appDataDir:   %s", config.appDataDir.c_str());
     LOGI("  bepInExDir:   %s", config.bepInExDir.c_str());
@@ -148,7 +150,9 @@ static bool stage_fusion_config(const FusionConfig &config)
     std::string il2cppPath;
     std::string gameIl2cppPath = config.gameLibraryDir + "/libil2cpp.so";
 
-    if (config.useOriginalLibUnity) {
+    if (!config.gameUnityLibraryPath.empty()) {
+        unityPath = config.gameUnityLibraryPath;
+    } else if (config.useOriginalLibUnity) {
         unityPath = config.gameLibraryDir + "/libunity.so";
     } else {
         unityPath = config.appLibraryDir + "/libunity.so";
