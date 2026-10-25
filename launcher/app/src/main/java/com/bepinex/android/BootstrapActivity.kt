@@ -601,12 +601,27 @@ class BootstrapActivity : Activity() {
         val nativeLoader = gameClassLoader.loadClass("com.unity3d.player.NativeLoader")
         val loadMethod = nativeLoader.getMethod("load", String::class.java)
 
+        if (PairIpExperiment.hiddenApi) {
+            // The class-loader bridge is a JNI lookup of a hidden Runtime
+            // loader method, and Android 17 denies that lookup until the
+            // process-wide allow policy is installed. The bypass only patches
+            // ART's decision points; LSPlant stays deferred because it is
+            // what PairIP's startup programs react to.
+            disableHiddenApiEnforcement()
+        }
+
         onMainThread {
             val loadError = PairIpShield.loadIntoClassLoader(gameClassLoader, libmainPath)
             if (loadError != null) {
                 throw IllegalStateException(
                     "Could not load $libmainPath into the game loader: $loadError"
                 )
+            }
+            if (PairIpExperiment.hiddenApi) {
+                // libmain is in the game namespace now and its preload entry
+                // is public, so no further hidden-API lookup is needed.
+                // Restore ART before PairIP's DT_INIT programs inspect it.
+                restoreHiddenApiEnforcement()
             }
             val loaded = loadMethod.invoke(null, PairIpExperiment.PRELOAD_MARKER) as? Boolean
             if (loaded != true) {
@@ -724,6 +739,14 @@ class BootstrapActivity : Activity() {
             BepInExLog.i("Hidden API checks disabled")
         } else {
             BepInExLog.w("Hidden API checks could not be disabled")
+        }
+    }
+
+    private fun restoreHiddenApiEnforcement() {
+        if (HookEngine.restoreHiddenApi()) {
+            BepInExLog.i("Hidden API checks restored")
+        } else {
+            BepInExLog.w("Hidden API checks could not be restored")
         }
     }
 

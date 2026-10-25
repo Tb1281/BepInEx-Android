@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -244,6 +245,30 @@ void *InlineHooker(void *target, void *hooker) {
 bool InlineUnhooker(void *func) { return DobbyDestroy(func) == 0; }
 
 bool g_lsplant_ok = false;
+bool g_lsplant_init_attempted = false;
+
+// LSPlant patches ART entrypoints and is what PairIP reacts to, so it must not
+// run while PairIP's startup programs are still executing. JNI_OnLoad can be
+// triggered early by the hidden-API bypass alone; initialize LSPlant lazily on
+// the first hook query instead.
+bool EnsureLsplantInitialized(JNIEnv *env) {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (g_lsplant_init_attempted) return g_lsplant_ok;
+    g_lsplant_init_attempted = true;
+
+    lsplant::InitInfo info{
+        .inline_hooker = InlineHooker,
+        .inline_unhooker = InlineUnhooker,
+        .art_symbol_resolver =
+            [](std::string_view name) { return ResolveArtSymbol(name, false); },
+        .art_symbol_prefix_resolver =
+            [](std::string_view prefix) { return ResolveArtSymbol(prefix, true); },
+    };
+    g_lsplant_ok = lsplant::Init(env, info);
+    LOGI("LSPlant init: %s", g_lsplant_ok ? "ok" : "FAILED");
+    return g_lsplant_ok;
+}
 
 // ---------------------------------------------------------------------------
 // Hidden-API policy bypass.
@@ -260,6 +285,20 @@ bool g_lsplant_ok = false;
 bool HiddenApiAllow() { return false; }
 
 bool g_hidden_api_disabled = false;
+std::vector<void *> g_hidden_api_targets;
+
+bool RestoreHiddenApiChecks() {
+    if (!g_hidden_api_disabled) return true;
+    int restored = 0;
+    for (void *target : g_hidden_api_targets) {
+        if (DobbyDestroy(target) == 0) restored++;
+    }
+    const size_t count = g_hidden_api_targets.size();
+    g_hidden_api_targets.clear();
+    g_hidden_api_disabled = false;
+    LOGI("hiddenapi bypass removed: %d/%zu hooks restored", restored, count);
+    return restored == static_cast<int>(count);
+}
 
 bool DisableHiddenApiChecks() {
     if (g_hidden_api_disabled) return true;
@@ -287,6 +326,7 @@ bool DisableHiddenApiChecks() {
             continue;
         }
         if (InlineHooker(target, reinterpret_cast<void *>(HiddenApiAllow)) != nullptr) {
+            g_hidden_api_targets.push_back(target);
             installed++;
         } else {
             LOGE("hiddenapi hook failed: %s", name);
@@ -316,27 +356,23 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
         LOGE("libart symbol table unavailable (path=%s)", art_path.c_str());
     }
 
-    lsplant::InitInfo info{
-        .inline_hooker = InlineHooker,
-        .inline_unhooker = InlineUnhooker,
-        .art_symbol_resolver =
-            [](std::string_view name) { return ResolveArtSymbol(name, false); },
-        .art_symbol_prefix_resolver =
-            [](std::string_view prefix) { return ResolveArtSymbol(prefix, true); },
-    };
-    g_lsplant_ok = lsplant::Init(env, info);
-    LOGI("LSPlant init: %s", g_lsplant_ok ? "ok" : "FAILED");
+    LOGI("LSPlant init deferred until the first hook query");
     return JNI_VERSION_1_6;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_bepinex_android_hooks_HookEngine_nativeIsInitialized(JNIEnv *, jobject) {
-    return g_lsplant_ok ? JNI_TRUE : JNI_FALSE;
+Java_com_bepinex_android_hooks_HookEngine_nativeIsInitialized(JNIEnv *env, jobject) {
+    return EnsureLsplantInitialized(env) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_bepinex_android_hooks_HookEngine_nativeDisableHiddenApi(JNIEnv *, jobject) {
     return DisableHiddenApiChecks() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_bepinex_android_hooks_HookEngine_nativeRestoreHiddenApi(JNIEnv *, jobject) {
+    return RestoreHiddenApiChecks() ? JNI_TRUE : JNI_FALSE;
 }
 
 // Resolves a method through JNI and returns it as java.lang.reflect.Method.
@@ -365,7 +401,7 @@ Java_com_bepinex_android_hooks_HookEngine_nativeFindMethod(
 
 JNIEXPORT jobject JNICALL Java_com_bepinex_android_hooks_HookEngine_nativeHook(
     JNIEnv *env, jobject, jobject target, jobject hooker, jobject callback_method) {
-    if (!g_lsplant_ok) return nullptr;
+    if (!EnsureLsplantInitialized(env)) return nullptr;
     return lsplant::Hook(env, target, hooker, callback_method);
 }
 

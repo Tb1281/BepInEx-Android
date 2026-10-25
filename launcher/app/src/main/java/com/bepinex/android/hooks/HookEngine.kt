@@ -8,9 +8,10 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Entry point of the LSPlant-backed hook engine (libhookengine.so +
  * liblsplant.so), replacing Pine. Loading this object loads the native shim,
- * whose JNI_OnLoad initializes LSPlant with the unrestricted JNIEnv LSPlant
- * requires; hook installation is only possible after that succeeds, which
- * [isInitialized] reports.
+ * whose JNI_OnLoad parses libart's symbol table. LSPlant itself is initialized
+ * lazily on the first [isInitialized] or [hook] call: the hidden-API bypass
+ * ([disableHiddenApi]) must be usable before PairIP's startup programs have
+ * finished, and LSPlant is what PairIP reacts to.
  *
  * The registry is load-bearing twice over: it makes [hook] idempotent per
  * member (LSPlant itself also refuses a duplicate hook, but the facade needs
@@ -35,6 +36,13 @@ object HookEngine {
      * before resolving framework internals that the SDK does not expose.
      */
     fun disableHiddenApi(): Boolean = nativeDisableHiddenApi()
+
+    /**
+     * Removes the hidden-API allow policy again, restoring ART's original
+     * decision points. The PairIP preload path uses this after loading
+     * libmain so PairIP's DT_INIT programs see an unmodified libart.
+     */
+    fun restoreHiddenApi(): Boolean = nativeRestoreHiddenApi()
 
     /**
      * Resolves a method through JNI, bypassing the managed hidden-API policy.
@@ -81,6 +89,8 @@ object HookEngine {
     private external fun nativeIsInitialized(): Boolean
 
     private external fun nativeDisableHiddenApi(): Boolean
+
+    private external fun nativeRestoreHiddenApi(): Boolean
 
     private external fun nativeFindMethod(
         clazz: Class<*>,

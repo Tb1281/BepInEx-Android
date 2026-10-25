@@ -262,10 +262,11 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeConfigure(
  * Loads a native library into an explicit ClassLoader's linker namespace.
  *
  * `System.load` picks the caller's class loader, which for this library is
- * always the launcher. `Runtime.nativeLoad` takes the class loader as an
- * argument, so plain JNI (which is not subject to the hidden-API policy) can
- * put libmain.so into the game's namespace before UnityPlayer asks for it.
- * Returns null on success, or the platform's error string on failure.
+ * always the launcher. `Runtime.nativeLoad` takes the caller class and its
+ * class loader as arguments, so plain JNI (which is not subject to Java's
+ * caller-sensitivity or hidden-API checks) can put libmain.so into the game's
+ * namespace before UnityPlayer asks for it. Returns null on success, or the
+ * platform's error string on failure.
  */
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_bepinex_android_hooks_PairIpShield_nativeLoadIntoClassLoader(
@@ -280,54 +281,9 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeLoadIntoClassLoader(
         return env->NewStringUTF("java/lang/Runtime not found");
     }
 
-    // Preferred path: call the runtime's own loading entry point with the
-    // caller's class loader. It reports the platform error string directly.
-    // Depending on the platform version this is a static or an instance
-    // method, so try both shapes.
-    jmethodID native_load = env->GetStaticMethodID(
-        runtime_class, "nativeLoad",
-        "(Ljava/lang/String;Ljava/lang/ClassLoader;Ljava/lang/String;)Ljava/lang/String;");
-    bool native_load_is_static = native_load != nullptr;
-    if (native_load == nullptr) {
-        env->ExceptionClear();
-        native_load = env->GetMethodID(
-            runtime_class, "nativeLoad",
-            "(Ljava/lang/String;Ljava/lang/ClassLoader;Ljava/lang/String;)Ljava/lang/String;");
-        if (native_load == nullptr) env->ExceptionClear();
-    }
-    if (native_load != nullptr) {
-        jstring result = nullptr;
-        if (native_load_is_static) {
-            result = static_cast<jstring>(env->CallStaticObjectMethod(
-                runtime_class, native_load, library_path, class_loader, nullptr));
-        } else {
-            jmethodID get_runtime = env->GetStaticMethodID(
-                runtime_class, "getRuntime", "()Ljava/lang/Runtime;");
-            jobject runtime = get_runtime != nullptr
-                ? env->CallStaticObjectMethod(runtime_class, get_runtime)
-                : nullptr;
-            if (runtime != nullptr) {
-                result = static_cast<jstring>(env->CallObjectMethod(
-                    runtime, native_load, library_path, class_loader, nullptr));
-            }
-        }
-        if (env->ExceptionCheck()) {
-            env->ExceptionClear();
-            return env->NewStringUTF("Runtime.nativeLoad threw");
-        }
-        return result;
-    }
-
-    // Fallback: `Runtime.load0(Class, String)` derives the linker namespace
-    // from the given class and throws UnsatisfiedLinkError on failure. Pass
-    // the game's NativeLoader so libmain lands in the game's namespace.
-    jmethodID load0 = env->GetStaticMethodID(
-        runtime_class, "load0", "(Ljava/lang/Class;Ljava/lang/String;)V");
-    if (load0 == nullptr) {
-        env->ExceptionClear();
-        return env->NewStringUTF("Runtime.nativeLoad/load0 not available");
-    }
-
+    // Resolve the game's NativeLoader first: it is the class whose linker
+    // namespace must own libmain.so, and `Runtime.nativeLoad` takes it as the
+    // caller-class argument on current platforms.
     jclass class_loader_class = env->FindClass("java/lang/ClassLoader");
     if (class_loader_class == nullptr) {
         env->ExceptionClear();
@@ -349,18 +305,16 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeLoadIntoClassLoader(
         return env->NewStringUTF("could not resolve com.unity3d.player.NativeLoader");
     }
 
-    env->CallStaticVoidMethod(runtime_class, load0, native_loader_class, library_path);
-    env->DeleteLocalRef(native_loader_class);
-    if (env->ExceptionCheck()) {
-        // Surface the platform's UnsatisfiedLinkError message so the harness
-        // log says why the load failed instead of a bare "threw".
-        std::string message = "Runtime.load0 threw";
+    auto exception_text = [env](const char *fallback) -> jstring {
+        std::string message = fallback;
         jthrowable thrown = env->ExceptionOccurred();
         env->ExceptionClear();
         if (thrown != nullptr) {
-            jmethodID to_string = env->GetMethodID(
-                env->FindClass("java/lang/Throwable"), "toString",
-                "()Ljava/lang/String;");
+            jclass throwable_class = env->FindClass("java/lang/Throwable");
+            jmethodID to_string = throwable_class != nullptr
+                ? env->GetMethodID(throwable_class, "toString",
+                                   "()Ljava/lang/String;")
+                : nullptr;
             if (to_string != nullptr) {
                 auto text = static_cast<jstring>(
                     env->CallObjectMethod(thrown, to_string));
@@ -373,6 +327,65 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeLoadIntoClassLoader(
             env->DeleteLocalRef(thrown);
         }
         return env->NewStringUTF(message.c_str());
+    };
+
+    // Preferred path: the platform's own loading entry point. Android 14+
+    // declares the third argument as the caller Class; older releases used a
+    // library-search-path String. `Runtime.load0` in the framework shows the
+    // current shape: nativeLoad(path, fromClass.getClassLoader(), fromClass).
+    jmethodID native_load = env->GetStaticMethodID(
+        runtime_class, "nativeLoad",
+        "(Ljava/lang/String;Ljava/lang/ClassLoader;Ljava/lang/Class;)Ljava/lang/String;");
+    if (native_load != nullptr) {
+        auto result = static_cast<jstring>(env->CallStaticObjectMethod(
+            runtime_class, native_load, library_path, class_loader,
+            native_loader_class));
+        if (env->ExceptionCheck()) {
+            return exception_text("Runtime.nativeLoad threw");
+        }
+        return result;
+    }
+    env->ExceptionClear();
+
+    native_load = env->GetStaticMethodID(
+        runtime_class, "nativeLoad",
+        "(Ljava/lang/String;Ljava/lang/ClassLoader;Ljava/lang/String;)Ljava/lang/String;");
+    if (native_load != nullptr) {
+        auto result = static_cast<jstring>(env->CallStaticObjectMethod(
+            runtime_class, native_load, library_path, class_loader, nullptr));
+        if (env->ExceptionCheck()) {
+            return exception_text("Runtime.nativeLoad threw");
+        }
+        return result;
+    }
+    env->ExceptionClear();
+
+    // Fallback: `Runtime.load0(Class, String)` is an instance method that
+    // derives the linker namespace from the given class and reports failure
+    // as UnsatisfiedLinkError. Pass the game's NativeLoader so libmain lands
+    // in the game's namespace.
+    jmethodID load0 = env->GetMethodID(
+        runtime_class, "load0", "(Ljava/lang/Class;Ljava/lang/String;)V");
+    if (load0 == nullptr) {
+        env->ExceptionClear();
+        return env->NewStringUTF("Runtime.nativeLoad/load0 not available");
+    }
+
+    jmethodID get_runtime = env->GetStaticMethodID(
+        runtime_class, "getRuntime", "()Ljava/lang/Runtime;");
+    if (get_runtime == nullptr) {
+        env->ExceptionClear();
+        return env->NewStringUTF("Runtime.getRuntime not found");
+    }
+    jobject runtime = env->CallStaticObjectMethod(runtime_class, get_runtime);
+    if (runtime == nullptr || env->ExceptionCheck()) {
+        return exception_text("Runtime.getRuntime returned null");
+    }
+
+    env->CallVoidMethod(runtime, load0, native_loader_class, library_path);
+    env->DeleteLocalRef(runtime);
+    if (env->ExceptionCheck()) {
+        return exception_text("Runtime.load0 threw");
     }
     return nullptr;
 }
