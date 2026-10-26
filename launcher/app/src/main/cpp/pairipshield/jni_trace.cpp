@@ -350,6 +350,45 @@ std::string ClassNameOfClassSafe(JNIEnv *env, jclass clazz) {
     return ClassNameOfClassImpl(env, clazz);
 }
 
+// Some PairIP call sites resolve their method ID outside the traced
+// GetStaticMethodID path (for example through the reflection helper in
+// libpairipcore), so the registry above cannot name them. Fall back to
+// ToReflectedMethod + Method.toString() to recover the Java declaration.
+// Debug-only: it may allocate and throw, so bail out whenever the VM already
+// has a pending exception and clear only our own.
+std::string ResolveStaticMethod(JNIEnv *env, jclass clazz, jmethodID id) {
+    const MemberInfo info = LookupMethod(id);
+    if (info.name != "?") return info.clazz + "." + info.name;
+    std::string out = ClassNameOfClassSafe(env, clazz) + ".<unknown " +
+                      std::to_string(reinterpret_cast<uintptr_t>(id)) + ">";
+    if (env == nullptr || clazz == nullptr || id == nullptr) return out;
+    if (g_exception_check != nullptr && g_exception_check(env)) return out;
+
+    jobject method = env->ToReflectedMethod(clazz, id, JNI_TRUE);
+    if (method == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return out;
+    }
+    jclass method_class = env->FindClass("java/lang/reflect/Method");
+    jmethodID to_string =
+        method_class != nullptr
+            ? env->GetMethodID(method_class, "toString",
+                               "()Ljava/lang/String;")
+            : nullptr;
+    if (to_string != nullptr) {
+        auto text = static_cast<jstring>(
+            env->CallObjectMethod(method, to_string));
+        if (text != nullptr) {
+            out = JStringToUtf8(env, text);
+            env->DeleteLocalRef(text);
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+    env->DeleteLocalRef(method);
+    if (method_class != nullptr) env->DeleteLocalRef(method_class);
+    return out;
+}
+
 std::string ClassName(JNIEnv *env, jobject object) {
     if (object == nullptr) return "null";
     if (g_get_object_class == nullptr) return "object";
@@ -1033,9 +1072,12 @@ jobject JNICALL HookCallStaticObjectMethodV(JNIEnv *env, jclass clazz,
         const MemberInfo info = LookupMethod(id);
         va_list copy;
         va_copy(copy, args);
-        TRACEI("jni: CallStaticObjectMethod %s.%s args=[%s]",
-               info.clazz.c_str(), info.name.c_str(),
-               FormatArgsVa(env, info.sig, copy).c_str());
+        TRACEI("jni: CallStaticObjectMethod %s args=[%s] caller=+%#lx",
+               ResolveStaticMethod(env, clazz, id).c_str(),
+               FormatArgsVa(env, info.sig, copy).c_str(),
+               static_cast<unsigned long>(
+                   reinterpret_cast<uintptr_t>(caller) -
+                   g_pairip_range.begin));
         va_end(copy);
     }
     jobject result = g_call_static_object_v(env, clazz, id, args);
@@ -1050,9 +1092,12 @@ jobject JNICALL HookCallStaticObjectMethodA(JNIEnv *env, jclass clazz,
     const bool trace = IsPairIpCaller(caller);
     if (trace) {
         const MemberInfo info = LookupMethod(id);
-        TRACEI("jni: CallStaticObjectMethodA %s.%s args=[%s]",
-               info.clazz.c_str(), info.name.c_str(),
-               FormatArgsA(env, info.sig, args).c_str());
+        TRACEI("jni: CallStaticObjectMethodA %s args=[%s] caller=+%#lx",
+               ResolveStaticMethod(env, clazz, id).c_str(),
+               FormatArgsA(env, info.sig, args).c_str(),
+               static_cast<unsigned long>(
+                   reinterpret_cast<uintptr_t>(caller) -
+                   g_pairip_range.begin));
     }
     jobject result = g_call_static_object_a(env, clazz, id, args);
     if (trace) LogObjectResult(env, "CallStaticObjectMethodA", result);

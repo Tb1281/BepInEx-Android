@@ -44,6 +44,7 @@ object PairIpExperiment {
     const val EXTRA_JNI_TRACE = "pairip_jni_trace"
     const val EXTRA_DUMP_VM = "pairip_dump_vm"
     const val EXTRA_FAKE_CD = "pairip_fake_cd"
+    const val EXTRA_FAKE_CD_PATH = "pairip_fake_cd_path"
     const val EXTRA_PROCESS_NAME = "pairip_process_name"
     const val EXTRA_PROC_SANITIZE = "pairip_proc_sanitize"
     const val EXTRA_SYSCALL_TRACE = "pairip_syscall_trace"
@@ -239,6 +240,15 @@ object PairIpExperiment {
     var fakeCentralDirectory: Boolean = false
 
     /**
+     * Debug-only: when [fakeCentralDirectory] is enabled, the APK whose
+     * central directory is mapped into the klB image. Empty keeps the
+     * installed base APK; the arm64 split is the other candidate because
+     * klB receives libunity's address inside that split as argv[0].
+     */
+    @Volatile
+    var fakeCdPath: String = ""
+
+    /**
      * Debug-only: write the writable VM image `executeVM` builds for klB to
      * the launcher's files directory before the interpreter runs. The dump is
      * compared with the APK asset to locate loader decryption/relocation and
@@ -331,6 +341,7 @@ object PairIpExperiment {
         jniTrace = extras.getBoolean(EXTRA_JNI_TRACE, jniTrace)
         dumpVmImage = extras.getBoolean(EXTRA_DUMP_VM, dumpVmImage)
         fakeCentralDirectory = extras.getBoolean(EXTRA_FAKE_CD, fakeCentralDirectory)
+        fakeCdPath = extras.getString(EXTRA_FAKE_CD_PATH) ?: fakeCdPath
         processNameSpoof = extras.getBoolean(EXTRA_PROCESS_NAME, processNameSpoof)
         procSanitize = extras.getBoolean(EXTRA_PROC_SANITIZE, procSanitize)
         syscallTrace = extras.getBoolean(EXTRA_SYSCALL_TRACE, syscallTrace)
@@ -365,6 +376,7 @@ object PairIpExperiment {
         append(" jniTrace=").append(jniTrace)
         append(" dumpVmImage=").append(dumpVmImage)
         append(" fakeCentralDirectory=").append(fakeCentralDirectory)
+        append(" fakeCdPath=").append(fakeCdPath)
         append(" processNameSpoof=").append(processNameSpoof)
         append(" procSanitize=").append(procSanitize)
         append(" syscallTrace=").append(syscallTrace)

@@ -43,11 +43,14 @@
 #include <cerrno>
 #include <cinttypes>
 #include <climits>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <sys/mman.h>
+#include <ucontext.h>
 #include <unordered_map>
 #include <vector>
 
@@ -75,6 +78,8 @@ extern "C" __attribute__((visibility("hidden"))) void *g_pairip_class_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_name_trace_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_name_trace_c(
     const char *expected, const char *actual, size_t length);
+
+bool InstallExecuteProgramHook();
 
 namespace {
 
@@ -288,6 +293,31 @@ VmRingEntry g_vm_ring[kVmRingSize] = {};
 std::atomic<uint32_t> g_vm_ring_pos{0};
 std::atomic<bool> g_vm_trace_enabled{false};
 
+// Debug-only image-write attribution. The copy hook snapshots klB's writable
+// image just before the interpreter starts; the dispatcher hook then compares
+// the live image at every entry, so a changed range belongs to the instruction
+// that ran immediately before that entry. This answers whether the two ZIP
+// reader words are written at all and which VM instruction was responsible.
+std::mutex g_vm_diff_mutex;
+uintptr_t g_vm_diff_image = 0;
+uint32_t g_vm_diff_last_pos = 0;
+std::vector<uint8_t> g_vm_diff_snapshot;
+std::atomic<int> g_vm_diff_ranges{0};
+
+// Ring of image mutations, in execution order, dumped together with the
+// instruction ring so the write attribution survives logcat volume limits.
+constexpr size_t kVmWriteRingSize = 16384;
+struct VmWriteEntry {
+    uint32_t offset;
+    uint32_t length;
+    uint64_t old_value;
+    uint64_t new_value;
+    uint32_t prior_index;
+    uint32_t reserved;
+};
+VmWriteEntry g_vm_write_ring[kVmWriteRingSize] = {};
+std::atomic<uint32_t> g_vm_write_pos{0};
+
 // Ring buffer of the last raw syscalls libpairipcore issued. klB reads the
 // ZIP central directory through the same wrapper (base+0x17430), so the
 // syscall stream identifies whether the repeating VM loop is polling a file,
@@ -297,11 +327,21 @@ struct SyscallRingEntry {
     int64_t number;
     int64_t args[6];
     int64_t result;
+    uintptr_t caller;
     char path[128];
+    uint8_t sample[16];
+    uint32_t vm_fetch;
+    uint32_t vm_op;
 };
 SyscallRingEntry g_syscall_ring[kSyscallRingSize] = {};
 std::atomic<uint32_t> g_syscall_ring_pos{0};
 std::atomic<bool> g_syscall_trace_enabled{false};
+
+// Last VM instruction dispatched on this thread. The syscall wrapper is
+// reached from VM handlers, so this attributes a procfs access to the bytecode
+// instruction that issued it.
+thread_local uint32_t t_last_vm_fetch = 0;
+thread_local uint32_t t_last_vm_op = 0;
 
 // Debug-only procfs sanitizer.
 //
@@ -402,6 +442,11 @@ int FindModuleCallback(dl_phdr_info *info, size_t, void *data) {
     return 1;
 }
 
+using MemcmpFn = int (*)(const void *, const void *, size_t);
+extern "C" __attribute__((visibility("hidden"))) int pairip_memcmp_hook(
+    const void *a, const void *b, size_t n);
+MemcmpFn g_memcmp_original = nullptr;
+
 bool InstallPairIpTrace() {
     std::lock_guard<std::mutex> lock(g_trace_mutex);
     if (g_pairip_append_original != nullptr) return true;
@@ -443,7 +488,48 @@ bool InstallPairIpTrace() {
     }
 
     g_trace_enabled.store(true);
+
+    if (g_memcmp_original == nullptr) {
+        auto *memcmp_target = dlsym(RTLD_DEFAULT, "memcmp");
+        if (memcmp_target != nullptr) {
+            void *original = nullptr;
+            const int rc = DobbyHook(
+                memcmp_target, reinterpret_cast<void *>(&pairip_memcmp_hook),
+                &original);
+            g_memcmp_original = reinterpret_cast<MemcmpFn>(original);
+            LOGI("maps-scan: memcmp hook rc=%d original=%p", rc, original);
+        }
+    }
     return true;
+}
+
+// Maps-scan needle tracing. The klB startup program filters /proc/self/maps
+// with a substring comparison (memchr + memcmp). When the scan is active, the
+// first comparisons expose the needle the VM is looking for, which decides
+// whether the missing ZIP view is an anti-tamper branch or a real lookup.
+bool SafeReadMemory(uintptr_t address, void *out, size_t size);
+std::atomic<bool> g_maps_scan_trace{false};
+std::atomic<bool> g_klb_active{false};
+std::atomic<int> g_maps_scan_log{0};
+
+extern "C" __attribute__((visibility("hidden")))
+int pairip_memcmp_hook(const void *a, const void *b, size_t n) {
+    auto original = g_memcmp_original;
+    if (original == nullptr) return 0;
+    if (g_maps_scan_trace.load() && n < 512 &&
+        g_maps_scan_log.fetch_add(1) < 24) {
+        char left[65] = {};
+        char right[65] = {};
+        const size_t copy = n < 64 ? n : 64;
+        SafeReadMemory(reinterpret_cast<uintptr_t>(a), left, copy);
+        SafeReadMemory(reinterpret_cast<uintptr_t>(b), right, copy);
+        for (size_t i = 0; i < copy; ++i) {
+            if (left[i] < 0x20 || left[i] > 0x7e) left[i] = '.';
+            if (right[i] < 0x20 || right[i] > 0x7e) right[i] = '.';
+        }
+        LOGI("maps-scan: memcmp n=%zu left=%s right=%s", n, left, right);
+    }
+    return original(a, b, n);
 }
 
 bool ShouldHideProcLine(const std::string &line) {
@@ -899,6 +985,9 @@ bool InstallCopyHook(std::string *error) {
     }
     LOGI("copy-hook: base=%p target=%p", reinterpret_cast<void *>(lookup.base),
          target);
+    if (!InstallExecuteProgramHook()) {
+        LOGI("copy-hook: ExecuteProgram hook unavailable");
+    }
     return true;
 }
 
@@ -952,6 +1041,113 @@ bool SafeReadMemory(uintptr_t address, void *out, size_t size) {
         if (got < 0 && errno == EINTR) continue;
         return false;
     }
+}
+
+// Debug-only: identify the code that mutates klB's image before the first
+// dispatcher entry. The dispatcher diff proves 23 scattered ranges change in
+// that window, but the visible prologue contains no image stores, so the
+// writer must be a helper. Protecting the image's first page read-only turns
+// the first such store into a SIGSEGV; the handler logs pc/lr/frame pointers
+// and makes the page writable again, so the store retries and the run
+// continues. Only the first fault is reported: that is the writer.
+std::atomic<bool> g_image_watch_armed{false};
+std::atomic<bool> g_image_watch_installed{false};
+uintptr_t g_image_watch_page = 0;
+size_t g_image_watch_size = 0;
+
+void ImageWatchHandler(int signo, siginfo_t *info, void *context) {
+    auto *uc = static_cast<ucontext_t *>(context);
+    // Android's arm64 heap pointers carry a top-byte tag while the kernel
+    // reports the fault address with the tag stripped, so compare the low 56
+    // bits on both sides.
+    constexpr uintptr_t kAddressMask = 0x00ffffffffffffffULL;
+    const uintptr_t address =
+        reinterpret_cast<uintptr_t>(info != nullptr ? info->si_addr : nullptr) &
+        kAddressMask;
+    const uintptr_t page = g_image_watch_page & kAddressMask;
+    const size_t size = g_image_watch_size;
+    if (!g_image_watch_armed.load() || address < page ||
+        address >= page + size) {
+        // Not our watch. Put the previous disposition back and retry, which
+        // gives a normal tombstone instead of looping inside the handler.
+        signal(signo, SIG_DFL);
+        return;
+    }
+
+    const uintptr_t base = g_pairip_base.load();
+    const uintptr_t pc = static_cast<uintptr_t>(uc->uc_mcontext.pc);
+    const uintptr_t lr = static_cast<uintptr_t>(uc->uc_mcontext.regs[30]);
+    const uintptr_t fp = static_cast<uintptr_t>(uc->uc_mcontext.regs[29]);
+    const uintptr_t sp = static_cast<uintptr_t>(uc->uc_mcontext.sp);
+    LOGI("image-watch: write to %p pc=%p(+%#" PRIxPTR ") lr=%p(+%#" PRIxPTR
+         ") sp=%p fp=%p",
+         reinterpret_cast<void *>(address), reinterpret_cast<void *>(pc),
+         pc >= base ? pc - base : 0, reinterpret_cast<void *>(lr),
+         lr >= base ? lr - base : 0, reinterpret_cast<void *>(sp),
+         reinterpret_cast<void *>(fp));
+    LOGI("image-watch: regs x0=%#" PRIxPTR " x1=%#" PRIxPTR " x8=%#" PRIxPTR
+         " x9=%#" PRIxPTR " x10=%#" PRIxPTR " x19=%#" PRIxPTR
+         " x20=%#" PRIxPTR " x28=%#" PRIxPTR,
+         static_cast<uintptr_t>(uc->uc_mcontext.regs[0]),
+         static_cast<uintptr_t>(uc->uc_mcontext.regs[1]),
+         static_cast<uintptr_t>(uc->uc_mcontext.regs[8]),
+         static_cast<uintptr_t>(uc->uc_mcontext.regs[9]),
+         static_cast<uintptr_t>(uc->uc_mcontext.regs[10]),
+         static_cast<uintptr_t>(uc->uc_mcontext.regs[19]),
+         static_cast<uintptr_t>(uc->uc_mcontext.regs[20]),
+         static_cast<uintptr_t>(uc->uc_mcontext.regs[28]));
+
+    // The handler has no usable frame pointer (its fp holds a dispatch word),
+    // so scan the stack for return addresses into libpairipcore instead.
+    for (int i = 0; i < 96; ++i) {
+        uint64_t word = 0;
+        if (!SafeReadMemory(sp + static_cast<uintptr_t>(i) * 8, &word,
+                            sizeof(word))) {
+            break;
+        }
+        if (word >= base && word < base + 0x100000) {
+            LOGI("image-watch: stack[%#x] = +%#" PRIxPTR, i * 8,
+                 static_cast<uintptr_t>(word) - base);
+        }
+    }
+
+    mprotect(reinterpret_cast<void *>(g_image_watch_page), size,
+             PROT_READ | PROT_WRITE);
+    g_image_watch_armed.store(false);
+}
+
+void ArmImageWatch(uintptr_t image) {
+    if (!g_image_watch_installed.exchange(true)) {
+        struct sigaction action = {};
+        action.sa_sigaction = ImageWatchHandler;
+        action.sa_flags = SA_SIGINFO | SA_RESTART;
+        sigemptyset(&action.sa_mask);
+        struct sigaction previous = {};
+        if (sigaction(SIGSEGV, &action, &previous) != 0) {
+            LOGE("image-watch: sigaction failed: %s", std::strerror(errno));
+            return;
+        }
+        LOGI("image-watch: handler installed (previous=%p flags=%#x)",
+             reinterpret_cast<void *>(previous.sa_sigaction),
+             static_cast<unsigned>(previous.sa_flags));
+    }
+    const uintptr_t page = image & ~static_cast<uintptr_t>(0xfff);
+    if (mprotect(reinterpret_cast<void *>(page), 0x1000, PROT_READ) != 0) {
+        LOGE("image-watch: mprotect failed: %s", std::strerror(errno));
+        return;
+    }
+    g_image_watch_page = page;
+    g_image_watch_size = 0x1000;
+    g_image_watch_armed.store(true);
+    LOGI("image-watch: armed page=%p (image=%p)",
+         reinterpret_cast<void *>(page), reinterpret_cast<void *>(image));
+}
+
+void DisarmImageWatch(const char *reason) {
+    if (!g_image_watch_armed.exchange(false)) return;
+    mprotect(reinterpret_cast<void *>(g_image_watch_page), g_image_watch_size,
+             PROT_READ | PROT_WRITE);
+    LOGI("image-watch: disarmed (%s)", reason);
 }
 
 bool InstallNameTrace(std::string *error);
@@ -1090,6 +1286,144 @@ bool InstallNameTrace(std::string *error) {
 extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_copy_original = nullptr;
 
+// Debug-only: log every ExecuteProgram(name, args, argc) call before it runs.
+// libunity's DT_INIT is the only static reference to the import, but the
+// argument array it passes is the one thing that decides what klB sees.
+using ExecuteProgramFn = jobject (*)(const char *name, jobject *args,
+                                     uintptr_t argc);
+ExecuteProgramFn g_execute_program_original = nullptr;
+std::mutex g_execute_program_mutex;
+
+jobject ExecuteProgramTrace(const char *name, jobject *args, uintptr_t argc) {
+    const uintptr_t caller =
+        reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+    LOGI("exec-prog: name=%s args=%p argc=%zu caller=%p",
+         name != nullptr ? name : "(null)", reinterpret_cast<void *>(args),
+         static_cast<size_t>(argc), reinterpret_cast<void *>(caller));
+    if (args != nullptr) {
+        for (uintptr_t i = 0; i < argc && i < 4; ++i) {
+            LOGI("exec-prog: arg[%zu]=%p", static_cast<size_t>(i),
+                 reinterpret_cast<void *>(args[i]));
+        }
+    }
+    if (g_execute_program_original == nullptr) return nullptr;
+    return g_execute_program_original(name, args, argc);
+}
+
+bool InstallExecuteProgramHook() {
+    std::lock_guard<std::mutex> lock(g_execute_program_mutex);
+    if (g_execute_program_original != nullptr) return true;
+
+    ModuleLookup lookup{"libpairipcore.so", 0};
+    dl_iterate_phdr(FindModuleCallback, &lookup);
+    if (lookup.base == 0) return false;
+
+    auto *target = reinterpret_cast<void *>(lookup.base + 0x6b3d0);
+    static const long page_size = sysconf(_SC_PAGESIZE);
+    auto page = reinterpret_cast<uintptr_t>(target) &
+                ~static_cast<uintptr_t>(page_size - 1);
+    if (mprotect(reinterpret_cast<void *>(page), static_cast<size_t>(page_size),
+                 PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        return false;
+    }
+    const int result = DobbyHook(target,
+                                 reinterpret_cast<void *>(&ExecuteProgramTrace),
+                                 reinterpret_cast<void **>(
+                                     &g_execute_program_original));
+    LOGI("exec-prog: hook rc=%d target=%p trampoline=%p", result, target,
+         reinterpret_cast<void *>(g_execute_program_original));
+    return result == 0 && g_execute_program_original != nullptr;
+}
+
+// executeVM's Java-call arguments are still in its frame at the copy point:
+// x3 (the jobjectArray) was spilled to [sp+0x48] on entry and the byte[]
+// length to [sp+0x60]; x22 holds the JNIEnv. Reading them here shows what
+// VMRunner.invoke handed to executeVM before the VM starts (debug-only).
+void LogExecuteVmArgs(uint64_t *regs) {
+    static std::atomic<int> dumps{0};
+    const int entry = dumps.fetch_add(1);
+    if (entry >= 8) return;
+
+    const uintptr_t frame = reinterpret_cast<uintptr_t>(regs) + 0x110;
+    auto *env = reinterpret_cast<JNIEnv *>(regs[22]);
+    jobjectArray args = nullptr;
+    uint32_t image_length = 0;
+    SafeReadMemory(frame + 0x48, &args, sizeof(args));
+    SafeReadMemory(frame + 0x60, &image_length, sizeof(image_length));
+
+    if (env == nullptr) {
+        LOGI("vm-args: #%d len=%#x env=null args=%p", entry, image_length,
+             reinterpret_cast<void *>(args));
+        return;
+    }
+    if (args == nullptr) {
+        LOGI("vm-args: #%d len=%#x args=null", entry, image_length);
+        return;
+    }
+    if (env->PushLocalFrame(32) != 0) {
+        env->ExceptionClear();
+        return;
+    }
+    const jsize count = env->GetArrayLength(args);
+    LOGI("vm-args: #%d len=%#x count=%d", entry, image_length,
+         static_cast<int>(count));
+
+    jclass class_class = env->FindClass("java/lang/Class");
+    jmethodID class_get_name =
+        class_class != nullptr
+            ? env->GetMethodID(class_class, "getName", "()Ljava/lang/String;")
+            : nullptr;
+    for (jsize i = 0; i < count && i < 4; ++i) {
+        jobject element = env->GetObjectArrayElement(args, i);
+        if (element == nullptr) {
+            LOGI("vm-args: [%d] null", static_cast<int>(i));
+            continue;
+        }
+        jclass element_class = env->GetObjectClass(element);
+        std::string class_name = "?";
+        if (element_class != nullptr && class_get_name != nullptr) {
+            auto name = static_cast<jstring>(
+                env->CallObjectMethod(element_class, class_get_name));
+            if (name != nullptr) {
+                class_name = JStringToUtf8(env, name);
+                env->DeleteLocalRef(name);
+            }
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (class_name == "java.lang.Long" && element_class != nullptr) {
+            jmethodID long_value =
+                env->GetMethodID(element_class, "longValue", "()J");
+            if (long_value != nullptr) {
+                const jlong value = env->CallLongMethod(element, long_value);
+                LOGI("vm-args: [%d] %s=%#" PRIx64 " (%" PRId64 ")",
+                     static_cast<int>(i), class_name.c_str(),
+                     static_cast<uint64_t>(value),
+                     static_cast<int64_t>(value));
+            }
+            if (env->ExceptionCheck()) env->ExceptionClear();
+        } else {
+            std::string text = class_name;
+            if (element_class != nullptr) {
+                jmethodID to_string = env->GetMethodID(
+                    element_class, "toString", "()Ljava/lang/String;");
+                if (to_string != nullptr) {
+                    auto value = static_cast<jstring>(
+                        env->CallObjectMethod(element, to_string));
+                    if (value != nullptr) {
+                        text = JStringToUtf8(env, value);
+                        env->DeleteLocalRef(value);
+                    }
+                }
+            }
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            LOGI("vm-args: [%d] %s text=%s", static_cast<int>(i),
+                 class_name.c_str(), text.c_str());
+        }
+        if (element_class != nullptr) env->DeleteLocalRef(element_class);
+    }
+    env->PopLocalFrame(nullptr);
+}
+
 // Called from the executeVM copy-point shim with the saved register file.
 // regs[20] is x20, the writable VM image. Only klB carries this exact
 // unresolved ZIP view; leaving YTw and later programs untouched keeps the
@@ -1099,6 +1433,8 @@ void pairip_copy_patch_c(uint64_t *regs) {
     if (regs == nullptr) return;
     const uintptr_t image = static_cast<uintptr_t>(regs[20]);
     if (image == 0) return;
+
+    if (g_vm_dump_enabled.load()) LogExecuteVmArgs(regs);
 
     static std::atomic<bool> logged_base{false};
     if (!logged_base.exchange(true)) {
@@ -1122,6 +1458,7 @@ void pairip_copy_patch_c(uint64_t *regs) {
         old_end != 0x015370f87525d57bULL) {
         return;
     }
+    g_klb_active.store(true);
 
     if (g_vm_dump_enabled.load()) {
         static std::atomic<int> dump_count{0};
@@ -1165,6 +1502,21 @@ void pairip_copy_patch_c(uint64_t *regs) {
     // diluted by libmain/Fusion setup calls.
     if (g_syscall_trace_enabled.load()) {
         g_syscall_ring_pos.store(0, std::memory_order_relaxed);
+    }
+
+    // Baseline for the write attribution, taken before the interpreter (and
+    // before the fake-CD diagnostic) modifies the image.
+    if (g_vm_dump_enabled.load()) {
+        std::lock_guard<std::mutex> lock(g_vm_diff_mutex);
+        static const size_t kImageSize = 0x44feb;
+        g_vm_diff_image = image;
+        g_vm_diff_last_pos = g_vm_ring_pos.load(std::memory_order_relaxed);
+        g_vm_diff_snapshot.assign(bytes, bytes + kImageSize);
+        g_vm_write_pos.store(0, std::memory_order_relaxed);
+        LOGI("trace: image-diff baseline=%p pos=%u", reinterpret_cast<void *>(image),
+             g_vm_diff_last_pos);
+        static std::atomic<bool> watch_once{false};
+        if (!watch_once.exchange(true)) ArmImageWatch(image);
     }
 
     if (!g_fake_cd_enabled.load()) return;
@@ -1302,10 +1654,12 @@ void pairip_class_trace_c(uint64_t *regs) {
 
     uint32_t words[8] = {};
     SafeReadMemory(desc, words, sizeof(words));
-    LOGI("class-trace: #%d caller=+%#lx raw=%#lx desc=%p words=%08x,%08x,%08x,"
+    LOGI("class-trace: #%d caller=+%#lx vm=%#x/%#x raw=%#lx desc=%p "
+         "words=%08x,%08x,%08x,"
          "%08x,%08x,%08x table_desc=%p table=%p key=%#x idx=%#x enc=%#x "
          "data=%#x keyoff=%#x len=%u ok=%d text=%s",
          entry, caller >= base ? static_cast<unsigned long>(caller - base) : 0,
+         t_last_vm_fetch, t_last_vm_op,
          static_cast<unsigned long>(raw_caller),
          reinterpret_cast<void *>(desc), words[0], words[1], words[2],
          words[3], words[4], words[5],
@@ -1354,6 +1708,9 @@ uint32_t TraceSyscallEnter(long number, long a1, long a2, long a3) {
     entry.args[1] = a2;
     entry.args[2] = a3;
     entry.result = INT64_MIN;
+    entry.caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+    entry.vm_fetch = t_last_vm_fetch;
+    entry.vm_op = t_last_vm_op;
 
     const char *path = nullptr;
     switch (number) {
@@ -1373,13 +1730,24 @@ uint32_t TraceSyscallEnter(long number, long a1, long a2, long a3) {
     if (path != nullptr) {
         SafeReadMemory(reinterpret_cast<uintptr_t>(path), entry.path,
                        sizeof(entry.path) - 1);
+        if (number == 56 && std::strstr(entry.path, "/proc/self/maps") !=
+                                nullptr &&
+            t_last_vm_op == 0x6d && g_klb_active.load()) {
+            g_maps_scan_log.store(0);
+            g_maps_scan_trace.store(true);
+        }
     }
     return pos;
 }
 
 void TraceSyscallLeave(uint32_t slot, long result) {
     if (slot == kInvalidSyscallSlot) return;
-    g_syscall_ring[slot % kSyscallRingSize].result = result;
+    SyscallRingEntry &entry = g_syscall_ring[slot % kSyscallRingSize];
+    entry.result = result;
+    if (entry.number == 63 && result > 0) {
+        SafeReadMemory(static_cast<uintptr_t>(entry.args[1]), entry.sample,
+                       sizeof(entry.sample));
+    }
 }
 
 // Entry point for the libpairipcore raw-syscall wrapper (base+0x17430).
@@ -1556,16 +1924,72 @@ void pairip_dispatch_trace_c(uint64_t *regs) {
     if (!SafeReadMemory(image, &magic, sizeof(magic))) return;
     if (magic != 0x50414900u) return;  // "\0IAP"
 
+    // The write watch only covers the window before the interpreter starts.
+    if (g_image_watch_armed.load()) DisarmImageWatch("first dispatch");
+
     const uint32_t pos = g_vm_ring_pos.fetch_add(1, std::memory_order_relaxed);
     VmRingEntry &entry = g_vm_ring[pos % kVmRingSize];
     entry.fetch_pc = fetch_pc;
     entry.cursor = cursor;
     entry.opcode = static_cast<uint32_t>(regs[1]) & 0xffffu;
     entry.reserved = 0;
+    t_last_vm_fetch = fetch_pc;
+    t_last_vm_op = entry.opcode;
+
+    // Attribute image mutations to the instruction that produced them. The
+    // dispatcher is entered before the handler runs, so a difference seen at
+    // entry N was written by entry N-1.
+    if (g_vm_dump_enabled.load() && g_vm_diff_image == image &&
+        g_vm_diff_snapshot.size() == kKlBImageLength) {
+        std::lock_guard<std::mutex> lock(g_vm_diff_mutex);
+        const auto *live = reinterpret_cast<const uint8_t *>(image);
+        uint8_t *snap = g_vm_diff_snapshot.data();
+        const size_t size = g_vm_diff_snapshot.size();
+        size_t i = 0;
+        while (i < size) {
+            if (live[i] == snap[i]) {
+                ++i;
+                continue;
+            }
+            const size_t start = i;
+            while (i < size && live[i] != snap[i]) ++i;
+            const size_t length = i - start;
+            uint64_t old_value = 0;
+            uint64_t new_value = 0;
+            const size_t value_size = length < 8 ? length : 8;
+            std::memcpy(&old_value, snap + start, value_size);
+            std::memcpy(&new_value, live + start, value_size);
+
+            const uint32_t write_pos =
+                g_vm_write_pos.fetch_add(1, std::memory_order_relaxed);
+            if (write_pos < kVmWriteRingSize) {
+                VmWriteEntry &write = g_vm_write_ring[write_pos];
+                write.offset = static_cast<uint32_t>(start);
+                write.length = static_cast<uint32_t>(length);
+                write.old_value = old_value;
+                write.new_value = new_value;
+                write.prior_index =
+                    pos > g_vm_diff_last_pos ? pos - 1 : 0xffffffffu;
+                write.reserved = 0;
+            }
+
+            if (g_vm_diff_ranges.fetch_add(1, std::memory_order_relaxed) <
+                16) {
+                LOGI("trace: image-write off=%#zx len=%zu old=%016" PRIx64
+                     " new=%016" PRIx64 " by=%d",
+                     start, length, old_value, new_value,
+                     pos > g_vm_diff_last_pos
+                         ? static_cast<int>(pos - 1)
+                         : -1);
+            }
+            std::memcpy(snap + start, live + start, length);
+        }
+    }
 }
 
 void DumpSyscallRing() {
     if (!g_syscall_trace_enabled.load()) return;
+    const uintptr_t base = g_pairip_base.load();
     const uint32_t pos = g_syscall_ring_pos.load(std::memory_order_relaxed);
     const uint32_t available = pos < kSyscallRingSize ? pos : kSyscallRingSize;
     const uint32_t count = available < 256 ? available : 256;
@@ -1574,9 +1998,21 @@ void DumpSyscallRing() {
         const uint32_t index = pos - i;
         const SyscallRingEntry &entry = g_syscall_ring[index % kSyscallRingSize];
         LOGI("trace: syscall[%u] n=%" PRId64 " a=%" PRId64 ",%" PRId64
-             ",%" PRId64 " ret=%" PRId64 " path=%s",
+             ",%" PRId64 " ret=%" PRId64 " lr=%#lx vm=%#x/%#x path=%s "
+             "head=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
+             "%02x%02x%02x%02x",
              index, entry.number, entry.args[0], entry.args[1], entry.args[2],
-             entry.result, entry.path);
+             entry.result,
+             entry.caller >= base ? static_cast<unsigned long>(
+                                        entry.caller - base)
+                                  : 0UL,
+             entry.vm_fetch, entry.vm_op, entry.path, entry.sample[0],
+             entry.sample[1], entry.sample[2],
+             entry.sample[3], entry.sample[4], entry.sample[5],
+             entry.sample[6], entry.sample[7], entry.sample[8],
+             entry.sample[9], entry.sample[10], entry.sample[11],
+             entry.sample[12], entry.sample[13], entry.sample[14],
+             entry.sample[15]);
     }
 }
 
@@ -1589,6 +2025,32 @@ void DumpVmRing() {
     const uint32_t available = pos < kVmRingSize ? pos : kVmRingSize;
     const uint32_t count = available < kVmRingSize ? available : kVmRingSize;
     LOGI("trace: vm ring pos=%u dumping last %u", pos, count);
+
+    const uint32_t write_pos =
+        g_vm_write_pos.load(std::memory_order_relaxed);
+    const uint32_t write_count =
+        write_pos < kVmWriteRingSize ? write_pos : kVmWriteRingSize;
+    LOGI("trace: image write ring pos=%u dumping last %u", write_pos,
+         write_count);
+    for (uint32_t i = 0; i < write_count; ++i) {
+        const VmWriteEntry &write = g_vm_write_ring[i];
+        uint32_t fetch = 0;
+        uint32_t opcode = 0;
+        if (write.prior_index != 0xffffffffu) {
+            const VmRingEntry &prior =
+                g_vm_ring[write.prior_index % kVmRingSize];
+            fetch = prior.fetch_pc;
+            opcode = prior.opcode;
+        }
+        LOGI("trace: imagew[%u] off=%#x len=%u old=%016" PRIx64
+             " new=%016" PRIx64 " by=%d fetch=%#x op=%#x",
+             i, write.offset, write.length, write.old_value, write.new_value,
+             write.prior_index == 0xffffffffu
+                 ? -1
+                 : static_cast<int>(write.prior_index),
+             fetch, opcode);
+    }
+
     for (uint32_t i = count; i > 0; --i) {
         const VmRingEntry &entry = g_vm_ring[(pos - i) % kVmRingSize];
         LOGI("trace: vminsn[%u] fetch=%#x cursor=%#x op=%#x", pos - i,

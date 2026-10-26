@@ -932,14 +932,16 @@ class BootstrapActivity : Activity() {
             // VM image literals that a hosted launch leaves unresolved. Point
             // them at the base APK's real central directory at the loader's
             // copy point so the check reads file bytes instead of ciphertext.
+            val cdPath = PairIpExperiment.fakeCdPath.takeIf { it.isNotEmpty() }
+                ?: gameContext.packageCodePath
             val error = try {
-                PairIpShield.installFakeCentralDirectory(gameContext.packageCodePath)
+                PairIpShield.installFakeCentralDirectory(cdPath)
             } catch (t: Throwable) {
                 BepInExLog.e("PairIP fake CD: install threw", t)
                 t.message ?: "install threw"
             }
             if (error == null) {
-                BepInExLog.i("PairIP fake central directory: installed")
+                BepInExLog.i("PairIP fake central directory: installed from $cdPath")
             } else {
                 BepInExLog.e("PairIP fake central directory: $error")
             }
