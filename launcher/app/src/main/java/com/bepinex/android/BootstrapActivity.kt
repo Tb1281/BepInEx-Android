@@ -289,8 +289,13 @@ class BootstrapActivity : Activity() {
         try {
             val launcherClass = gameClassLoader.loadClass(launcherClassName)
             BepInExLog.i("Starting game launcher: ${launcherClass.name}")
-            if (!PairIpExperiment.bare) {
+            if (!PairIpExperiment.noHooks) {
+                // Fusion's findLibrary hook is an LSPlant hook. The no-hooks
+                // variant must not initialize LSPlant, so it must not set up
+                // Fusion either.
                 initializeFusion(null, null)
+            } else {
+                BepInExLog.i("PairIP experiment: Fusion skipped with hook engine")
             }
 
             runOnMainThread {
