@@ -3,6 +3,8 @@
 This note records the verification of the debug-only isolation harness used for
 the CIFI PairIP investigation. The harness lets a launch select compatibility
 layers independently and prints one variant line before any layer is installed.
+Current findings about the klB startup program and the crash signature are in
+[`cifi-pairip-findings.md`](cifi-pairip-findings.md).
 
 ## Cold launch definition
 
