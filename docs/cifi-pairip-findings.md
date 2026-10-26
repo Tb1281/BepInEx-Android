@@ -38,10 +38,10 @@ experiments only and must be removed before the branch is merged.
   stream/reader vtable method (`vtable 0x93ce8`, slot `+0x10`), not
   `std::string::append`. The reader object is laid out as
   `{vtable, cursor, data, size}`.
-- The reader is built at `+0x3e030` from `data = image + 0x3f874` and
-  `size = image + 0x1ba5c`; `+0x3e170` then parses a ZIP entry whose magic is
-  `PK\x01\x02` (`0x02014b50`). Entry length is the sum of the `u16` fields at
-  `+0x1c`, `+0x1e`, and `+0x20`.
+- The reader is built at `+0x3e030`. It loads the data word from
+  `image+0x3f874` and the size word from `image+0x1ba5c`; `+0x3e170` then
+  parses a ZIP entry whose magic is `PK\x01\x02` (`0x02014b50`). Entry length
+  is the sum of the `u16` fields at `+0x1c`, `+0x1e`, and `+0x20`.
 - Both image slots are byte-identical to the stored asset and are never
   written at runtime: they contain pointer-shaped garbage
   (`0xbbb9eb6daed20ed0`, `0x015370f87525d57b`) rather than a valid address and
