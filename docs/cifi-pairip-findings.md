@@ -11,6 +11,9 @@ default to off and are ignored by a non-debuggable build unless the temporary
 `pairip_allow_nondebug_experiments` bypass is passed. That bypass is for
 experiments only and must be removed before the branch is merged.
 
+The cross-device continuation snapshot is
+[`handoffs/2026-10-27-cifi-pairip.md`](handoffs/2026-10-27-cifi-pairip.md).
+
 ## Verified startup path
 
 - `StartupLauncher` invokes the PairIP program `YTw4BW9dg3brGdIP`.
