@@ -25,6 +25,7 @@ object PairIpExperiment {
     const val EXTRA_STACK_SPOOF = "pairip_stack_spoof"
     const val EXTRA_CONTEXT_SEED = "pairip_context_seed"
     const val EXTRA_STOCK_BOUND = "pairip_stock_bound"
+    const val EXTRA_NATURAL_FACTORY = "pairip_natural_factory"
     const val EXTRA_SKIP_FACTORY = "pairip_skip_factory"
     const val EXTRA_LATE_HOOKS = "pairip_late_hooks"
     const val EXTRA_BARE = "pairip_bare"
@@ -45,6 +46,7 @@ object PairIpExperiment {
     const val EXTRA_FAKE_CD = "pairip_fake_cd"
     const val EXTRA_PROCESS_NAME = "pairip_process_name"
     const val EXTRA_PROC_SANITIZE = "pairip_proc_sanitize"
+    const val EXTRA_SYSCALL_TRACE = "pairip_syscall_trace"
     const val EXTRA_DUMP_ARTIFACTS = "pairip_dump_artifacts"
     const val EXTRA_ALLOW_NONDEBUG = "pairip_allow_nondebug_experiments"
 
@@ -85,6 +87,17 @@ object PairIpExperiment {
      */
     @Volatile
     var stockBoundContext: Boolean = false
+
+    /**
+     * Debug-only: let LoadedApk.createAppFactory instantiate the game's
+     * app-component factory during class-loader creation, as a stock launch
+     * does, instead of detaching it and calling Class.forName afterwards.
+     * This gives YTw the stock framework stack while LSPlant is still
+     * deferred. Combine with [stockBoundContext] so InitContextProvider sees
+     * the game's LoadedApk.
+     */
+    @Volatile
+    var naturalFactory: Boolean = false
 
     @Volatile
     var skipFactory: Boolean = false
@@ -254,6 +267,15 @@ object PairIpExperiment {
     var procSanitize: Boolean = false
 
     /**
+     * Debug-only: record the last syscalls issued through PairIP's own
+     * wrapper. The klB loader reads the APK through that wrapper, so the
+     * stream shows whether the repeating VM loop is waiting on I/O, a lock,
+     * or a timer.
+     */
+    @Volatile
+    var syscallTrace: Boolean = false
+
+    /**
      * Debug-only: copy the installed game's PairIP VM assets and native
      * libraries into the launcher's private files directory so they can be
      * pulled for offline analysis. The installed APK is only read.
@@ -277,6 +299,7 @@ object PairIpExperiment {
         stackSpoof = extras.getBoolean(EXTRA_STACK_SPOOF, stackSpoof)
         contextSeed = extras.getBoolean(EXTRA_CONTEXT_SEED, contextSeed)
         stockBoundContext = extras.getBoolean(EXTRA_STOCK_BOUND, stockBoundContext)
+        naturalFactory = extras.getBoolean(EXTRA_NATURAL_FACTORY, naturalFactory)
         skipFactory = extras.getBoolean(EXTRA_SKIP_FACTORY, skipFactory)
         lateHooks = extras.getBoolean(EXTRA_LATE_HOOKS, lateHooks)
         bare = extras.getBoolean(EXTRA_BARE, bare)
@@ -310,6 +333,7 @@ object PairIpExperiment {
         fakeCentralDirectory = extras.getBoolean(EXTRA_FAKE_CD, fakeCentralDirectory)
         processNameSpoof = extras.getBoolean(EXTRA_PROCESS_NAME, processNameSpoof)
         procSanitize = extras.getBoolean(EXTRA_PROC_SANITIZE, procSanitize)
+        syscallTrace = extras.getBoolean(EXTRA_SYSCALL_TRACE, syscallTrace)
         dumpArtifacts = extras.getBoolean(EXTRA_DUMP_ARTIFACTS, dumpArtifacts)
     }
 
@@ -322,6 +346,7 @@ object PairIpExperiment {
         append(" stackSpoof=").append(stackSpoof && !noHooks)
         append(" contextSeed=").append(contextSeed || skipFactory)
         append(" stockBound=").append(stockBoundContext)
+        append(" naturalFactory=").append(naturalFactory)
         append(" skipFactory=").append(skipFactory)
         append(" lateHooks=").append(lateHooks)
         append(" bare=").append(bare)
@@ -342,6 +367,7 @@ object PairIpExperiment {
         append(" fakeCentralDirectory=").append(fakeCentralDirectory)
         append(" processNameSpoof=").append(processNameSpoof)
         append(" procSanitize=").append(procSanitize)
+        append(" syscallTrace=").append(syscallTrace)
         append(" dumpArtifacts=").append(dumpArtifacts)
     }
 }

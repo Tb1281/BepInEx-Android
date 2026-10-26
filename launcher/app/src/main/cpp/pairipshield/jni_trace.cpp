@@ -372,6 +372,50 @@ bool IsString(JNIEnv *env, jobject object) {
     return g_is_instance_of(env, object, g_string_class) == JNI_TRUE;
 }
 
+std::string ObjectText(JNIEnv *env, jobject object) {
+    if (object == nullptr) return "null";
+    if (g_exception_check != nullptr && g_exception_check(env)) {
+        return "(pending)";
+    }
+    if (g_get_object_class == nullptr || g_get_method_id == nullptr ||
+        g_call_object_a == nullptr) {
+        return ClassName(env, object);
+    }
+    jclass clazz = g_get_object_class(env, object);
+    if (clazz == nullptr) return ClassName(env, object);
+    const jmethodID to_string =
+        g_get_method_id(env, clazz, "toString", "()Ljava/lang/String;");
+    if (to_string == nullptr) {
+        if (g_delete_local_ref != nullptr) g_delete_local_ref(env, clazz);
+        return ClassName(env, object);
+    }
+    auto text = static_cast<jstring>(
+        g_call_object_a(env, object, to_string, nullptr));
+    std::string out;
+    if (text != nullptr) {
+        out = JStringToUtf8(env, text);
+        if (g_delete_local_ref != nullptr) g_delete_local_ref(env, text);
+    } else {
+        out = ClassName(env, object);
+    }
+    if (ClassNameOfClassSafe(env, clazz) == "android.content.Intent") {
+        const jmethodID get_extras = g_get_method_id(
+            env, clazz, "getExtras", "()Landroid/os/Bundle;");
+        if (get_extras != nullptr) {
+            jobject extras =
+                g_call_object_a(env, object, get_extras, nullptr);
+            if (extras != nullptr) {
+                out += " extras=" + ObjectText(env, extras);
+                if (g_delete_local_ref != nullptr) {
+                    g_delete_local_ref(env, extras);
+                }
+            }
+        }
+    }
+    if (g_delete_local_ref != nullptr) g_delete_local_ref(env, clazz);
+    return out;
+}
+
 std::string FormatObject(JNIEnv *env, jobject object, const std::string &desc) {
     if (object == nullptr) return "null";
     if (g_exception_check != nullptr && g_exception_check(env)) {
@@ -385,6 +429,11 @@ std::string FormatObject(JNIEnv *env, jobject object, const std::string &desc) {
         const jsize length =
             g_get_array_length(env, static_cast<jarray>(object));
         return cls + "[len=" + std::to_string(length) + "]";
+    }
+    if (cls == "android.content.Intent" || cls == "android.app.ContextImpl" ||
+        cls == "android.app.ContextWrapper" ||
+        cls == "android.content.ContextWrapper") {
+        return cls + "{" + ObjectText(env, object) + "}";
     }
     return cls;
 }
@@ -601,6 +650,22 @@ void LogObjectResult(JNIEnv *env, const char *kind, jobject result) {
                g_is_instance_of(env, result, g_throwable_class)) {
         TRACEI("jni: %s -> %s: %s", kind, cls.c_str(),
                ThrowableText(env, result).c_str());
+    } else if (cls == "android.content.Intent") {
+        TRACEI("jni: %s -> %s: %s", kind, cls.c_str(),
+               ObjectText(env, result).c_str());
+    } else if (cls == "java.lang.Long" && g_get_method_id != nullptr) {
+        jclass long_class = g_get_object_class != nullptr
+                                ? g_get_object_class(env, result)
+                                : nullptr;
+        jmethodID long_value = long_class != nullptr
+            ? g_get_method_id(env, long_class, "longValue", "()J")
+            : nullptr;
+        jlong value = long_value != nullptr
+            ? env->functions->CallLongMethodA(env, result, long_value, nullptr)
+            : 0;
+        TRACEI("jni: %s -> %s: 0x%llx (%lld)", kind, cls.c_str(),
+               static_cast<unsigned long long>(value),
+               static_cast<long long>(value));
     } else {
         TRACEI("jni: %s -> %s", kind, cls.c_str());
     }
@@ -776,8 +841,21 @@ jobject JNICALL HookNewObjectV(JNIEnv *env, jclass clazz, jmethodID id,
         const MemberInfo info = LookupMethod(id);
         va_list copy;
         va_copy(copy, args);
-        TRACEI("jni: NewObject %s args=[%s]", info.clazz.c_str(),
-               FormatArgsVa(env, info.sig, copy).c_str());
+        if (info.clazz == "?") {
+            // PairIP caches constructor IDs, so the registry cannot name the
+            // class. The bulk allocations in the startup VMs are boxed Longs;
+            // log the first 64-bit argument so the values can be inspected.
+            static std::atomic<uint32_t> unknown_ctor{0};
+            const uint32_t index = unknown_ctor.fetch_add(1);
+            const jlong raw = va_arg(copy, jlong);
+            TRACEI("jni: NewObject ? #%u class=%s arg0=%lld (%#llx)", index,
+                   ClassName(env, clazz).c_str(),
+                   static_cast<long long>(raw),
+                   static_cast<unsigned long long>(raw));
+        } else {
+            TRACEI("jni: NewObject %s args=[%s]", info.clazz.c_str(),
+                   FormatArgsVa(env, info.sig, copy).c_str());
+        }
         va_end(copy);
     }
     jobject result = g_new_object_v(env, clazz, id, args);
@@ -907,11 +985,22 @@ void JNICALL HookCallVoidMethodV(JNIEnv *env, jobject object, jmethodID id,
     void *caller = __builtin_return_address(0);
     if (IsPairIpCaller(caller)) {
         const MemberInfo info = LookupMethod(id);
+        const std::string receiver = ClassName(env, object);
+        std::string detail;
+        if (receiver == "android.app.ContextImpl" ||
+            receiver == "android.app.ContextWrapper" ||
+            receiver == "android.content.ContextWrapper") {
+            va_list detail_args;
+            va_copy(detail_args, args);
+            jobject intent = va_arg(detail_args, jobject);
+            va_end(detail_args);
+            detail = " arg0=" + ObjectText(env, intent);
+        }
         va_list copy;
         va_copy(copy, args);
-        TRACEI("jni: CallVoidMethod %s.%s args=[%s]",
-               ClassName(env, object).c_str(), info.name.c_str(),
-               FormatArgsVa(env, info.sig, copy).c_str());
+        TRACEI("jni: CallVoidMethod %s.%s args=[%s]%s", receiver.c_str(),
+               info.name.c_str(), FormatArgsVa(env, info.sig, copy).c_str(),
+               detail.c_str());
         va_end(copy);
     }
     g_call_void_v(env, object, id, args);
@@ -922,9 +1011,16 @@ void JNICALL HookCallVoidMethodA(JNIEnv *env, jobject object, jmethodID id,
     void *caller = __builtin_return_address(0);
     if (IsPairIpCaller(caller)) {
         const MemberInfo info = LookupMethod(id);
-        TRACEI("jni: CallVoidMethodA %s.%s args=[%s]",
-               ClassName(env, object).c_str(), info.name.c_str(),
-               FormatArgsA(env, info.sig, args).c_str());
+        const std::string receiver = ClassName(env, object);
+        std::string detail;
+        if (args != nullptr && (receiver == "android.app.ContextImpl" ||
+                                receiver == "android.app.ContextWrapper" ||
+                                receiver == "android.content.ContextWrapper")) {
+            detail = " arg0=" + ObjectText(env, args[0].l);
+        }
+        TRACEI("jni: CallVoidMethodA %s.%s args=[%s]%s", receiver.c_str(),
+               info.name.c_str(), FormatArgsA(env, info.sig, args).c_str(),
+               detail.c_str());
     }
     g_call_void_a(env, object, id, args);
 }

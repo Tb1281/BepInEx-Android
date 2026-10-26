@@ -255,6 +255,19 @@ class BootstrapActivity : Activity() {
             dumpPairIpScheduler("after startup program + 1.5 s", gameClassLoader)
         }
 
+        if (PairIpExperiment.lateHooks && !PairIpExperiment.noHooks) {
+            // YTw has finished; later VM programs (klB, license checks) still
+            // read the Java stack. Install the spoof before the preload path
+            // runs libunity's DT_INIT, so klB sees the stock launch chain
+            // instead of the bootstrap thread.
+            if (PairIpExperiment.hiddenApi) {
+                disableHiddenApiEnforcement()
+            }
+            if (PairIpExperiment.stackSpoof) {
+                installPairIpStackTraceHook()
+            }
+        }
+
         if (PairIpExperiment.preload) {
             updateProgress(
                 getString(R.string.bootstrap_status_installing_hooks),
@@ -409,7 +422,25 @@ class BootstrapActivity : Activity() {
                             it.methodName == "executeVM"
                     }
                     if (fromPairIp) {
-                        callFrame.result = pairIpLaunchStack()
+                        // YTw runs while the framework builds the app-component
+                        // factory; klB runs later from NativeLoader.load while
+                        // UnityPlayer is initializing the activity. Each program
+                        // compares the trace against its own launch shape, so
+                        // return the matching stock chain for each.
+                        val fromNativeLoader = real.any {
+                            it is StackTraceElement &&
+                                it.className == "com.unity3d.player.NativeLoader" &&
+                                it.methodName == "load"
+                        }
+                        callFrame.result = if (fromNativeLoader) {
+                            pairIpUnityLaunchStack()
+                        } else {
+                            pairIpLaunchStack()
+                        }
+                        BepInExLog.i(
+                            "PairIP: stack trace spoofed for executeVM " +
+                                "(nativeLoader=$fromNativeLoader)"
+                        )
                     }
                 }
             })
@@ -441,6 +472,79 @@ class BootstrapActivity : Activity() {
         StackTraceElement("android.app.ActivityThread", "main", "ActivityThread.java", 10616),
         StackTraceElement("java.lang.reflect.Method", "invoke", null, -2),
         StackTraceElement("com.android.internal.os.RuntimeInit\$MethodAndArgsCaller", "run", "RuntimeInit.java", 635),
+        StackTraceElement("com.android.internal.os.ZygoteInit", "main", "ZygoteInit.java", 982)
+    )
+
+    /**
+     * The stock chain klB expects when PairIP's loader stub runs from
+     * `UnityPlayer.loadNative`. `UnityPlayerActivity.onCreate` dispatches to
+     * PairIP's relocated implementation through a reflected static method, so
+     * the real chain has the extra `Method.invoke` and relocated-class frame.
+     */
+    private fun pairIpUnityLaunchStack(): Array<StackTraceElement> = arrayOf(
+        StackTraceElement("com.pairip.VMRunner", "executeVM", null, -2),
+        StackTraceElement("com.pairip.VMRunner", "invoke", "VMRunner.java", 69),
+        StackTraceElement("com.unity3d.player.NativeLoader", "load", "SourceFile", -2),
+        StackTraceElement("com.unity3d.player.UnityPlayer", "loadNative", "UnityPlayer.java", 822),
+        StackTraceElement("com.unity3d.player.UnityPlayer", "initialize", "UnityPlayer.java", 301),
+        StackTraceElement(
+            "com.unity3d.player.UnityPlayerForActivityOrService",
+            "<init>",
+            "UnityPlayerForActivityOrService.java",
+            156
+        ),
+        StackTraceElement("java.lang.reflect.Method", "invoke", null, -2),
+        StackTraceElement(
+            "com.unity3d.player.UnityPlayerActivity\$c2020060322V3",
+            "onCreate",
+            "SourceFile",
+            0
+        ),
+        StackTraceElement(
+            "com.unity3d.player.UnityPlayerActivity",
+            "onCreate",
+            "UnityPlayerActivity.java",
+            20
+        ),
+        StackTraceElement("android.app.Activity", "performCreate", "Activity.java", 9478),
+        StackTraceElement("android.app.Activity", "performCreate", "Activity.java", 9467),
+        StackTraceElement(
+            "android.app.Instrumentation",
+            "callActivityOnCreate",
+            "Instrumentation.java",
+            1372
+        ),
+        StackTraceElement(
+            "android.app.ActivityThread",
+            "performLaunchActivity",
+            "ActivityThread.java",
+            3981
+        ),
+        StackTraceElement(
+            "android.app.ActivityThread",
+            "handleLaunchActivity",
+            "ActivityThread.java",
+            4145
+        ),
+        StackTraceElement(
+            "android.app.ActivityThread",
+            "-" + '$' + '$' + "Nest" + '$' + "mhandleLaunchActivity",
+            "ActivityThread.java",
+            0
+        ),
+        StackTraceElement("android.app.ActivityThread\$H", "handleMessage", "ActivityThread.java", 2332),
+        StackTraceElement("android.os.Handler", "dispatchMessageImpl", "Handler.java", 142),
+        StackTraceElement("android.os.Handler", "dispatchMessage", "Handler.java", 125),
+        StackTraceElement("android.os.Looper", "loopOnce", "Looper.java", 321),
+        StackTraceElement("android.os.Looper", "loop", "Looper.java", 422),
+        StackTraceElement("android.app.ActivityThread", "main", "ActivityThread.java", 10616),
+        StackTraceElement("java.lang.reflect.Method", "invoke", null, -2),
+        StackTraceElement(
+            "com.android.internal.os.RuntimeInit\$MethodAndArgsCaller",
+            "run",
+            "RuntimeInit.java",
+            635
+        ),
         StackTraceElement("com.android.internal.os.ZygoteInit", "main", "ZygoteInit.java", 982)
     )
 
@@ -489,6 +593,46 @@ class BootstrapActivity : Activity() {
                 // before any Java hooks exist; the hosting hooks are installed
                 // by the caller once the startup programs have returned.
                 BepInExLog.i("PairIP experiment: late hooks - running factory before LSPlant")
+
+                if (PairIpExperiment.naturalFactory) {
+                    // Stock-shape variant: keep the factory attached and let
+                    // LoadedApk.createAppFactory instantiate it while the game
+                    // class loader is built. YTw therefore sees the same
+                    // framework frames as a normal launch, without LSPlant.
+                    // Point mBoundApplication.info at the game LoadedApk so
+                    // InitContextProvider binds the hosted game, not the
+                    // launcher.
+                    val activityThreadClass = Class.forName("android.app.ActivityThread")
+                    val currentThread = activityThreadClass
+                        .getMethod("currentActivityThread").invoke(null)
+                    val bindDataField = findField(activityThreadClass, "mBoundApplication")
+                        ?: throw IllegalStateException("ActivityThread.mBoundApplication missing")
+                    bindDataField.isAccessible = true
+                    val bindData = bindDataField.get(currentThread)
+                        ?: throw IllegalStateException("ActivityThread.mBoundApplication is null")
+                    val infoField = findField(bindData.javaClass, "info")
+                        ?: throw IllegalStateException("AppBindData.info missing")
+                    infoField.isAccessible = true
+                    val previousInfo = infoField.get(bindData)
+                    infoField.set(bindData, loadedApk)
+                    BepInExLog.i("PairIP experiment: natural factory via createAppFactory")
+                    val loader = try {
+                        // Forces LoadedApk.getClassLoader ->
+                        // createAppFactory while the factory is attached.
+                        gameContext.classLoader
+                    } finally {
+                        infoField.set(bindData, previousInfo)
+                        BepInExLog.i(
+                            "PairIP experiment: restored mBoundApplication.info"
+                        )
+                    }
+                    enableVmRunnerLogging(loader)
+                    BepInExLog.i(
+                        "PairIP: natural factory started for $targetPackage"
+                    )
+                    return loader
+                }
+
                 applicationInfo.appComponentFactory = null
                 val loader = try {
                     gameContext.classLoader
@@ -736,6 +880,19 @@ class BootstrapActivity : Activity() {
             )
             Thread.sleep(PairIpExperiment.delayMs)
             BepInExLog.i("PairIP preload: attach window closed; loading libmain")
+        }
+
+        if (PairIpExperiment.syscallTrace) {
+            // Debug-only: klB reads the ZIP through PairIP's own raw syscall
+            // wrapper. Record the tail of that stream and dump it when the
+            // reader crashes, so the repeating VM loop can be classified.
+            val traced = try {
+                PairIpShield.installSyscallTrace()
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP syscall trace: install threw", t)
+                false
+            }
+            BepInExLog.i("PairIP syscall trace: installed=$traced")
         }
 
         if (PairIpExperiment.procSanitize) {

@@ -60,6 +60,9 @@
 extern "C" __attribute__((visibility("hidden"))) void pairip_append_trace_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_append_trace_c(uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_append_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_dispatch_trace_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_dispatch_trace_c(uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_dispatch_original;
 extern "C" __attribute__((visibility("hidden"))) long pairip_syscall_hook(
     long number, long a1, long a2, long a3, long a4, long a5, long a6);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_syscall_original;
@@ -264,6 +267,42 @@ std::atomic<bool> g_trace_enabled{false};
 std::atomic<uintptr_t> g_pairip_base{0};
 std::mutex g_trace_mutex;
 
+// Ring buffer of the last VM instructions executed by the klB program.
+//
+// executeVM's dispatcher is called with the interpreter state in x0 and the
+// decoded opcode in w1. The state lives in executeVM's frame, so:
+//   [state+0x88] -> address of the image pointer
+//   [state+0x90] -> operand cursor (the value the klB handler treats as pc)
+//   [state-0x40] -> packed image length (low 32) and fetch cursor (high 32)
+// Only klB's image is recorded (length 0x44feb and the "IAP" magic), which
+// keeps the ring free of YTw and of other VM programs.
+constexpr uint32_t kKlBImageLength = 0x44feb;
+constexpr size_t kVmRingSize = 8192;
+struct VmRingEntry {
+    uint32_t fetch_pc;
+    uint32_t cursor;
+    uint32_t opcode;
+    uint32_t reserved;
+};
+VmRingEntry g_vm_ring[kVmRingSize] = {};
+std::atomic<uint32_t> g_vm_ring_pos{0};
+std::atomic<bool> g_vm_trace_enabled{false};
+
+// Ring buffer of the last raw syscalls libpairipcore issued. klB reads the
+// ZIP central directory through the same wrapper (base+0x17430), so the
+// syscall stream identifies whether the repeating VM loop is polling a file,
+// a futex, a clock or an anti-debug interface.
+constexpr size_t kSyscallRingSize = 512;
+struct SyscallRingEntry {
+    int64_t number;
+    int64_t args[6];
+    int64_t result;
+    char path[128];
+};
+SyscallRingEntry g_syscall_ring[kSyscallRingSize] = {};
+std::atomic<uint32_t> g_syscall_ring_pos{0};
+std::atomic<bool> g_syscall_trace_enabled{false};
+
 // Debug-only procfs sanitizer.
 //
 // The startup VM reads /proc/<pid>/maps through its own raw syscall wrapper
@@ -390,6 +429,18 @@ bool InstallPairIpTrace() {
          result, reinterpret_cast<void *>(lookup.base), target,
          g_pairip_append_original);
     if (result != 0 || g_pairip_append_original == nullptr) return false;
+
+    // Record the klB instruction stream so the crash can be tied to the last
+    // opcode that ran before the bad string view was read.
+    auto *dispatcher = reinterpret_cast<void *>(lookup.base + 0x6e918);
+    const int dispatch_result = DobbyHook(
+        dispatcher, reinterpret_cast<void *>(&pairip_dispatch_trace_entry),
+        &g_pairip_dispatch_original);
+    LOGI("trace: dispatch hook rc=%d target=%p trampoline=%p", dispatch_result,
+         dispatcher, g_pairip_dispatch_original);
+    if (dispatch_result == 0 && g_pairip_dispatch_original != nullptr) {
+        g_vm_trace_enabled.store(true);
+    }
 
     g_trace_enabled.store(true);
     return true;
@@ -615,6 +666,40 @@ dirent *pairip_readdir_hook(DIR *dirp) {
         }
         return entry;
     }
+}
+
+bool InstallSyscallTrace() {
+    std::lock_guard<std::mutex> lock(g_trace_mutex);
+    if (g_pairip_syscall_original == nullptr) {
+        ModuleLookup lookup{"libpairipcore.so", 0};
+        dl_iterate_phdr(FindModuleCallback, &lookup);
+        if (lookup.base == 0) {
+            LOGE("syscall-trace: libpairipcore.so is not mapped");
+            return false;
+        }
+        g_pairip_base.store(lookup.base);
+
+        auto *target = reinterpret_cast<void *>(lookup.base + 0x17430);
+        static const long page_size = sysconf(_SC_PAGESIZE);
+        auto page = reinterpret_cast<uintptr_t>(target) &
+                    ~static_cast<uintptr_t>(page_size - 1);
+        if (mprotect(reinterpret_cast<void *>(page),
+                     static_cast<size_t>(page_size),
+                     PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+            LOGE("syscall-trace: mprotect failed");
+        }
+
+        const int result = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_syscall_hook),
+            &g_pairip_syscall_original);
+        LOGI("syscall-trace: hook rc=%d base=%p target=%p trampoline=%p",
+             result, reinterpret_cast<void *>(lookup.base), target,
+             g_pairip_syscall_original);
+        if (result != 0 || g_pairip_syscall_original == nullptr) return false;
+    }
+    g_syscall_trace_enabled.store(true);
+    LOGI("syscall-trace: enabled");
+    return true;
 }
 
 bool InstallProcSanitizer() {
@@ -1059,7 +1144,27 @@ void pairip_copy_patch_c(uint64_t *regs) {
                 LOGE("vm-dump: open %s failed: %s", path.c_str(),
                      std::strerror(errno));
             }
+
+            // Capture the maps klB is about to inspect. The process has
+            // already mapped libunity/libil2cpp here, so this shows the
+            // module path klB will derive from argv[0].
+            const std::string maps = ReadWholeFile("/proc/self/maps");
+            const std::string maps_path = directory + "/klB-maps.txt";
+            FILE *maps_file = std::fopen(maps_path.c_str(), "wb");
+            if (maps_file != nullptr) {
+                const size_t written =
+                    std::fwrite(maps.data(), 1, maps.size(), maps_file);
+                std::fclose(maps_file);
+                LOGI("vm-dump: wrote %zu bytes of maps to %s", written,
+                     maps_path.c_str());
+            }
         }
+    }
+
+    // Start the syscall stream at klB's first instruction so the ring is not
+    // diluted by libmain/Fusion setup calls.
+    if (g_syscall_trace_enabled.load()) {
+        g_syscall_ring_pos.store(0, std::memory_order_relaxed);
     }
 
     if (!g_fake_cd_enabled.load()) return;
@@ -1234,6 +1339,49 @@ void *g_pairip_append_original = nullptr;
 extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_syscall_original = nullptr;
 
+constexpr uint32_t kInvalidSyscallSlot = 0xffffffffu;
+
+// Copy the path argument of the few syscalls klB uses to open files. The
+// pointer is only read for the duration of the entry; the trace stores a copy
+// because the VM frees its own buffer before the ring is dumped.
+uint32_t TraceSyscallEnter(long number, long a1, long a2, long a3) {
+    if (!g_syscall_trace_enabled.load()) return kInvalidSyscallSlot;
+    const uint32_t pos = g_syscall_ring_pos.fetch_add(1, std::memory_order_relaxed);
+    SyscallRingEntry &entry = g_syscall_ring[pos % kSyscallRingSize];
+    std::memset(&entry, 0, sizeof(entry));
+    entry.number = number;
+    entry.args[0] = a1;
+    entry.args[1] = a2;
+    entry.args[2] = a3;
+    entry.result = INT64_MIN;
+
+    const char *path = nullptr;
+    switch (number) {
+        case 48:   // faccessat
+        case 56:   // openat
+        case 78:   // readlinkat
+        case 79:   // newfstatat
+        case 221:  // execve
+            path = reinterpret_cast<const char *>(a2);
+            break;
+        case 279:  // memfd_create
+            path = reinterpret_cast<const char *>(a1);
+            break;
+        default:
+            break;
+    }
+    if (path != nullptr) {
+        SafeReadMemory(reinterpret_cast<uintptr_t>(path), entry.path,
+                       sizeof(entry.path) - 1);
+    }
+    return pos;
+}
+
+void TraceSyscallLeave(uint32_t slot, long result) {
+    if (slot == kInvalidSyscallSlot) return;
+    g_syscall_ring[slot % kSyscallRingSize].result = result;
+}
+
 // Entry point for the libpairipcore raw-syscall wrapper (base+0x17430).
 // The wrapper's ABI is syscall(number, a1..a6), so the C signature maps
 // directly onto x0..x6. Everything except the procfs read path is forwarded
@@ -1244,10 +1392,13 @@ long pairip_syscall_hook(long number, long a1, long a2, long a3, long a4,
                         long a5, long a6) {
     auto original = reinterpret_cast<long (*)(
         long, long, long, long, long, long, long)>(g_pairip_syscall_original);
-    if (original == nullptr || !g_proc_sanitize_enabled.load()) {
-        return original != nullptr
-            ? original(number, a1, a2, a3, a4, a5, a6)
-            : -ENOSYS;
+    if (original == nullptr) return -ENOSYS;
+
+    const uint32_t trace_slot = TraceSyscallEnter(number, a1, a2, a3);
+    if (!g_proc_sanitize_enabled.load()) {
+        const long result = original(number, a1, a2, a3, a4, a5, a6);
+        TraceSyscallLeave(trace_slot, result);
+        return result;
     }
 
     switch (number) {
@@ -1274,6 +1425,7 @@ long pairip_syscall_hook(long number, long a1, long a2, long a3, long a4,
                     LOGI("proc: sanitized %s fd=%ld bytes=%zu", path, fd, bytes);
                 }
             }
+            TraceSyscallLeave(trace_slot, fd);
             return fd;
         }
         case 61: {  // getdents64
@@ -1292,14 +1444,21 @@ long pairip_syscall_hook(long number, long a1, long a2, long a3, long a4,
             auto iterator = g_proc_files.find(static_cast<int>(a1));
             if (iterator == g_proc_files.end()) break;
             ProcFileState &state = iterator->second;
-            if (state.offset >= state.content.size()) return 0;
+            if (state.offset >= state.content.size()) {
+                TraceSyscallLeave(trace_slot, 0);
+                return 0;
+            }
             size_t count = static_cast<size_t>(a3);
             const size_t available = state.content.size() - state.offset;
             if (count > available) count = available;
-            if (count == 0) return 0;
+            if (count == 0) {
+                TraceSyscallLeave(trace_slot, 0);
+                return 0;
+            }
             std::memcpy(reinterpret_cast<void *>(a2),
                         state.content.data() + state.offset, count);
             state.offset += count;
+            TraceSyscallLeave(trace_slot, static_cast<long>(count));
             return static_cast<long>(count);
         }
         case 62: {  // lseek
@@ -1316,10 +1475,15 @@ long pairip_syscall_hook(long number, long a1, long a2, long a3, long a4,
             } else if (a3 == SEEK_END) {
                 position = size + a2;
             } else {
+                TraceSyscallLeave(trace_slot, -EINVAL);
                 return -EINVAL;
             }
-            if (position < 0) return -EINVAL;
+            if (position < 0) {
+                TraceSyscallLeave(trace_slot, -EINVAL);
+                return -EINVAL;
+            }
             state.offset = static_cast<size_t>(position);
+            TraceSyscallLeave(trace_slot, position);
             return position;
         }
         case 57: {  // close
@@ -1334,7 +1498,102 @@ long pairip_syscall_hook(long number, long a1, long a2, long a3, long a4,
             break;
     }
 
-    return original(number, a1, a2, a3, a4, a5, a6);
+    const long result = original(number, a1, a2, a3, a4, a5, a6);
+    TraceSyscallLeave(trace_slot, result);
+    return result;
+}
+
+extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_dispatch_original = nullptr;
+
+// One read of executeVM's frame covers the image pointer, the length/fetch
+// cursor pair and the operand cursor. Reading them directly after the
+// process_vm_readv probe keeps the per-instruction cost to a single syscall.
+extern "C" __attribute__((visibility("hidden")))
+void pairip_dispatch_trace_c(uint64_t *regs) {
+    if (regs == nullptr || !g_vm_trace_enabled.load()) return;
+
+    const uintptr_t state = static_cast<uintptr_t>(regs[0]);
+    if (state == 0) return;
+
+    // Diagnostics: the dispatcher is shared by every VM program, so show the
+    // first calls' raw frame words until the klB filter is confirmed.
+    static std::atomic<uint32_t> g_dispatch_calls{0};
+    const uint32_t call_index = g_dispatch_calls.fetch_add(1);
+    if (call_index < 8) {
+        uint64_t slot = 0;
+        uint64_t lenpc = 0;
+        uint64_t cursor_slot = 0;
+        uint64_t cursor_value = 0;
+        SafeReadMemory(state - 0x48, &slot, sizeof(slot));
+        SafeReadMemory(state - 0x40, &lenpc, sizeof(lenpc));
+        SafeReadMemory(state + 0x88, &cursor_slot, sizeof(cursor_slot));
+        SafeReadMemory(state + 0x90, &cursor_value, sizeof(cursor_value));
+        LOGI("trace: dispatch[%u] state=%p slot=%016" PRIx64
+             " lenpc=%016" PRIx64 " s88=%016" PRIx64 " s90=%016" PRIx64
+             " op=%#x x1=%016" PRIx64,
+             call_index, reinterpret_cast<void *>(state), slot, lenpc,
+             cursor_slot, cursor_value,
+             static_cast<unsigned>(regs[1] & 0xffffu), regs[1]);
+    }
+
+    uint8_t head[0xe0] = {};
+    if (!SafeReadMemory(state - 0x48, head, sizeof(head))) return;
+    uint64_t image_slot = 0;
+    uint32_t length = 0;
+    uint32_t fetch_pc = 0;
+    uint32_t cursor = 0;
+    std::memcpy(&image_slot, head, sizeof(image_slot));
+    std::memcpy(&length, head + 0x08, sizeof(length));
+    std::memcpy(&fetch_pc, head + 0x0c, sizeof(fetch_pc));
+    std::memcpy(&cursor, head + 0xd8, sizeof(cursor));
+    if (length != kKlBImageLength) return;
+
+    // [state-0x48] is the image pointer itself; state+0x88 points at that slot.
+    const uintptr_t image = static_cast<uintptr_t>(image_slot);
+    if (image == 0) return;
+    uint32_t magic = 0;
+    if (!SafeReadMemory(image, &magic, sizeof(magic))) return;
+    if (magic != 0x50414900u) return;  // "\0IAP"
+
+    const uint32_t pos = g_vm_ring_pos.fetch_add(1, std::memory_order_relaxed);
+    VmRingEntry &entry = g_vm_ring[pos % kVmRingSize];
+    entry.fetch_pc = fetch_pc;
+    entry.cursor = cursor;
+    entry.opcode = static_cast<uint32_t>(regs[1]) & 0xffffu;
+    entry.reserved = 0;
+}
+
+void DumpSyscallRing() {
+    if (!g_syscall_trace_enabled.load()) return;
+    const uint32_t pos = g_syscall_ring_pos.load(std::memory_order_relaxed);
+    const uint32_t available = pos < kSyscallRingSize ? pos : kSyscallRingSize;
+    const uint32_t count = available < 256 ? available : 256;
+    LOGI("trace: syscall ring pos=%u dumping last %u", pos, count);
+    for (uint32_t i = count; i > 0; --i) {
+        const uint32_t index = pos - i;
+        const SyscallRingEntry &entry = g_syscall_ring[index % kSyscallRingSize];
+        LOGI("trace: syscall[%u] n=%" PRId64 " a=%" PRId64 ",%" PRId64
+             ",%" PRId64 " ret=%" PRId64 " path=%s",
+             index, entry.number, entry.args[0], entry.args[1], entry.args[2],
+             entry.result, entry.path);
+    }
+}
+
+// Dump the most recent klB instructions. Called from the append hook when the
+// reader is about to read from an unmapped base, i.e. immediately before the
+// crash that the trace is meant to explain.
+void DumpVmRing() {
+    DumpSyscallRing();
+    const uint32_t pos = g_vm_ring_pos.load(std::memory_order_relaxed);
+    const uint32_t available = pos < kVmRingSize ? pos : kVmRingSize;
+    const uint32_t count = available < kVmRingSize ? available : kVmRingSize;
+    LOGI("trace: vm ring pos=%u dumping last %u", pos, count);
+    for (uint32_t i = count; i > 0; --i) {
+        const VmRingEntry &entry = g_vm_ring[(pos - i) % kVmRingSize];
+        LOGI("trace: vminsn[%u] fetch=%#x cursor=%#x op=%#x", pos - i,
+             entry.fetch_pc, entry.cursor, entry.opcode);
+    }
 }
 
 extern "C" __attribute__((visibility("hidden")))
@@ -1407,6 +1666,7 @@ void pairip_append_trace_c(uint64_t *regs) {
     if (!base_mapped && context != 0) {
         static std::atomic<int> dump_count{0};
         if (dump_count.fetch_add(1) == 0) {
+            DumpVmRing();
             uint64_t image_words[1] = {};
             const uintptr_t image =
                 SafeReadMemory(context, image_words, sizeof(image_words))
@@ -1465,6 +1725,12 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_bepinex_android_hooks_PairIpShield_nativeInstallClassTrace(
     JNIEnv *, jclass) {
     return InstallClassTrace() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_bepinex_android_hooks_PairIpShield_nativeInstallSyscallTrace(
+    JNIEnv *, jclass) {
+    return InstallSyscallTrace() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

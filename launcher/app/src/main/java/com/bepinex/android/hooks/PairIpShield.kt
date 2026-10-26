@@ -151,6 +151,17 @@ object PairIpShield {
     }
 
     /**
+     * Debug-only: records the last raw syscalls issued through PairIP's own
+     * syscall wrapper and dumps them when the klB reader is about to crash.
+     * Used to tell whether the repeating VM loop is polling a file, a futex
+     * or a clock.
+     */
+    fun installSyscallTrace(): Boolean {
+        ensureLoaded()
+        return nativeInstallSyscallTrace()
+    }
+
+    /**
      * Debug-only: maps [apkPath]'s ZIP central directory and points the klB
      * program's unresolved ZIP-view literals at it. Must be called after
      * `libpairipcore.so` is mapped and before `libmain.so` starts klB.
@@ -198,6 +209,7 @@ object PairIpShield {
     private external fun nativeInstallTrace(): Boolean
     private external fun nativeInstallClassTrace(): Boolean
     private external fun nativeInstallJniTrace(): Boolean
+    private external fun nativeInstallSyscallTrace(): Boolean
     private external fun nativeInstallProcSanitizer(): Boolean
     private external fun nativeInstallFakeCentralDirectory(apkPath: String): String?
     private external fun nativeInstallVmDump(directory: String): String?
