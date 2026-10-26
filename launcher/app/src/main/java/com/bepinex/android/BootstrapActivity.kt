@@ -23,8 +23,11 @@ import com.bepinex.android.hooks.PairIpShield
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 
 /**
  * Bootstrap activity that injects BepInEx into the target game process
@@ -127,6 +130,23 @@ class BootstrapActivity : Activity() {
 
         BepInExLog.i("=== Bootstrap: $targetPackage ===")
 
+        if (PairIpExperiment.processNameSpoof) {
+            // Debug-only: PairIP parses /proc/self/cmdline and
+            // /proc/self/status before its first VM program. A stock launch
+            // shows the game package there; the hosted :game process shows
+            // the launcher instead.
+            val error = try {
+                PairIpShield.spoofProcessName(targetPackage)
+            } catch (t: Throwable) {
+                "spoof threw: ${t.message}"
+            }
+            if (error == null) {
+                BepInExLog.i("PairIP experiment: process name spoofed to $targetPackage")
+            } else {
+                BepInExLog.w("PairIP experiment: process name spoof failed: $error")
+            }
+        }
+
         Thread({
             try { runBootstrapFlow(targetPackage) }
             catch (e: Exception) { failAndFinish("Bootstrap failed: ${e.message}", e) }
@@ -220,6 +240,15 @@ class BootstrapActivity : Activity() {
             gameContext.classLoader
         }
 
+        if (PairIpExperiment.gameApplication) {
+            val gameApplication = onMainThread {
+                installGameApplication(gameContext, gameClassLoader)
+            }
+            if (gameApplication == null) {
+                BepInExLog.w("PairIP experiment: game Application was not created")
+            }
+        }
+
         if (PairIpExperiment.threadDump) {
             dumpPairIpScheduler("after startup program", gameClassLoader)
             Thread.sleep(1_500)
@@ -232,7 +261,7 @@ class BootstrapActivity : Activity() {
                 "Running PairIP startup programs",
                 60
             )
-            runPairIpPreload(gameClassLoader)
+            runPairIpPreload(gameClassLoader, gameContext)
         }
 
         if (!PairIpExperiment.noHooks) {
@@ -417,10 +446,6 @@ class BootstrapActivity : Activity() {
 
     private fun seedPairIpContext(targetPackage: String, gameContext: Context): ClassLoader {
         return try {
-            if (PairIpExperiment.delayMs > 0L) {
-                // Debug-only window so a tracer can attach before PairIP runs.
-                Thread.sleep(PairIpExperiment.delayMs)
-            }
             if (!PairIpExperiment.noHooks && !PairIpExperiment.lateHooks &&
                 PairIpExperiment.stackSpoof
             ) {
@@ -443,6 +468,20 @@ class BootstrapActivity : Activity() {
                 return gameContext.classLoader
             }
 
+            if (PairIpExperiment.skipFactory) {
+                // Debug-only: build the game class loader with the factory
+                // detached and never load it. Used to run libunity's DT_INIT
+                // programs without PairIP's YTw startup program first.
+                applicationInfo.appComponentFactory = null
+                val loader = try {
+                    gameContext.classLoader
+                } finally {
+                    applicationInfo.appComponentFactory = factory
+                }
+                BepInExLog.i("PairIP experiment: app-component factory skipped")
+                return loader
+            }
+
             if (PairIpExperiment.lateHooks) {
                 // PairIP's startup programs hash their own bytecode and react
                 // to LSPlant/Dobby modifications with a decoy path that
@@ -455,6 +494,38 @@ class BootstrapActivity : Activity() {
                     gameContext.classLoader
                 } finally {
                     applicationInfo.appComponentFactory = factory
+                }
+                if (PairIpExperiment.stockBoundContext) {
+                    // Stock-faithful variant of the deferred path: do not seed
+                    // VMRunner ourselves. Point mBoundApplication.info at the
+                    // game's LoadedApk and let InitContextProvider create the
+                    // context exactly as a normal launch does, before any hook
+                    // engine or ART modification exists.
+                    val activityThreadClass = Class.forName("android.app.ActivityThread")
+                    val currentThread = activityThreadClass
+                        .getMethod("currentActivityThread").invoke(null)
+                    val bindDataField = findField(activityThreadClass, "mBoundApplication")
+                        ?: throw IllegalStateException("ActivityThread.mBoundApplication missing")
+                    bindDataField.isAccessible = true
+                    val bindData = bindDataField.get(currentThread)
+                        ?: throw IllegalStateException("mBoundApplication is null")
+                    val infoField = findField(bindData.javaClass, "info")
+                        ?: throw IllegalStateException("AppBindData.info missing")
+                    infoField.isAccessible = true
+                    val previousInfo = infoField.get(bindData)
+                    infoField.set(bindData, loadedApk)
+                    BepInExLog.i("PairIP experiment: stock-bound late-hooks path")
+                    try {
+                        Class.forName(factory, true, loader)
+                        enableVmRunnerLogging(loader)
+                    } finally {
+                        infoField.set(bindData, previousInfo)
+                        BepInExLog.i("PairIP experiment: restored mBoundApplication.info")
+                    }
+                    BepInExLog.i(
+                        "PairIP: stock-bound factory started for $targetPackage"
+                    )
+                    return loader
                 }
                 seedVmRunner(loader, gameContext)
                 Class.forName(factory, true, loader)
@@ -594,9 +665,194 @@ class BootstrapActivity : Activity() {
         }
     }
 
-    private fun runPairIpPreload(gameClassLoader: ClassLoader) {
+    /**
+     * Debug-only: copy the installed game's PairIP VM assets and native
+     * libraries into the launcher's private files directory. This only reads
+     * the Play-installed APKs, and lets the offline disassembler work on the
+     * exact bytes the launcher maps at runtime.
+     */
+    private fun dumpGameArtifacts() {
+        val packageName = targetPackage ?: return
+        val outDir = File(filesDir, "cifi-artifacts")
+        outDir.mkdirs()
+        val wanted = listOf(
+            "assets/klB1wZSojiVvDvCN",
+            "assets/YTw4BW9dg3brGdIP",
+            "lib/arm64-v8a/libpairipcore.so",
+            "lib/arm64-v8a/libmain.so",
+            "lib/arm64-v8a/libunity.so",
+            "lib/arm64-v8a/libil2cpp.so"
+        )
+        val sources = mutableListOf<Pair<String, String>>()
+        packageManager.getApplicationInfo(packageName, 0).let { info ->
+            info.sourceDir?.let { sources.add("base" to it) }
+            info.splitSourceDirs?.forEachIndexed { index, path ->
+                sources.add("split$index" to path)
+            }
+        }
+        for ((label, path) in sources) {
+            try {
+                ZipFile(path).use { zip ->
+                    for (name in wanted) {
+                        val entry = zip.getEntry(name) ?: continue
+                        val out = File(outDir, "${label}!${name.replace('/', '_')}")
+                        zip.getInputStream(entry).use { input ->
+                            out.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        BepInExLog.i(
+                            "PairIP artifacts: ${out.name} (${out.length()} bytes)"
+                        )
+                    }
+                }
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP artifacts: failed to read $label", t)
+            }
+        }
+    }
+
+    private fun runPairIpPreload(gameClassLoader: ClassLoader, gameContext: Context) {
         val config = preparedConfig
             ?: throw IllegalStateException("Fusion config was not prepared")
+
+        if (PairIpExperiment.dumpArtifacts) {
+            dumpGameArtifacts()
+        }
+
+        if (PairIpExperiment.cancelJob) {
+            // Debug-only: PairIP's repeating delayed program reacts to a
+            // native debugger on its worker thread. Stop it before the
+            // attach window so the klB program can be inspected in isolation.
+            cancelPairIpDelayedJob(gameClassLoader)
+        }
+
+        if (PairIpExperiment.delayMs > 0L) {
+            // Debug-only attach window. The app-component factory (and its
+            // PairIP startup program) has already run, so libpairipcore is
+            // mapped and a native debugger can resolve its load bias. libmain
+            // and the Unity DT_INIT programs still have not run.
+            BepInExLog.i(
+                "PairIP preload: attach window pid=${android.os.Process.myPid()} " +
+                    "ms=${PairIpExperiment.delayMs}; libpairipcore is loaded"
+            )
+            Thread.sleep(PairIpExperiment.delayMs)
+            BepInExLog.i("PairIP preload: attach window closed; loading libmain")
+        }
+
+        if (PairIpExperiment.procSanitize) {
+            // Debug-only: the VM reads /proc/<pid>/maps through its own raw
+            // syscall wrapper. Install the sanitizer after the startup
+            // program (hooks before it provoke a decoy path) and before
+            // libmain lets klB run.
+            val installed = try {
+                PairIpShield.installProcSanitizer()
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP proc sanitizer: install threw", t)
+                false
+            }
+            BepInExLog.i("PairIP proc sanitizer: installed=$installed")
+        }
+
+        if (PairIpExperiment.dumpVmImage) {
+            // Debug-only: capture the writable image executeVM builds for klB
+            // before the interpreter touches it. Diffing it with the APK asset
+            // shows which bytes the loader decrypts or relocates.
+            val directory = File(filesDir, "pairip-vm").apply { mkdirs() }
+            val error = try {
+                PairIpShield.installVmDump(directory.absolutePath)
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP VM dump: install threw", t)
+                t.message ?: "install threw"
+            }
+            if (error == null) {
+                BepInExLog.i("PairIP VM dump: installed at ${directory.absolutePath}")
+            } else {
+                BepInExLog.e("PairIP VM dump: $error")
+            }
+        }
+
+        if (PairIpExperiment.fakeCentralDirectory) {
+            // Debug-only: klB's first ZIP check reads a string view from two
+            // VM image literals that a hosted launch leaves unresolved. Point
+            // them at the base APK's real central directory at the loader's
+            // copy point so the check reads file bytes instead of ciphertext.
+            val error = try {
+                PairIpShield.installFakeCentralDirectory(gameContext.packageCodePath)
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP fake CD: install threw", t)
+                t.message ?: "install threw"
+            }
+            if (error == null) {
+                BepInExLog.i("PairIP fake central directory: installed")
+            } else {
+                BepInExLog.e("PairIP fake central directory: $error")
+            }
+        }
+
+        if (PairIpExperiment.traceClass) {
+            // Debug-only: log each uncached VM class lookup. The startup
+            // program (YTw) has already run; hooking its resolver before that
+            // would trip the decoy path.
+            val traced = try {
+                PairIpShield.installClassTrace()
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP class trace: install threw", t)
+                false
+            }
+            BepInExLog.i("PairIP class trace: installed=$traced")
+        }
+
+        if (PairIpExperiment.jniTrace) {
+            // Debug-only: klB checks its environment through JNI. The JNIEnv
+            // table is patched in place (data only) so the VM's own module and
+            // maps checks still see an unmodified process.
+            val traced = try {
+                PairIpShield.installJniTrace()
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP JNI trace: install threw", t)
+                false
+            }
+            BepInExLog.i("PairIP JNI trace: installed=$traced")
+        }
+
+        if (PairIpExperiment.stockLibmain) {
+            // Debug-only control: load the game's own libmain from the split
+            // APK and let it load libunity/libil2cpp without Fusion. PairIP
+            // then sees the same DT_INIT environment a stock launch has.
+            val stockPath = findStockLibmain(
+                gameContext,
+                targetPackage ?: throw IllegalStateException("No target package"),
+            )
+            val gameLibDir = gameContext.applicationInfo.nativeLibraryDir
+            BepInExLog.i("PairIP preload: stock libmain=$stockPath dir=$gameLibDir")
+            if (PairIpExperiment.hiddenApi) {
+                disableHiddenApiEnforcement()
+            }
+            onMainThread {
+                val loadError = PairIpShield.loadIntoClassLoader(gameClassLoader, stockPath)
+                if (PairIpExperiment.hiddenApi) {
+                    restoreHiddenApiEnforcement()
+                }
+                if (loadError != null) {
+                    throw IllegalStateException(
+                        "Could not load stock $stockPath into the game loader: $loadError"
+                    )
+                }
+                if (PairIpExperiment.trace) {
+                    val traced = PairIpShield.installTrace()
+                    BepInExLog.i("PairIP trace: installed=$traced")
+                }
+                val stockLoader = gameClassLoader.loadClass(
+                    "com.unity3d.player.NativeLoader"
+                )
+                val loaded = stockLoader.getMethod("load", String::class.java)
+                    .invoke(null, gameLibDir) as? Boolean
+                if (loaded != true) {
+                    throw IllegalStateException("stock libmain load returned $loaded")
+                }
+            }
+            BepInExLog.i("PairIP preload: stock libmain completed")
+            return
+        }
 
         val stagedFile = FusionConfigStore.write(this, config)
         BepInExLog.i("PairIP preload: config staged at ${stagedFile.absolutePath}")
@@ -628,6 +884,10 @@ class BootstrapActivity : Activity() {
                 // Restore ART before PairIP's DT_INIT programs inspect it.
                 restoreHiddenApiEnforcement()
             }
+            if (PairIpExperiment.trace) {
+                val traced = PairIpShield.installTrace()
+                BepInExLog.i("PairIP trace: installed=$traced")
+            }
             val loaded = loadMethod.invoke(null, PairIpExperiment.PRELOAD_MARKER) as? Boolean
             if (loaded != true) {
                 throw IllegalStateException("libmain preload entry returned $loaded")
@@ -643,6 +903,46 @@ class BootstrapActivity : Activity() {
         // startup programs have already run, so drop the scheduled job before
         // installing the hosting hooks.
         cancelPairIpDelayedJob(gameClassLoader)
+    }
+
+    /**
+     * Returns a linker-loadable path for the game's own `libmain.so`.
+     *
+     * The split APK stores native libraries uncompressed, so the APK entry
+     * path is preferred: it is the same path the stock `System.loadLibrary`
+     * call maps. A compressed entry is extracted to host storage instead.
+     */
+    private fun findStockLibmain(gameContext: Context, targetPackage: String): String {
+        val info = gameContext.applicationInfo
+        val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+        val apks = ArrayList<String>()
+        info.sourceDir?.let { apks.add(it) }
+        info.splitSourceDirs?.let { apks.addAll(it) }
+
+        for (apk in apks.distinct()) {
+            try {
+                ZipFile(apk).use { zip ->
+                    val entry = zip.getEntry("lib/$abi/libmain.so") ?: return@use
+                    if (entry.method == ZipEntry.STORED) {
+                        return "$apk!/lib/$abi/libmain.so"
+                    }
+                    val dest = File(
+                        BepInExPaths.getAppDataDir(targetPackage),
+                        "game-libs/$abi/libmain.so",
+                    )
+                    dest.parentFile?.mkdirs()
+                    zip.getInputStream(entry).use { input ->
+                        dest.outputStream().use { output ->
+                            input.copyTo(output, 1 shl 20)
+                        }
+                    }
+                    return dest.absolutePath
+                }
+            } catch (t: Throwable) {
+                BepInExLog.w("PairIP stock libmain: cannot inspect $apk: ${t.message}")
+            }
+        }
+        throw IllegalStateException("No lib/$abi/libmain.so in the game APKs")
     }
 
     private fun cancelPairIpDelayedJob(gameClassLoader: ClassLoader) {
@@ -719,6 +1019,104 @@ class BootstrapActivity : Activity() {
         val vmRunner = loader.loadClass("com.pairip.VMRunner")
         vmRunner.getMethod("setContext", Context::class.java).invoke(null, gameContext)
         enableVmRunnerLogging(vmRunner)
+        if (PairIpExperiment.trace && PairIpExperiment.tracePre) {
+            // Opt-in only: any code hook in libpairipcore before the startup
+            // program makes YTw take a decoy path and crash at strlen. The
+            // preload path installs the same hook after YTw instead.
+            val traced = PairIpShield.installTrace()
+            BepInExLog.i("PairIP trace: pre-factory installed=$traced")
+        }
+        if (PairIpExperiment.jniTrace && !PairIpExperiment.preload) {
+            // Install before the factory runs so the method/field IDs that
+            // YTw resolves are recorded. klB reuses those IDs, and without
+            // this the trace cannot name most of klB's calls or arguments.
+            // On the preload path the trace is installed after YTw instead:
+            // instrumenting the startup program makes it take a decoy path.
+            val traced = try {
+                PairIpShield.installJniTrace()
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP JNI trace: pre-factory install threw", t)
+                false
+            }
+            BepInExLog.i("PairIP JNI trace: pre-factory installed=$traced")
+        }
+    }
+
+    /**
+     * Debug-only: create the game's real Application through its LoadedApk and
+     * make it the process's initial Application.
+     *
+     * A stock launch instantiates `com.pairip.application.Application`, whose
+     * `attachBaseContext` stores itself in `VMRunner.context`, verifies the APK
+     * signature, and starts the license check. The hosted process otherwise
+     * keeps the launcher's Application, so PairIP's native VM never sees the
+     * application object the game normally provides.
+     */
+    private fun installGameApplication(
+        gameContext: Context,
+        gameClassLoader: ClassLoader
+    ): android.app.Application? {
+        return try {
+            val packageInfoField = findField(gameContext.javaClass, "mPackageInfo")
+                ?: return null
+            packageInfoField.isAccessible = true
+            val loadedApk = packageInfoField.get(gameContext) ?: return null
+
+            val applicationField = findField(loadedApk.javaClass, "mApplication")
+            applicationField?.isAccessible = true
+            val existing = applicationField?.get(loadedApk) as? android.app.Application
+
+            val app = existing ?: run {
+                val activityThreadClass = Class.forName("android.app.ActivityThread")
+                val activityThread = activityThreadClass
+                    .getMethod("currentActivityThread").invoke(null)
+                val instrumentation = activityThreadClass
+                    .getMethod("getInstrumentation").invoke(activityThread)
+                    as android.app.Instrumentation
+                val makeApplication = loadedApk.javaClass.getDeclaredMethod(
+                    "makeApplication",
+                    Boolean::class.javaPrimitiveType,
+                    android.app.Instrumentation::class.java
+                )
+                makeApplication.isAccessible = true
+                makeApplication.invoke(loadedApk, false, instrumentation)
+                    as? android.app.Application
+            }
+            if (app == null) {
+                BepInExLog.w("PairIP experiment: LoadedApk.makeApplication returned null")
+                return null
+            }
+
+            // PairIP's Application.attachBaseContext does this, but an app
+            // class may override attachBaseContext without calling super.
+            try {
+                val vmRunner = gameClassLoader.loadClass("com.pairip.VMRunner")
+                vmRunner.getMethod("setContext", Context::class.java).invoke(null, app)
+                enableVmRunnerLogging(vmRunner)
+            } catch (t: Throwable) {
+                BepInExLog.w("PairIP experiment: VMRunner.setContext failed: $t")
+            }
+
+            if (PairIpExperiment.gameApplicationAsProcess) {
+                val activityThread = Class.forName("android.app.ActivityThread")
+                    .getMethod("currentActivityThread").invoke(null)
+                findField(activityThread.javaClass, "mInitialApplication")?.apply {
+                    isAccessible = true
+                    set(activityThread, app)
+                }
+                BepInExLog.i("PairIP experiment: game Application installed as mInitialApplication")
+            }
+
+            BepInExLog.i(
+                "PairIP experiment: game Application ${app.javaClass.name} " +
+                    "package=${app.packageName} uid=${app.applicationInfo.uid} " +
+                    "myUid=${android.os.Process.myUid()}"
+            )
+            app
+        } catch (t: Throwable) {
+            BepInExLog.e("PairIP experiment: game Application creation failed", t)
+            null
+        }
     }
 
     private fun enableVmRunnerLogging(loader: ClassLoader) {
@@ -914,6 +1312,64 @@ class BootstrapActivity : Activity() {
         }
     }
 
+    /**
+     * Debug-only: build a host-storage copy of the game's `libunity.so` whose
+     * PairIP-injected DT_INIT stub is replaced with `ret`.
+     *
+     * The installed APKs are untouched. PairIP appends a 4 KiB executable
+     * segment and points `DT_INIT` at it; the stub's only job is to call
+     * `ExecuteProgram("klB1wZSojiVvDvCN")` in `libpairipcore.so`. A `ret`
+     * keeps Unity's own `.init_array` constructors but skips that program.
+     *
+     * @return patched library path, or null when the expected layout is absent.
+     */
+    private fun patchPairIpUnityInit(gameLibDir: String, appDataDir: File): String? {
+        val source = File(gameLibDir, "libunity.so")
+        if (!source.isFile) {
+            BepInExLog.w("PairIP experiment: no libunity.so at ${source.absolutePath}")
+            return null
+        }
+        val target = File(appDataDir, "pairip/libunity-init-patched.so")
+        target.parentFile?.mkdirs()
+
+        val initFileOffset = 0x16a8000L
+        val originalInit = byteArrayOf(0x5f, 0x24.toByte(), 0x03, 0xd5.toByte()) // bti c
+        val returnInstruction = byteArrayOf(0xc0.toByte(), 0x03, 0x5f, 0xd6.toByte()) // ret
+
+        try {
+            if (!target.isFile || target.length() != source.length()) {
+                source.copyTo(target, overwrite = true)
+                BepInExLog.i("PairIP experiment: copied libunity.so -> ${target.absolutePath}")
+            }
+            RandomAccessFile(target, "rw").use { file ->
+                file.seek(initFileOffset)
+                val current = ByteArray(originalInit.size)
+                file.readFully(current)
+                if (current.contentEquals(returnInstruction)) {
+                    BepInExLog.i("PairIP experiment: DT_INIT already patched in $target")
+                    return target.absolutePath
+                }
+                if (!current.contentEquals(originalInit)) {
+                    BepInExLog.w(
+                        "PairIP experiment: unexpected DT_INIT bytes " +
+                            current.joinToString("") { "%02x".format(it) }
+                    )
+                    return null
+                }
+                file.seek(initFileOffset)
+                file.write(returnInstruction)
+            }
+            BepInExLog.i(
+                "PairIP experiment: patched libunity DT_INIT at 0x" +
+                    initFileOffset.toString(16) + " -> $target"
+            )
+            return target.absolutePath
+        } catch (t: Throwable) {
+            BepInExLog.e("PairIP experiment: failed to patch libunity", t)
+            return null
+        }
+    }
+
     // Prepare Fusion state
 
     private fun prepareFusionState(
@@ -931,6 +1387,12 @@ class BootstrapActivity : Activity() {
         // Fusion builds absolute libunity/libil2cpp paths.
         val gameLibs = GameNativeLibraries.ensureAvailable(gameContext, appDataDir)
         val gameLibDir = gameLibs.directory
+        val unityLibraryPath = if (PairIpExperiment.patchUnityInit) {
+            patchPairIpUnityInit(gameLibDir, appDataDir)
+                ?: gameLibs.unityLibraryPath
+        } else {
+            gameLibs.unityLibraryPath
+        }
 
         // Per-game storage root (FusionCore pattern)
         val dataOnSdCard = BepInExPaths.getGameRootDir(targetPackage)
@@ -1065,7 +1527,7 @@ class BootstrapActivity : Activity() {
 
         return FusionConfig(
             gameLibraryDirectory = gameLibDir,
-            gameUnityLibraryPath = gameLibs.unityLibraryPath,
+            gameUnityLibraryPath = unityLibraryPath,
             appLibraryDirectory = appLibDir,
             appDataDirectory = appDataDir.absolutePath,
             bepInExDirectory = bepInExDir.absolutePath,

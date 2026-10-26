@@ -72,6 +72,8 @@ own process is required.
 ## Scope note
 
 The tracer, fake central-directory, VM-dump, process-name, proc-sanitizer, and
-preload experiment switches are not part of #57. They stay uncommitted until
-their setup is understood and they are confirmed to be inert in a
+preload experiment switches are not part of #57. They are debug-gated and are
+tracked as a separate work-in-progress checkpoint. That checkpoint also carries
+a temporary non-debug bypass used only to reproduce retail (CheckJNI-off)
+behaviour; final cleanup must remove the bypass and keep all extras inert in a
 non-debuggable build.

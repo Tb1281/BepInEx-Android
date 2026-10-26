@@ -1,10 +1,14 @@
 project(pairipshield)
 
+enable_language(ASM)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 add_library(pairipshield SHARED
     shield.cpp
+    jni_trace.cpp
+    trace_hook.S
 )
 
 # dobby.h lives in the parent cpp directory, shared with the hook engine.

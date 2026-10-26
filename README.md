@@ -108,6 +108,14 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 
 APK: `launcher/app/build/outputs/apk/debug/app-debug.apk`
 
+For device installs, prefer the Android CLI. `android install` uses an
+incremental/delta install, so it pushes only the changed parts of the APK and is
+much faster than `adb install` on repeated debug builds:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+```
+
 ## Device Diagnostics
 
 ```bash

@@ -2,6 +2,7 @@ package com.bepinex.android.hooks
 
 import android.content.Context
 import com.bepinex.android.BepInExLog
+import java.io.File
 
 /**
  * Process-wide module shield for integrity VMs such as PairIP.
@@ -67,14 +68,18 @@ object PairIpShield {
 
             val hostLibDir = hostContext.applicationInfo.nativeLibraryDir
             val hostDataDir = hostContext.applicationInfo.dataDir
+            val hostApkDir = File(hostContext.packageCodePath).parent
+            val hostExternalDir = hostContext.getExternalFilesDir(null)?.absolutePath
             val gameLibDir = gameContext.applicationInfo.nativeLibraryDir
 
             // Host APK libraries and host-private state are never part of the
             // game's expected environment. Game libraries stay visible even
             // when they were extracted out of an ABI split into host storage.
-            val prefixes = arrayOf(
+            val prefixes = listOfNotNull(
                 hostLibDir,
                 hostDataDir,
+                hostApkDir,
+                hostExternalDir,
             ).filter { it.isNotBlank() && it != gameLibDir }.toTypedArray()
             val allowed = allowedPrefixes.filter { it.isNotBlank() }.toTypedArray()
 
@@ -95,6 +100,7 @@ object PairIpShield {
             )
 
             nativeConfigure(prefixes, substrings, allowed)
+            nativeSetGameUid(gameContext.applicationInfo.uid)
             installed = nativeIsActive()
             BepInExLog.i("$TAG: module shield installed=$installed")
         }
@@ -102,12 +108,100 @@ object PairIpShield {
 
     fun isInstalled(): Boolean = installed
 
+    /**
+     * Debug-only: captures the immediate caller and interpreter frame of the
+     * PairIP VM string-append helper. No-op in production because the only
+     * caller is the debuggable-only experiment path.
+     */
+    fun installTrace(): Boolean {
+        ensureLoaded()
+        return nativeInstallTrace()
+    }
+
+    /**
+     * Debug-only: hooks the VM's class resolver and logs the descriptor,
+     * table, key and decoded entry for each uncached lookup. Distinguishes a
+     * stale hosted-mode literal from a genuinely missing class. Installed
+     * after the startup program and before `libmain.so` runs klB.
+     */
+    fun installClassTrace(): Boolean {
+        ensureLoaded()
+        return nativeInstallClassTrace()
+    }
+
+    /**
+     * Debug-only: patches the process-wide JNIEnv table and logs every JNI
+     * call made directly from `libpairipcore.so`. The table is data-only, so
+     * the VM's own ELF/maps checks still observe an unmodified process.
+     * Installed after the startup program and before `libmain.so` runs klB.
+     */
+    fun installJniTrace(): Boolean {
+        ensureLoaded()
+        return nativeInstallJniTrace()
+    }
+
+    /**
+     * Debug-only: intercepts the PairIP VM's raw-syscall wrapper and serves a
+     * same-sized copy of `/proc/<pid>/maps` with host-only lines blanked.
+     * Installed after the startup program and before `libmain.so` runs klB.
+     */
+    fun installProcSanitizer(): Boolean {
+        ensureLoaded()
+        return nativeInstallProcSanitizer()
+    }
+
+    /**
+     * Debug-only: maps [apkPath]'s ZIP central directory and points the klB
+     * program's unresolved ZIP-view literals at it. Must be called after
+     * `libpairipcore.so` is mapped and before `libmain.so` starts klB.
+     *
+     * @return null on success, or a diagnostic message.
+     */
+    fun installFakeCentralDirectory(apkPath: String): String? {
+        ensureLoaded()
+        return nativeInstallFakeCentralDirectory(apkPath)
+    }
+
+    /**
+     * Debug-only: writes the writable VM image that `executeVM` builds for klB
+     * to `klB-image.bin` under [directory], before the interpreter starts.
+     * Diffing it against the APK asset shows which bytes the loader decrypts
+     * or relocates, and which literals klB still reads as ciphertext.
+     *
+     * @return null on success, or a diagnostic message.
+     */
+    fun installVmDump(directory: String): String? {
+        ensureLoaded()
+        return nativeInstallVmDump(directory)
+    }
+
+    /**
+     * Debug-only: rewrites this process's argv0 and task name to [name]. The
+     * old argv0 buffer is reused when it is long enough, so the kernel's
+     * `/proc/self/cmdline` and `/proc/self/status` `Name` look like the target
+     * game's stock process instead of the launcher's `:game` process.
+     *
+     * @return null on success, or a diagnostic message.
+     */
+    fun spoofProcessName(name: String): String? {
+        ensureLoaded()
+        return nativeSpoofProcessName(name)
+    }
+
     private external fun nativeConfigure(
         prefixes: Array<String>,
         substrings: Array<String>,
         allowedPrefixes: Array<String>,
     )
     private external fun nativeIsActive(): Boolean
+    private external fun nativeSetGameUid(uid: Int)
+    private external fun nativeInstallTrace(): Boolean
+    private external fun nativeInstallClassTrace(): Boolean
+    private external fun nativeInstallJniTrace(): Boolean
+    private external fun nativeInstallProcSanitizer(): Boolean
+    private external fun nativeInstallFakeCentralDirectory(apkPath: String): String?
+    private external fun nativeInstallVmDump(directory: String): String?
+    private external fun nativeSpoofProcessName(name: String): String?
 
     private external fun nativeLoadIntoClassLoader(
         loader: ClassLoader,
