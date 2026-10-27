@@ -1097,3 +1097,46 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
   the missing reader slots is closed. The reader-slot source must be a
   different state-machine branch, a direct-memory read of the boxed `Long`,
   or a writer outside the current trace.
+
+## Pre-registered experiment (2026-10-28, stack-strings)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The `long-unbox` run closed the JNI-unboxing route, so the remaining
+environment input that differs between hosted and stock is the fabricated
+anti-debug stack trace. Static review found that `libpairipcore` does call
+the JNI string readers the tracer never hooked: `+0x7dc14` loads
+`GetStringUTFLength` (`#0x540`), `+0x7dc30` loads `GetStringUTFChars`
+(`#0x548`), and `+0x7f190` loads `ReleaseStringUTFChars` (`#0x550`). The
+`+0x7dc00` block is the same loop that calls `GetObjectArrayElement`, so the
+VM almost certainly copies the `StackTraceElement.toString()` results into
+native memory before the reader. `JStringToUtf8` uses saved originals, so a
+new hook will not recurse.
+
+- Change: add an observation-only `GetStringUTFChars` hook to
+  `pairip_jni_trace` with the saved original and the `IsPairIpCaller` filter.
+  It logs the returned UTF-8 text (truncated to 160 bytes), the caller, and
+  nothing else. The VM, image, stack spoof, and experiment switches are not
+  modified.
+- Prediction: before the reader crash, at least one
+  `jni: GetStringUTFChars` record from a `libpairipcore` caller returns a
+  string produced by the anti-debug stack walk (a `pairIpUnityLaunchStack`
+  frame or similar frame text). The crash signature, five globals, reader
+  slots, ring positions, and pointer-only image diff stay identical to
+  `long-unbox`.
+- Falsification: zero `GetStringUTFChars` records from `libpairipcore`
+  callers before the crash, or the only returned strings are unrelated to
+  the stack walk. Then the string-content route is closed and the stack-text
+  difference is not the gate.
+- Follow-up mapping: if stack text is read, record the exact strings and
+  disassemble `+0x7dc30` back to the hash/state write to see whether the text
+  reaches the five globals. If it does, the next run should change only the
+  fabricated stack content and watch the globals and reader slots.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `pairip_jni_trace=true`,
+  debug launcher.
+- Run key: `variant=stack-strings`, code commit `HEAD` plus the
+  `GetStringUTFChars` hook, APK sha256 recorded after the build; package
+  `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`).
+- Status: pre-registered; ready to build and run.

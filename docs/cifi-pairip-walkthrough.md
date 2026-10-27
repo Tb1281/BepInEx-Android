@@ -1188,3 +1188,29 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
 - Verdict: the pre-registered prediction is **FALSIFIED**. The `klB`
   argument is not unboxed through JNI; the argument route is closed.
 - Findings updated: yes, in this commit.
+
+## Planned run: stack-strings
+
+- Purpose: determine whether `klB` copies the fabricated anti-debug stack
+  text into native memory before the reader. `libpairipcore` loads
+  `GetStringUTFLength` (`#0x540`), `GetStringUTFChars` (`#0x548`), and
+  `ReleaseStringUTFChars` (`#0x550`) at `+0x7dc14`/`+0x7dc30`/`+0x7f190`, in
+  the same loop that extracts `StackTraceElement` objects, but the tracer
+  never hooks the string readers.
+- Change: observation-only `GetStringUTFChars` hook (saved original,
+  `IsPairIpCaller` filter, 160-byte text and caller logging). No VM, image,
+  stack-spoof, or switch changes.
+- Prediction: at least one `jni: GetStringUTFChars` record from a
+  `libpairipcore` caller returns a `pairIpUnityLaunchStack` frame or similar
+  stack-walk text before the crash; all `long-unbox` invariants stay
+  identical.
+- Falsification: zero `GetStringUTFChars` records from `libpairipcore`
+  callers before the crash, or only unrelated strings. Then stack text is
+  not an input.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `pairip_jni_trace=true`,
+  debug launcher.
+- Run key: `variant=stack-strings`, code commit `HEAD` plus the hook, APK
+  sha256 recorded after the build; package `com.bepinex.android.debug` on
+  SM-S931N (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Status: pre-registered; ready to build and run.
