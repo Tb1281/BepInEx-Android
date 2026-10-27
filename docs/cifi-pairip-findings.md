@@ -369,12 +369,21 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
     ASLR/counter noise, and the five globals, reader slots, tails, and
     crash stayed identical. The stack-content route is closed; do not vary
     the spoof text again.
-16. Next (reader source): the reader slots `0x3f874`/`0x1ba5c` are still
-    pristine at the crash and no traced image write touches them. Follow
-    the reader value back from `+0x8d460` to the state handler that fills
-    the `data`/`size` offsets (`w8`/`w9`) and identify which context or
-    image field should supply them. The five globals are stable across
-    every hosted run, so they are not the missing discriminator.
+16. Done (reader-source, 2026-10-28): the reader slots `0x3f874`/`0x1ba5c`
+    are still pristine at the crash and no traced image write touches them.
+    The `vm[0x740]` table was closed statically (see the closure section):
+    it is built by the reader itself and its offsets come from registers, so
+    there is no upstream writer, tag, or selector to follow. The five globals
+    are stable across every hosted run, so they are not the missing
+    discriminator.
+17. Next (stock-libmain reader-slot control): re-capture the reader slots
+    with `pairip_stock_libmain=true` and the reader-source probe. The
+    walkthrough's 2026-10-27 line-166 claim that the bare/`stock-libmain`
+    globals are identical has no surviving log or run key and is
+    UNVERIFIABLE, so this is the one remaining loader-side control that can
+    confirm or remove the launcher-libmain variable. Pre-registered in the
+    walkthrough as `stock-libmain-reader-slots`; blocked until a device is
+    attached.
 
 ## Pre-registered experiment (2026-10-27, state-router)
 
@@ -1776,7 +1785,11 @@ The frozen diagnostic baseline plus one observation-only hook at
   reader source or repeat identity/maps/context/application/license
   experiments.
 
-## Open lead: tagged offsets at `vm[0x740]` (2026-10-28)
+## Closed lead: tagged offsets at `vm[0x740]` (2026-10-28)
+
+Status: closed statically on 2026-10-28; see the closure section at the end
+of this document. The questions below are kept as the record of what was
+asked, not as open work.
 
 The crash-time interpreter frame holds a table of `{ctx, tag|offset}`
 entries, and it contains both failing offsets:
@@ -1810,3 +1823,75 @@ priority order:
    first argument would do on a bare launch and whether that path avoids the
    `0x31` reader. This is a branch question, not a repeat of the closed
    JNI/context experiments.
+
+## Tagged-offset table closed statically (2026-10-28)
+
+No device run: no handset was attached (`adb devices` empty, no phone on
+`lsusb`). This section is a static decode of `libpairipcore.so` from
+`/tmp/pairip-analysis/libpairipcore_full.asm`; it closes the four questions
+in the `vm[0x740]` lead above. Matching the precedent of the earlier static
+map sections, it adds no walkthrough entry.
+
+- Writer: the table is written by the reader builder itself, not by an earlier
+  relocation pass. `+0x3e000`, `+0x3e008`, and `+0x3e010` store `d0` (the
+  64-bit reader context, observed `0x7ff9372b88`) at `[sp+0x750]`,
+  `[sp+0x760]`, and `[sp+0x770]`. `+0x3e004`, `+0x3e00c`, and `+0x3e028`
+  store only the 32-bit `w8`, `w9`, and `w10` at `[sp+0x758]`, `[sp+0x768]`,
+  and `[sp+0x778]`. No instruction writes the upper halves `[sp+0x75c]`,
+  `[sp+0x76c]`, or `[sp+0x77c]`, and nothing in the reader reads them. The
+  observed low words, `0x3f874`, `0x1ba5c`, and `0x19b5e`, match the stored
+  registers exactly.
+- Meaning: the record is `{void *ctx; uint32_t off; uint32_t pad;}`. The high
+  words are uninitialized stack padding, not tags, cookies, or relocation
+  indices. `0x6018f1f3`, `0x1e9de693`, and `0x000011c2` have no producer and
+  no consumer on this path, so they must not be interpreted. The
+  `0x0042117b` at `vm[0x640]` is the high half of the descriptor word
+  `descw[2]` (`0x0042117b000000b0`), not a table tag.
+- Selector: `+0x3e034`/`+0x3e038` load `[image+w8]` and `[image+w9]` from the
+  registers, not from `[sp+0x758]`/`[sp+0x768]`. The offsets are computed
+  immediately above by the builder from the descriptor block (index `0xb0`)
+  and the five globals. The table is write-only on this path, so it cannot
+  select the reader and there is no separate writer to find.
+- `+0x702e4`: `tst w0, #0xff; b.ne 0x70324`. `IsSameObject(NULL, NULL)`
+  returns 1 on the hosted path, so the branch goes straight to `+0x70324`. A
+  non-null first argument would return 0 and fall through to the
+  pending-exception check at `+0x702ec`; with or without a pending exception,
+  that block also reaches `+0x70324` (the throw path rejoins at `+0x70320`).
+  There is no alternative successor, so this block cannot avoid the `0x31`
+  reader.
+- Image check: the pristine asset (`sha256 112b6e59…`, 282,603 bytes) and the
+  crash-time image (`stack-len-plus-one-image.bin`, `sha256 28b923f5…`) are
+  byte-identical at `0x3f874`, `0x1ba5c`, `0x19b5e`, `0x40a73`, and
+  `0x1f811`. They differ in 367 bytes across 78 ranges, the known variable
+  set. The reader slots are untouched by whatever varies between hosted runs.
+- Closure: questions 1-4 above are answered. The `vm[0x740]` table is
+  downstream of the builder and carries no selector state. The remaining
+  question is not who writes the table but which load chain lets the `0x31`
+  handler run against the unrelocated image slots: the hosted path does, and
+  a bare launch does not. That is pre-registered as the
+  `stock-libmain-reader-slots` control in the walkthrough.
+
+## Pre-registered next experiment (2026-10-28, stock-libmain-reader-slots)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+With the `vm[0x740]` table closed, the next single variable is the loader
+chain, not another image writer. The walkthrough's 2026-10-27 line-166 claim
+that the `stock-libmain` chain computes the same five globals and reader
+offsets has no surviving run key or log and is UNVERIFIABLE; this control
+re-establishes it with the reader-source probe.
+
+- Hypothesis: with the game's own `libmain` from the split APK and no Fusion
+  (`pairip_stock_libmain=true`), klB still reaches `+0x3e034` with
+  `w8=0x3f874`, `w9=0x1ba5c`, the pristine words
+  `bbb9eb6daed20ed0`/`015370f87525d57b`, and the baseline
+  `__memmove_aarch64_nt+140` crash.
+- Falsification: klB runs, but the reader offsets or loaded words differ, the
+  `reader-source:` line is absent, or the `0x872a21c`/`0x31` state is not
+  reached. Then the launcher-libmain/DT_INIT chain is the discriminator, and
+  the next probe is the earliest divergence between the two chains.
+- One change from the frozen diagnostic baseline: `pairip_stock_libmain=true`.
+  `preload`, `trace`, and `dumpVmImage` stay true; `stackSpoof` and
+  `contextSeed` stay at their defaults; `lateHooks` is forced by `preload`.
+- Status: pre-registered; blocked until a device is attached (`adb devices`
+  empty on 2026-10-28). No install or launch was attempted.

@@ -2145,3 +2145,70 @@ reader-source: ctx=0x7ff9372b88 image=0xb400007b1224d010 off_data=0x3f874 off_si
   `0x770=0x7ff9372b88`, `0x778=0x000011c200019b5e`. The descriptor index
   `0xb0` also appears at `vm[0x640]` as `0x0042117b000000b0`.
 - Findings updated: yes, in this commit.
+
+## Planned run: stock-libmain-reader-slots
+
+- Purpose: re-test the 2026-10-27 claim (walkthrough line 166) that the
+  `stock-libmain` chain computes the same five globals and the same reader
+  offsets as the hosted chain. That claim has no surviving run key or log and
+  is UNVERIFIABLE. With the `vm[0x740]` table closed statically, the
+  `libmain`/DT_INIT chain is the one remaining loader-side variable that can
+  still explain the pristine slots.
+- Hypothesis: with the game's own `libmain` from the split APK and no Fusion
+  (`pairip_stock_libmain=true`), klB still reaches `+0x3e034` with
+  `w8=0x3f874`, `w9=0x1ba5c`, the pristine words
+  `bbb9eb6daed20ed0`/`015370f87525d57b`, and the baseline
+  `__memmove_aarch64_nt+140` crash.
+- Prediction: `PairIP preload: stock libmain=...` and `PairIP preload: stock
+  libmain completed` are present; `trace: reader-source hook rc=0` with a
+  non-null trampoline; at least one `reader-source:` line matching the
+  pre-registered offsets and words; the image-write ring has no entry at
+  either slot; final state `id=0x872a21c sel=0x31bb`; crash unchanged. The
+  variant line shows `stockLibmain=true`, `preload=true`, `trace=true`,
+  `dumpVmImage=true`, `stackSpoof=true`, `contextSeed=true`,
+  `lateHooks=true`, and every other experiment switch false.
+- Falsification: the stock branch ran and klB ran (builtin/state entries are
+  present), but the reader offsets or loaded words differ, the
+  `reader-source:` line is absent, or the `0x872a21c`/`0x31` state is not
+  reached. Then the launcher-libmain/DT_INIT chain is the discriminator, and
+  the next probe is the earliest divergence between the two chains.
+- Invalid run: `PairIP preload: stock libmain=` or `stock libmain completed`
+  is absent; the reader-source hook line is absent (`installTrace()` was not
+  reached); the VM dump/append record is absent (the startup program did not
+  build the image); the variant line does not contain `stockLibmain=true`;
+  `preload`, `trace`, or `dumpVmImage` is false; more than one cold launch
+  occurred; or the process dies before `installTrace()`. In those cases the
+  control did not run and the result is INCONCLUSIVE, not falsification.
+- Frozen diagnostic baseline: `pairip_preload=true`, `pairip_trace=true`,
+  `pairip_dump_vm=true`, `stackSpoof=true`, `contextSeed=true`,
+  `lateHooks=true` (forced by `preload`), debug launcher. Change from the
+  baseline: add `pairip_stock_libmain=true`. The reader-source probe is
+  installed by `installTrace()` after the stock `libmain` load and before
+  `NativeLoader.load`, so the single added variable is the load chain.
+- Starting state: branch `test/feat-cifi` at the commit that adds this entry,
+  tree clean; latest code change is `9be04e4` (the reader-source probe), so a
+  rebuild is expected to reproduce `5be5c199...`. The installed launcher is
+  still the reader-source build; this run installs with `android install`.
+  The game APK is untouched.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_stock_libmain true \
+  --es pairip_variant stock-libmain-reader-slots
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stock-libmain-reader-slots.log
+```
+
+- Run key: `variant=stock-libmain-reader-slots`, code commit `9be04e4`,
+  package `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`). APK sha256 to be recorded at install.
+- Status: pre-registered; blocked until a device is attached (`adb devices`
+  empty on 2026-10-28). Do not install or launch while the device is absent.
