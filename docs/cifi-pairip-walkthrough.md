@@ -271,5 +271,8 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true
 ```
 
-- Status: pre-registered; key and APK sha256 appended after the build, before
-  the run.
+- Run key: `variant=state-router`, code commit `71072b5`, APK sha256
+  `0abb3e8292f77f79b118ab72bc3db76408238d2ed2af8e2b269910c59f32b8f7`
+  (115,103,986 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Status: pre-registered; ready to install and run.
