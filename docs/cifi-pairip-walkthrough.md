@@ -1236,8 +1236,9 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
   `com.pairip.VMRunner.invoke(VMRunner.java:69)`,
   `com.unity3d.player.NativeLoader.load(Native Method)`, and
   `com.unity3d.player.UnityPlayerActivity$c2020060322V3.onCreate(SourceFile:0)`.
-  The VM copies the spoofed text into native pointer/length arrays at
-  `[x19]` (`+0x73830` pointer, `+0x7383c` length).
+  The VM writes the pointer and length into the VM image at hash-derived
+  byte offsets (`[x19]` is the image base; `+0x73830` pointer,
+  `+0x7383c` length; `w23=0x44feb` is the image size).
 - Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, caller
   `split_config.arm64_v8a.apk +0x514`; `vm[0x540]` keeps
   `bbb9eb6daed20ed0` / `015370f87525d57b`; state tail `id=0x872a21c
@@ -1253,7 +1254,8 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
   run to run. The final tails and image are identical; the counters are not
   an invariant.
 - Verdict: the pre-registered observation is **CONFIRMED** — the VM reads
-  the fabricated stack text into native memory. The crash is unchanged, so
-  the text does not populate the reader slots by itself. The "ring positions
-  identical" clause did not hold; counters are path-length-dependent.
+  the fabricated stack text and writes it into its image. The crash is
+  unchanged, so the text does not populate the reader slots by itself. The
+  "ring positions identical" clause did not hold; counters are
+  path-length-dependent.
 - Findings updated: yes, in this commit.
