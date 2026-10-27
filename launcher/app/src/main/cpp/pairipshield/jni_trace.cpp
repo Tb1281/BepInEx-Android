@@ -122,6 +122,7 @@ using GetStaticFieldIDFn = jfieldID(JNICALL *)(JNIEnv *, jclass, const char *,
                                                const char *);
 using GetObjectClassFn = jclass(JNICALL *)(JNIEnv *, jobject);
 using IsInstanceOfFn = jboolean(JNICALL *)(JNIEnv *, jobject, jclass);
+using IsSameObjectFn = jboolean(JNICALL *)(JNIEnv *, jobject, jobject);
 using GetObjectFieldFn = jobject(JNICALL *)(JNIEnv *, jobject, jfieldID);
 using GetStaticObjectFieldFn = jobject(JNICALL *)(JNIEnv *, jclass, jfieldID);
 using GetStaticBooleanFieldFn = jboolean(JNICALL *)(JNIEnv *, jclass, jfieldID);
@@ -191,6 +192,7 @@ GetFieldIDFn g_get_field_id = nullptr;
 GetStaticFieldIDFn g_get_static_field_id = nullptr;
 GetObjectClassFn g_get_object_class = nullptr;
 IsInstanceOfFn g_is_instance_of = nullptr;
+IsSameObjectFn g_is_same_object = nullptr;
 GetObjectFieldFn g_get_object_field = nullptr;
 GetStaticObjectFieldFn g_get_static_object_field = nullptr;
 GetStaticBooleanFieldFn g_get_static_boolean_field = nullptr;
@@ -1271,6 +1273,30 @@ jboolean JNICALL HookExceptionCheck(JNIEnv *env) {
     return result;
 }
 
+// The 0x7e handler's null check is the `IsSameObject(x20, NULL)` call whose
+// return address is +0x702e4. Name the argument only at that site: naming
+// every IsSameObject argument would add avoidable JNI traffic to unrelated
+// VM checks and could perturb the already timing-sensitive hosted path.
+jboolean JNICALL HookIsSameObject(JNIEnv *env, jobject object1,
+                                  jobject object2) {
+    void *caller = __builtin_return_address(0);
+    const bool trace = IsPairIpCaller(caller);
+    const jboolean result = g_is_same_object(env, object1, object2);
+    if (trace) {
+        const unsigned long offset = static_cast<unsigned long>(
+            reinterpret_cast<uintptr_t>(caller) - g_pairip_range.begin);
+        if (offset == 0x702e4 && object1 != nullptr) {
+            const std::string cls = ClassName(env, object1);
+            TRACEI("jni: IsSameObject %p %p -> %d class=%s caller=+%#lx",
+                   object1, object2, result ? 1 : 0, cls.c_str(), offset);
+        } else {
+            TRACEI("jni: IsSameObject %p %p -> %d caller=+%#lx", object1,
+                   object2, result ? 1 : 0, offset);
+        }
+    }
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Table patching
 // ---------------------------------------------------------------------------
@@ -1579,6 +1605,10 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallJniTrace(
         {offsetof(JNINativeInterface, CallStaticVoidMethodA) / sizeof(void *),
          reinterpret_cast<void *>(&HookCallStaticVoidMethodA),
          reinterpret_cast<void **>(&g_call_static_void_a)});
+    patches.push_back(
+        {offsetof(JNINativeInterface, IsSameObject) / sizeof(void *),
+         reinterpret_cast<void *>(&HookIsSameObject),
+         reinterpret_cast<void **>(&g_is_same_object)});
     patches.push_back(
         {offsetof(JNINativeInterface, GetObjectArrayElement) /
              sizeof(void *),
