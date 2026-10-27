@@ -171,8 +171,17 @@ launcher). It adds one probe, hooked at `libpairipcore.so+0x7fddc` (the
   bytes do not match the asset, or the observed input is not the 419-byte
   image loop. In that case the input is environment-fed and the fork moves to
   reproducing stock maps/status content.
-- Verdict: not yet recorded; record it in the walkthrough and here only after
-  the run.
+- Attempt 1 (`599cf34`, APK `be31b43e…`): INCONCLUSIVE, probe invalid. One
+  filtered call read `counter=0x1a3` (419), `off=0x24f47`, `len=1`; the
+  counter was outside the registered `0x100` bound, so nothing accumulated.
+  The run then crashed in `__strlen_aarch64+12` (caller frame
+  `split_config.arm64_v8a.apk +0x18de8`), not in the baseline
+  `__memmove_aarch64_nt+140` / `+0x8d514` path. The shim tail had loaded the
+  trampoline through `x16`, but `x16` is live at `+0x7fddc` (loaded at
+  `+0x7fdbc`, consumed at `+0x7fe18`), so the hook corrupted the hash
+  comparison. `x15` is dead there (the loop at `+0x7fde0` overwrites it), so
+  the retry branches through `x15` and accepts a counter up to `0x1000`.
+- Attempt 2 (`b3f6dfd`, APK `d8dc1f00…`): prepared; verdict pending.
 
 ## Reproduction
 

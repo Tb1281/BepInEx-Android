@@ -77,8 +77,49 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true
 ```
 
-- Status: prepared; run key recorded, no verdict yet.
+- Status: attempted; attempt 1 was inconclusive because the probe clobbered
+  live `x16` (verdict below). Retry key follows the verdict log.
 
 ## Verdict log
 
 Append one entry per completed run; never rewrite an earlier verdict.
+
+### 2026-10-27 16:04 — fnv-input attempt 1: INCONCLUSIVE (probe invalid)
+
+- Key: `variant=fnv-input`, code commit `599cf34`, APK sha256
+  `be31b43e80bdc215d58f883f873ccc35596f18e6b9e7556c3d6d591f6edfbecf`,
+  package `com.bepinex.android.debug` on SM-S931N (Android 17/API 37).
+- Command: `OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25
+  tmp/cifi-apk/run_variant.sh fnv-input --ez pairip_preload true
+  --ez pairip_trace true --ez pairip_dump_vm true`.
+- Window: 2026-10-27T16:04:28+09:00 to 16:04:57+09:00 (29 s).
+- Hook: installed, `rc=0`, target `0x7a8c9d1ddc`, base `0x7a8c952000`.
+- Probe: one filtered call at 16:04:32.670: `image=0xb400007b1224d010`,
+  `off=0x24f47`, `buffer=0xb400007b12271f57`, `len=1`, `counter=0x1a3`.
+  The counter was outside the pre-registered `0x100` bound, so the byte was
+  skipped and nothing accumulated.
+- Crash: SIGSEGV in `__strlen_aarch64+12`, caller frame reported as
+  `split_config.arm64_v8a.apk +0x18de8`, at 16:04:32.671. This is not the
+  frozen baseline's `__memmove_aarch64_nt+140` / `+0x8d514` signature.
+- Verdict: the run does not test the hypothesis. The probe perturbed the
+  path: the shim's tail loaded the trampoline through `x16`, but `x16` is
+  live at `+0x7fddc` (loaded at `+0x7fdbc`, consumed at `+0x7fe18`). The
+  hypothesis is neither confirmed nor falsified by this run.
+- Fix: tail-branch through `x15` instead. `x15` is dead at this site because
+  the loop at `+0x7fde0` overwrites it before use, and the `w26==0` path
+  never reaches the hook. Code commit
+  `b3f6dfd3923e467b2411f49d18fa9b5a012085d0`.
+
+## Planned run: fnv-input (retry)
+
+- Key: `variant=fnv-input`, code commit `b3f6dfd`, APK sha256
+  `d8dc1f00a74e43f9f369f0e51a2cf735f8599d40357ec859d17694c33cffad25`
+  (115,103,986 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Same frozen baseline and command as attempt 1.
+- Probe changes since attempt 1: `x15` tail scratch; counter accepted up to
+  `0x1000`; dump at counter `<= 1` or at the observed 419-byte total.
+- Expected falsification unchanged; the input buffer must lie in
+  `[image, image+0x44feb]` and match the pristine asset at the recorded
+  offsets.
+- Status: prepared; no verdict yet.
