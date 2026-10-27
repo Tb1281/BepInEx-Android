@@ -2007,3 +2007,78 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/license-consumption-trace
   the tracing-off `game-application` run already showed the same final
   invariants.
 - Findings updated: yes, in this commit.
+
+## Planned run: reader-source-trace
+
+Run key: `variant=reader-source-trace`, code commit `9be04e4` (the probe
+commit), APK sha256
+`5be5c199376dc5f4d0849a6bd88593429e78d1a2a00a86734b76acf18a124428`.
+Idempotency check: searched the walkthrough and findings for
+`reader-source`, `reader_source`, and `reader-source-trace`; no prior run key
+or verdict exists. The earlier reader work observed the *result* of the
+append helper (`fields=bbb9...,0153...`) but never logged the instruction that
+loads the two image words, so this is the missing observation, not a repeat.
+
+- Hypothesis: on the failing 46-byte ZIP probe, the reader builder at
+  `+0x3dc88` computes `w8=0x3f874` and `w9=0x1ba5c`; `+0x3e030` loads
+  `x10` as the VM image base and `+0x3e034`/`+0x3e038` read the two words
+  `image[w8]`/`image[w9]`. Those words are still the pristine asset
+  ciphertext `bbb9eb6daed20ed0` / `015370f87525d57b`; the descriptor index is
+  `0xb0`; no earlier writer touches either slot. This would pin the reader's
+  input to the unrelocated image slots and rule out a different buffer or an
+  earlier in-image patch on the hosted path.
+- Static basis: the block at `+0x3dc88..+0x3e030` was decoded in the
+  walkthrough; emulating it over the crash image reproduces
+  `w8=0x3f874`/`w9=0x1ba5c`, and the append record already shows the same
+  two words. `+0x3e034` is the first image-word load; `x11` is dead until
+  the `mov w11, #1` at `+0x3e0b0`, so the shim can tail through it without
+  changing a live register.
+- Change from the frozen diagnostic baseline: add one observation-only
+  Dobby hook at `libpairipcore.so+0x3e034`, compiled in and active only while
+  `pairip_trace` is set. It adds no extra and does not modify the VM, the
+  image, the reader, or any hook target other than that single load. The
+  callback saves/restores the full register file and reads only.
+- Prediction: the log shows `trace: reader-source hook rc=0` with a non-null
+  trampoline, then at least one `reader-source:` line with
+  `fetch=0x40a73`, `off_data=0x3f874`, `off_size=0x1ba5c`,
+  `data=bbb9eb6daed20ed0`, `size=015370f87525d57b`, `index=0xb0`, and a
+  `ctxw[0]` that names a mapped image whose first bytes are `00 49 41 50
+  02`. The append record, five globals, final state
+  (`id=0x872a21c sel=0x31bb`), builtin tail (`0x9a0c0031 pc=0x40a73`), and
+  `__memmove_aarch64_nt+140` crash remain unchanged. The image-write ring
+  has no entry at `0x3f874` or `0x1ba5c`.
+- Invalid run: the variant line is not `reader-source-trace`; `preload`,
+  `trace`, or `dumpVmImage` is false; the hook line is absent or `rc!=0`;
+  `PairIP trace: installed=true` or the append record at `off=0x3e170` is
+  absent; the run does not reach the `0x872a21c` state; the crash is not the
+  baseline signature; or more than one cold launch occurred.
+- Falsification: any of the following at the target call: `x10` is not the
+  mapped VM image base; `w8`/`w9` differ from `0x3f874`/`0x1ba5c`; the loaded
+  words differ from the pristine ciphertext; the descriptor index is not
+  `0xb0`; or the image-write ring contains a write to either slot before the
+  reader. Then the reader is not consuming the pristine slots as assumed and
+  the writer/branch question moves to that different input.
+- Frozen diagnostic baseline: `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `stackSpoof=true`,
+  `contextSeed=true`, debug launcher.
+- Starting state: branch `test/feat-cifi` at `9be04e4`, tree clean. The
+  installed launcher is still the previous `f4f71ba2...` build; this run
+  installs the new `5be5c199...` build with `android install`. The game APK is
+  untouched.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant reader-source-trace
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/reader-source-trace.log
+```
+
+- Status: pre-registered; ready to install and run.
