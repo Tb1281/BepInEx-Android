@@ -4,6 +4,9 @@ out/
 .kotlin/
 launcher/.kotlin/
 
+# Local scratch workspace (pulled APKs, logs, analysis notes). Never commit.
+/tmp/
+
 # Game artifacts pulled off the device for offline analysis.
 # Proprietary, ~92MB, and reproducible from the installed game; only the digests
 # belong in the repository. See docs/thetower-6000.md.
