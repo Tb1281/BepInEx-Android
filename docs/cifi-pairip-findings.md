@@ -50,7 +50,14 @@ The cross-device continuation snapshot is
   written at runtime: they contain pointer-shaped garbage
   (`0xbbb9eb6daed20ed0`, `0x015370f87525d57b`) rather than a valid address and
   length. Write attribution over the whole run found 368 changed bytes in 79
-  ranges, none covering either slot.
+  ranges, none covering either slot. That count is from the retry image
+  `tmp/cifi-apk/vmrun/klB-image-retry.bin` (282,603 bytes, sha256
+  `004f0fd50a65507baf1892b5f16e78df5c4d34ddc52a0eda4f5eb640ab561375`).
+  The older `tmp/cifi-apk/vmrun/klB-image-at-crash.bin` (sha256
+  `77c0088f1742c06a6cc8d27a1e984fd66fd7d96adf483e86ed32a31b9c8c9024`)
+  has 367 changed bytes in 80 ranges. The `fnv-input-retry` verdict's
+  "78 ranges" is a miscount against the older image; `0x24f47` is unchanged
+  in both images and in the pristine asset.
 - Captured VM state at the failing read: image base
   `0xb400007b1224d010`, size `0x44feb`, VM pc field `0x40aab`.
 
@@ -134,7 +141,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | Write attribution / image diff | Both ZIP slots stay at their asset values; no writer found. |
 | Fake central directory from base APK (`0x1281c` bytes) | SIGSEGV disappears, run continues to a CheckJNI `FindClass` SIGABRT. |
 | Fake central directory from arm64 split (`0x30a` bytes) | Same behaviour as the base-APK run. |
-| VM-pc-tagged class trace | Entry #9: `caller=+0x7295c`, `vm=0xf0df/0x30`, `idx=0x19ded`, `len=12928`. |
+| VM-pc-tagged class trace | UNVERIFIABLE: the reported fake-CD entry #9 (`caller=+0x7295c`, `vm=0xf0df/0x30`, `idx=0x19ded`, `len=12928`) has no local raw trace. The local hosted traces instead show `vm=0xd198/0xa9` at #9. Do not use this row until the raw trace is restored. |
 | Procfs trace | klB reads `/proc/self/maps` in 1 KB chunks through `0x23800` (141-142 reads), then `/proc/self/status`, `readlink` of the maps fd, six `clock_gettime`, then the failing read. |
 | Served maps snapshot | Contains launcher-only `.so` paths (`libcoreclr.so`, `libfusion.so`, `libmscordacore.so`, ...); game libraries appear as split-APK mappings. |
 | `memcmp` needle trace | Closed: the captured comparisons are the shield logger's own tag checks, not a klB maps needle. |
@@ -161,8 +168,8 @@ path valid and it must not become the fix.
    directory entry? The base and split fake-CD runs both advance past the
    crash, so the current evidence only proves the magic and length
    interpretation.
-4. Is class-trace #9 (`0xf0df/0x30`) a fake-CD artifact or a genuine decoy path
-   that stock also takes?
+4. UNVERIFIABLE until the raw fake-CD class trace is restored: the reported
+   entry #9 (`0xf0df/0x30`) has no local artifact. Do not treat it as a lead.
 
 The `hash-gate` run answered the "name-hash before the reader" branch
 negatively: the `+0x3dc08` block is skipped, so it cannot be the hosted-only
@@ -242,13 +249,17 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
    `+0x32c20` is ruled out (the dispatcher sends `0x872a21c` directly to the
    reader at `+0x34d74`); decode the `0x31` state selection and the preceding
    state's `next`/`fallback` decision instead.
-3. Ruled out by the fnv-input result: reproducing stock maps/status content
+3. Live diagnostic (apk-zero-map): the hosted process has no offset-0 mapping
+   of the game's `base.apk`, only `r--s` mappings at file offsets `0x74ba000`
+   and `0x74f5000`. Map the whole base APK at offset 0 before `libmain` and
+   test whether PairIP's mapping resolver then initializes the reader slots.
+4. Ruled out by the fnv-input result: reproducing stock maps/status content
    for the hash input.
-4. Decode the `0x31` builtin semantics and the `0x40a73` operand block.
-5. Only after a real mechanism is proven: apply a gated fix, build, reinstall
+5. Decode the `0x31` builtin semantics and the `0x40a73` operand block.
+6. Only after a real mechanism is proven: apply a gated fix, build, reinstall
    with `android install`, run three cold launches, record results on #62-#64,
    then write the ADR for #60.
-6. Before merge: remove the debug experiment switches,
+7. Before merge: remove the debug experiment switches,
    `pairip_allow_nondebug_experiments`, the Frida gadget/DiagnosticApp/sleeps,
    and the stale `pairip_desc_trace`/`pairip_branch_trace` declarations.
 
@@ -297,3 +308,43 @@ with `0x872a21c` and branches directly to `+0x3dc88` (the reader builder), so
 the route is `state 0x872a21c -> reader`, not `state -> +0x32c20 -> reader`.
 The `+0x32c20` block is reached from `+0x3d760`/`+0x3d798` in a different
 handler tail and is not on the reader path. The router is not the gate.
+
+## Pre-registered experiment (2026-10-27, apk-zero-map)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The next step is one diagnostic run against the frozen baseline
+(`pairip_preload=true`, `pairip_trace=true`, `pairip_dump_vm=true`, debug
+launcher) plus a debug-only offset-0 mapping of the game's base APK. The
+hosted process currently has no offset-0 game `base.apk` mapping (only
+`r--s` mappings at file offsets `0x74ba000` and `0x74f5000`), while the
+launcher's own APK is mapped at offset 0. If PairIP's ZIP/central-directory
+resolver locates the game APK through `/proc/self/maps` and refuses to
+initialize the reader slots without an offset-0 mapping, adding one should
+change the slots before the reader runs.
+
+- Hypothesis: the missing offset-0 game base-APK mapping is the hosted-only
+  gate; with the mapping present, PairIP's resolver writes the selected
+  reader pointer/size slots (`image+0x3f874` / `image+0x1ba5c`) or skips the
+  `0x31` reader call.
+- Change from the frozen baseline: add `pairip_apk_zero_map=true`, which
+  `mmap`s the whole installed base APK `PROT_READ`, `MAP_PRIVATE`, offset 0,
+  at hint `0x7900000000` with `MAP_FIXED_NOREPLACE` and a null-hint fallback.
+  Everything else stays at `pairip_preload=true`, `pairip_trace=true`,
+  `pairip_dump_vm=true`; no fake CD, no seed, no sanitizer.
+- Prediction: the native log shows `apk-zero-map: base=... size=122714162`
+  and the matching `/proc/self/maps` range before `libmain.so` runs. In the
+  crash dump, either the reader slots differ from `0x3f874` / `0x1ba5c`
+  (and the reader gets valid ZIP bytes or the path diverges), or the
+  `__memmove_aarch64_nt+140` crash disappears. The five shadow globals may
+  stay byte-identical because their FNV input is static; that does not by
+  itself falsify the mapping gate.
+- Falsification: the mapping line is present and the crash still reads the
+  same two slots with the same `__memmove` signature and the same state ring
+  tail (`id=0x872a21c sel=0x31bb`, `builtin id=0x9a0c0031 pc=0x40a73`). Then
+  the offset-0 mapping is not the gate; the next fork is the `0x31` builtin:
+  instrument the `0x40a73` operand block to find which resolver-side write
+  should have initialized the slots, or prove stock takes an earlier branch.
+- Diagnostic only: the offset-0 mapping must not ship. If it changes the
+  path, the next step is to find the production-shaped trigger (the platform
+  loader/AssetManager mapping stock gets), not to keep an mmap experiment.

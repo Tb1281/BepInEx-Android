@@ -882,6 +882,26 @@ class BootstrapActivity : Activity() {
             BepInExLog.i("PairIP preload: attach window closed; loading libmain")
         }
 
+        if (PairIpExperiment.apkZeroMap) {
+            // Debug-only: stock opens the game base APK as an archive at file
+            // offset 0. The hosted process only has non-zero-offset mappings,
+            // so PairIP's central-directory resolver may never initialize
+            // klB's reader slots. Map the installed APK read-only before
+            // libmain lets the VM programs run, and log the maps line.
+            val apkPath = gameContext.packageCodePath
+            val error = try {
+                PairIpShield.installApkZeroMap(apkPath)
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP APK zero map: install threw", t)
+                t.message ?: "install threw"
+            }
+            if (error == null) {
+                BepInExLog.i("PairIP APK zero map: installed from $apkPath")
+            } else {
+                BepInExLog.e("PairIP APK zero map: $error")
+            }
+        }
+
         if (PairIpExperiment.skipKlb) {
             // Debug-only: neutralize libunity's DT_INIT klB program. The hook
             // must be installed after YTw (a code hook before it trips PairIP's

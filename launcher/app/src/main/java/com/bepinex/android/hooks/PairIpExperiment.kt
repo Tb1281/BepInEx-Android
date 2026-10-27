@@ -51,6 +51,7 @@ object PairIpExperiment {
     const val EXTRA_DUMP_ARTIFACTS = "pairip_dump_artifacts"
     const val EXTRA_SKIP_KLB = "pairip_skip_klb"
     const val EXTRA_READER_GUARD = "pairip_reader_guard"
+    const val EXTRA_APK_ZERO_MAP = "pairip_apk_zero_map"
     const val EXTRA_ALLOW_NONDEBUG = "pairip_allow_nondebug_experiments"
 
     /**
@@ -316,6 +317,16 @@ object PairIpExperiment {
     @Volatile
     var readerGuard: Boolean = false
 
+    /**
+     * Debug-only: map the whole installed game base APK read-only at file
+     * offset 0 before `libmain.so` runs. A stock launch exposes an offset-0
+     * mapping of the game APK; the hosted process does not, so PairIP's
+     * central-directory resolver may never initialize klB's reader slots.
+     * Used only to test that hypothesis; never enable this in production.
+     */
+    @Volatile
+    var apkZeroMap: Boolean = false
+
     fun configure(context: Context, intent: Intent) {
         val debuggable =
             context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
@@ -371,6 +382,7 @@ object PairIpExperiment {
         dumpArtifacts = extras.getBoolean(EXTRA_DUMP_ARTIFACTS, dumpArtifacts)
         skipKlb = extras.getBoolean(EXTRA_SKIP_KLB, skipKlb)
         readerGuard = extras.getBoolean(EXTRA_READER_GUARD, readerGuard)
+        apkZeroMap = extras.getBoolean(EXTRA_APK_ZERO_MAP, apkZeroMap)
     }
 
     fun describe(): String = buildString {
@@ -408,5 +420,6 @@ object PairIpExperiment {
         append(" dumpArtifacts=").append(dumpArtifacts)
         append(" skipKlb=").append(skipKlb)
         append(" readerGuard=").append(readerGuard)
+        append(" apkZeroMap=").append(apkZeroMap)
     }
 }

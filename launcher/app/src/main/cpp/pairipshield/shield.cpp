@@ -521,6 +521,14 @@ std::atomic<uintptr_t> g_fake_cd_data{0};
 std::atomic<uintptr_t> g_fake_cd_size{0};
 std::mutex g_fake_cd_mutex;
 
+// Debug-only offset-0 mapping of the installed base APK. A stock process
+// opens the game APK as an archive at file offset 0; the hosted process only
+// has non-zero-offset mappings. Kept for the process lifetime so the VM's
+// /proc/self/maps reader can see the range while klB runs.
+std::mutex g_apk_zero_map_mutex;
+void *g_apk_zero_map = nullptr;
+size_t g_apk_zero_map_size = 0;
+
 // Debug-only post-copy image dump. executeVM copies the Java byte[] into a
 // malloc'd buffer at +0x6a9c8 and only then starts decoding it. Comparing that
 // buffer with the APK asset shows every decryption/relocation the loader
@@ -1154,6 +1162,87 @@ bool MapApkCentralDirectory(const char *apk_path, uintptr_t *data,
 
     *data = reinterpret_cast<uintptr_t>(cd);
     *size = cd_size;
+    return true;
+}
+
+// Logs the /proc/self/maps line that starts at `base`, so the experiment
+// record proves the offset-0 mapping is visible to PairIP's maps reader.
+bool LogMapRange(uintptr_t base) {
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (maps == nullptr) return false;
+
+    char prefix[32];
+    std::snprintf(prefix, sizeof(prefix), "%" PRIxPTR "-", base);
+    const size_t prefix_len = std::strlen(prefix);
+    char line[512];
+    bool found = false;
+    while (std::fgets(line, sizeof(line), maps) != nullptr) {
+        if (std::strncmp(line, prefix, prefix_len) != 0) continue;
+        const size_t length = std::strlen(line);
+        if (length > 0 && line[length - 1] == '\n') line[length - 1] = '\0';
+        LOGI("apk-zero-map: maps %s", line);
+        found = true;
+        break;
+    }
+    std::fclose(maps);
+    return found;
+}
+
+// Debug-only: maps the whole installed base APK read-only at file offset 0.
+// Stock has an offset-0 archive mapping; the hosted process does not, so
+// PairIP's central-directory resolver may fail to initialize klB's reader
+// slots. The low hint keeps the range below the dalvik/linear-alloc shadow
+// map and below every mapping observed in the hosted process.
+bool InstallApkZeroMap(const char *apk_path, std::string *error) {
+    std::lock_guard<std::mutex> lock(g_apk_zero_map_mutex);
+    if (g_apk_zero_map != nullptr) return true;
+
+    const int fd = open(apk_path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        *error = "open failed";
+        return false;
+    }
+    struct stat status {};
+    if (fstat(fd, &status) != 0 || status.st_size <= 0) {
+        close(fd);
+        *error = "stat failed";
+        return false;
+    }
+
+    const size_t length = static_cast<size_t>(status.st_size);
+    constexpr uintptr_t kHint = 0x7900000000ULL;
+    void *map = mmap(reinterpret_cast<void *>(kHint), length, PROT_READ,
+                     MAP_PRIVATE | MAP_FIXED_NOREPLACE, fd, 0);
+    int fallback_errno = 0;
+    bool fixed = map != MAP_FAILED;
+    if (map == MAP_FAILED) {
+        fallback_errno = errno;
+        map = mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (map == MAP_FAILED) {
+            const int map_errno = errno;
+            close(fd);
+            *error = "mmap failed: " + std::to_string(map_errno);
+            return false;
+        }
+    }
+    close(fd);
+
+    const auto *bytes = static_cast<const uint8_t *>(map);
+    if (length < 4 || std::memcmp(bytes, "PK\x03\x04", 4) != 0) {
+        munmap(map, length);
+        *error = "APK signature mismatch";
+        return false;
+    }
+
+    g_apk_zero_map = map;
+    g_apk_zero_map_size = length;
+    LOGI("apk-zero-map: base=%p size=%zu hint=%p fixed=%d fallback_errno=%d "
+         "path=%s",
+         map, length, reinterpret_cast<void *>(kHint), fixed ? 1 : 0,
+         fallback_errno, apk_path);
+    if (!LogMapRange(reinterpret_cast<uintptr_t>(map))) {
+        LOGI("apk-zero-map: range not found in /proc/self/maps");
+    }
     return true;
 }
 
@@ -2998,6 +3087,17 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallFakeCentralDirectory(
     const std::string path = JStringToUtf8(env, apk_path);
     std::string error;
     if (!InstallFakeCentralDirectory(path.c_str(), &error)) {
+        return env->NewStringUTF(error.empty() ? "install failed" : error.c_str());
+    }
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_bepinex_android_hooks_PairIpShield_nativeInstallApkZeroMap(
+    JNIEnv *env, jclass, jstring apk_path) {
+    const std::string path = JStringToUtf8(env, apk_path);
+    std::string error;
+    if (!InstallApkZeroMap(path.c_str(), &error)) {
         return env->NewStringUTF(error.empty() ? "install failed" : error.c_str());
     }
     return nullptr;

@@ -174,6 +174,20 @@ object PairIpShield {
     }
 
     /**
+     * Debug-only: map the whole installed game base APK read-only at file
+     * offset 0. Stock opens the base APK as an archive at offset 0; the
+     * hosted process only has non-zero-offset mappings. This tests whether
+     * PairIP's central-directory resolver needs the offset-0 mapping before
+     * klB builds its reader. Must be called before `libmain.so` starts klB.
+     *
+     * @return null on success, or a diagnostic message.
+     */
+    fun installApkZeroMap(apkPath: String): String? {
+        ensureLoaded()
+        return nativeInstallApkZeroMap(apkPath)
+    }
+
+    /**
      * Debug-only: writes the writable VM image that `executeVM` builds for klB
      * to `klB-image.bin` under [directory], before the interpreter starts.
      * Diffing it against the APK asset shows which bytes the loader decrypts
@@ -235,6 +249,7 @@ object PairIpShield {
     private external fun nativeInstallSyscallTrace(): Boolean
     private external fun nativeInstallProcSanitizer(): Boolean
     private external fun nativeInstallFakeCentralDirectory(apkPath: String): String?
+    private external fun nativeInstallApkZeroMap(apkPath: String): String?
     private external fun nativeInstallVmDump(directory: String): String?
     private external fun nativeInstallSkipKlb(): Boolean
     private external fun nativeInstallReaderGuard(): Boolean
