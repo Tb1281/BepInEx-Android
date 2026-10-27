@@ -275,4 +275,71 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   `0abb3e8292f77f79b118ab72bc3db76408238d2ed2af8e2b269910c59f32b8f7`
   (115,103,986 bytes), package `com.bepinex.android.debug` on SM-S931N
   (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Status: attempt 1 invalid; retry below.
+
+## Verdict log (continued)
+
+### 2026-10-27 16:50 — state-router attempt 1: INCONCLUSIVE (probe invalid)
+
+- Key: `variant=state-router`, code commit `71072b5`, APK sha256
+  `0abb3e8292f77f79b118ab72bc3db76408238d2ed2af8e2b269910c59f32b8f7`
+  (115,103,986 bytes), installed 16:44:58.
+- Command: `OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25
+  tmp/cifi-apk/run_variant.sh state-router --ez pairip_preload true
+  --ez pairip_trace true --ez pairip_dump_vm true`.
+- Window: 2026-10-27T16:49:36+09:00 to 16:50:03+09:00 (27 s).
+- Hooks: `router-load hook rc=0 target=+0x32c2c`, `router-check hook rc=0
+  target=+0x32c48`; both trampolines non-null.
+- Probe: no `router:` lines, no `router ring` dump, no `state` dump. The run
+  died after six builtins at 16:49:40.548, before any router callback.
+- Crash: `malloc(12970367457329746080)` failed (the size is
+  `0xb400007b1224d020`, the image base `0xb400007b1224d010` + 0x10), then
+  SIGSEGV at `split_config.arm64_v8a.apk +0x4c4` at 16:49:40.549. This is not
+  the frozen baseline `__memmove_aarch64_nt+140` / `+0x8d514` signature.
+- Verdict: the run does not test the router hypothesis. The probe perturbed
+  the dispatcher before the first router callback; the likely cause is the
+  `+0x32c2c` tail through `x10` or the `+0x32c48` csel hook in the hot
+  dispatcher loop. Retry hooks the trampoline entry `+0x32c20` instead, tails
+  through `x9` (dead because `+0x32c20 eor w9, w21, w23` writes it), and
+  computes the comparison offline from the recorded inputs, so the csel site
+  is not hooked.
+
+## Pre-registered experiment (2026-10-27, state-router-retry)
+
+Run log and key: this section and the verdict appended after the run.
+
+- Hypothesis (unchanged): the comparison at `+0x32c44` (`cmp x8, x22`) and the
+  `+0x32c48 csel w8, w24, w25, eq` choose between a pass and a fallback
+  selector; the hosted run takes the side that yields `sel=0x31bb` and the
+  reader state, while the other side is the non-reader path.
+- Change from attempt 1: one hook at the trampoline entry `+0x32c20`
+  (`eor w9, w21, w23`) instead of `+0x32c2c` and `+0x32c48`. The shim tails
+  through `x9` (the relocated `eor` writes it). The callback records the table
+  base `x8`, mask `x12`, expected `x22`, candidates `w24`/`w25`, mix `w21`, and
+  modulus `w19`, reads the table word at `x8 + ((w21 ^ w23) % w19) * 4`, and
+  computes the native comparison, `csel`, and `w5` offline. No csel hook.
+- Prediction: at least one `router:` transition is recorded before
+  `state[..] id=0x872a21c`; the ring and first-`ne` sample identify whether
+  `0x31bb` comes from the `eq` or the `ne` side, and whether the table word is
+  static across runs.
+- Falsification: no router transition selects the reader side; the comparison
+  is always `eq` with a static table entry and a constant selected candidate
+  (a fixed dispatch, not the hosted gate); or the `+0x32c20` site never
+  executes. In any of those cases the router hash is not the gate and the fork
+  moves to the `0x31` builtin's operand block at `0x40a73` and the state that
+  re-dispatches to `0x872a21c`.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Command:
+
+```bash
+OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
+  tmp/cifi-apk/run_variant.sh state-router-retry \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true
+```
+
+- Run key: `variant=state-router-retry`, code commit `d20fa9e`, APK sha256
+  `8694a819709f9797538d78c20ce5dbd710c6d0589ae8562a6ff22b9bfabe1df2`
+  (115,103,986 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
 - Status: pre-registered; ready to install and run.
