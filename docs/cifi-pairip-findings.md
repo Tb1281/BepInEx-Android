@@ -1327,8 +1327,8 @@ variable.
   `2deb1a8aeb610c80`, `cb58e4bf99df9e13`, `f32a064d1ef862fb` are
   byte-identical to `stack-strings`, `long-unbox`, `jni-trace`,
   `jni-x20`, and `seq-7e`. Reader slots `0x3f874`/`0x1ba5c` are
-  byte-identical to pristine, and no image-write ring entry before the
-  crash touches either slot.
+  byte-identical to pristine; no dumped image-write ring entry touches
+  either slot, and the crash image keeps both pristine.
 - Crash image: `/tmp/opencode/stack-len-plus-one-image.bin`, sha256
   `28b923f54e2c5b02baf08ef2e5d0928936409df057b5eb66b84fee3121f77c9d`.
   Diff vs `stack-strings` is 30 ranges / 51 bytes, but there are **zero**
