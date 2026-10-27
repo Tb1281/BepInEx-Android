@@ -320,6 +320,129 @@ pairip_hash_check_entry:
     .size pairip_hash_check_entry, . - pairip_hash_check_entry
 
 /*
+ * Debug-only shim for the main state-router hash at libpairipcore.so+0x32c2c
+ * and +0x32c48.
+ *
+ * +0x32c2c is `ldrsw x8, [x8, w9, uxtw]`, the table load; the callback
+ * records the table base and index before the load runs. The tail branches
+ * through x10, which is dead after the quotient at +0x32c24.
+ *
+ * +0x32c48 is `csel w8, w24, w25, eq`; the callback records the computed
+ * value, expected word, candidates, flags, and resulting selector. The tail
+ * branches through x9, which is dead after +0x32c40.
+ *
+ * Same full-register contract as the other shims.
+ */
+
+    .text
+    .global pairip_router_load_entry
+    .type pairip_router_load_entry, %function
+    .p2align 4
+pairip_router_load_entry:
+    sub     sp, sp, #0x110
+    stp     x0, x1, [sp, #0x00]
+    stp     x2, x3, [sp, #0x10]
+    stp     x4, x5, [sp, #0x20]
+    stp     x6, x7, [sp, #0x30]
+    stp     x8, x9, [sp, #0x40]
+    stp     x10, x11, [sp, #0x50]
+    stp     x12, x13, [sp, #0x60]
+    stp     x14, x15, [sp, #0x70]
+    stp     x16, x17, [sp, #0x80]
+    stp     x18, x19, [sp, #0x90]
+    stp     x20, x21, [sp, #0xa0]
+    stp     x22, x23, [sp, #0xb0]
+    stp     x24, x25, [sp, #0xc0]
+    stp     x26, x27, [sp, #0xd0]
+    stp     x28, x29, [sp, #0xe0]
+    mrs     x9, nzcv
+    str     x9, [sp, #0xf0]
+    str     x30, [sp, #0xf8]
+
+    mov     x0, sp
+    bl      pairip_router_load_c
+
+    ldr     x9, [sp, #0xf0]
+    msr     nzcv, x9
+    ldp     x0, x1, [sp, #0x00]
+    ldp     x2, x3, [sp, #0x10]
+    ldp     x4, x5, [sp, #0x20]
+    ldp     x6, x7, [sp, #0x30]
+    ldp     x8, x9, [sp, #0x40]
+    ldp     x10, x11, [sp, #0x50]
+    ldp     x12, x13, [sp, #0x60]
+    ldp     x14, x15, [sp, #0x70]
+    ldp     x16, x17, [sp, #0x80]
+    ldp     x18, x19, [sp, #0x90]
+    ldp     x20, x21, [sp, #0xa0]
+    ldp     x22, x23, [sp, #0xb0]
+    ldp     x24, x25, [sp, #0xc0]
+    ldp     x26, x27, [sp, #0xd0]
+    ldp     x28, x29, [sp, #0xe0]
+    ldr     x30, [sp, #0xf8]
+    add     sp, sp, #0x110
+
+    adrp    x10, g_pairip_router_load_original
+    ldr     x10, [x10, :lo12:g_pairip_router_load_original]
+    br      x10
+
+    .size pairip_router_load_entry, . - pairip_router_load_entry
+
+    .text
+    .global pairip_router_check_entry
+    .type pairip_router_check_entry, %function
+    .p2align 4
+pairip_router_check_entry:
+    sub     sp, sp, #0x110
+    stp     x0, x1, [sp, #0x00]
+    stp     x2, x3, [sp, #0x10]
+    stp     x4, x5, [sp, #0x20]
+    stp     x6, x7, [sp, #0x30]
+    stp     x8, x9, [sp, #0x40]
+    stp     x10, x11, [sp, #0x50]
+    stp     x12, x13, [sp, #0x60]
+    stp     x14, x15, [sp, #0x70]
+    stp     x16, x17, [sp, #0x80]
+    stp     x18, x19, [sp, #0x90]
+    stp     x20, x21, [sp, #0xa0]
+    stp     x22, x23, [sp, #0xb0]
+    stp     x24, x25, [sp, #0xc0]
+    stp     x26, x27, [sp, #0xd0]
+    stp     x28, x29, [sp, #0xe0]
+    mrs     x9, nzcv
+    str     x9, [sp, #0xf0]
+    str     x30, [sp, #0xf8]
+
+    mov     x0, sp
+    bl      pairip_router_check_c
+
+    ldr     x9, [sp, #0xf0]
+    msr     nzcv, x9
+    ldp     x0, x1, [sp, #0x00]
+    ldp     x2, x3, [sp, #0x10]
+    ldp     x4, x5, [sp, #0x20]
+    ldp     x6, x7, [sp, #0x30]
+    ldp     x8, x9, [sp, #0x40]
+    ldp     x10, x11, [sp, #0x50]
+    ldp     x12, x13, [sp, #0x60]
+    ldp     x14, x15, [sp, #0x70]
+    ldp     x16, x17, [sp, #0x80]
+    ldp     x18, x19, [sp, #0x90]
+    ldp     x20, x21, [sp, #0xa0]
+    ldp     x22, x23, [sp, #0xb0]
+    ldp     x24, x25, [sp, #0xc0]
+    ldp     x26, x27, [sp, #0xd0]
+    ldp     x28, x29, [sp, #0xe0]
+    ldr     x30, [sp, #0xf8]
+    add     sp, sp, #0x110
+
+    adrp    x9, g_pairip_router_check_original
+    ldr     x9, [x9, :lo12:g_pairip_router_check_original]
+    br      x9
+
+    .size pairip_router_check_entry, . - pairip_router_check_entry
+
+/*
  * Debug-only shim for the FNV-1 input setup at libpairipcore.so+0x7fddc.
  *
  * The `add x11, x9, w11, uxtw` computes the byte range the handler hashes in
