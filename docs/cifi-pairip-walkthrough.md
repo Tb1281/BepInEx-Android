@@ -1101,3 +1101,46 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/seq-7e.log
   builtin precedes the `0x1f811` dispatcher entry by 1, both share the image,
   and the handler mapping to `0x6ff60` stands.
 - Findings updated: yes, in this commit.
+
+## Planned run: long-unbox
+
+- Purpose: determine whether `klB` unboxes the `java.lang.Long` argument
+  (the `libunity.so` split-APK base) through JNI. The current tracer hooks
+  `GetObjectArrayElement` but not `GetLongField` or `CallLongMethodA`, so the
+  `jni-trace` result cannot distinguish "argument unused" from "argument
+  unboxed through an unhooked call".
+- Change: add observation-only `GetLongField` and `CallLongMethodA` hooks to
+  `pairip_jni_trace` (saved originals, `IsPairIpCaller` filter, receiver and
+  return-value logging). No VM code, image, or argument value changes.
+- Prediction: at least one `jni: GetLongField java.lang.Long.value:J` or
+  `jni: CallLongMethodA java.lang.Long.longValue()J` record from a
+  `libpairipcore` caller appears before the reader crash, with the
+  `exec-prog` base or a value derived from it; all `seq-7e` invariants
+  (crash, five globals, reader slots, ring positions, image diff) stay
+  identical.
+- Falsification: zero such records from `libpairipcore` callers before the
+  crash. Then the argument is not consumed through JNI and the reader-slot
+  source is elsewhere.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `pairip_jni_trace=true`,
+  debug launcher.
+- Run key: `variant=long-unbox`, code commit `HEAD`, APK sha256 recorded
+  after the build; package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_jni_trace true --es pairip_variant long-unbox
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
+```
+
+- Status: pre-registered; ready to build and run.

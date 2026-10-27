@@ -975,3 +975,63 @@ branch avoid the two slots).
 
 The `g_trace_seq`, `seq=` ring fields, and `seqev` records are diagnostic
 only and must be removed with the trace hooks before merge.
+
+## Pre-registered experiment (2026-10-28, long-unbox)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The next step is one diagnostic run against the frozen baseline. It closes
+the open question from the `jni-trace` result: the VM extracts the `klB`
+argument object (`GetObjectArrayElement` at `+0x6af94`) and wraps it in a
+`std::any`, but the tracer does not hook `GetLongField` or `CallLongMethodA`,
+so whether `klB` actually unboxes the `java.lang.Long` is unobserved. The
+argument is the load address of `libunity.so` in the split APK
+(`split_config.arm64_v8a.apk` file offset `0x4eec000`). If the VM unboxes
+it, the reader-slot population is probably derived from that base and the
+hosted run's failure is an argument-consumption bug; if it does not, the
+argument cannot be the source of the missing slots.
+
+- Change: add observation-only hooks for `GetLongField` and
+  `CallLongMethodA` to `pairip_jni_trace`, with saved originals and the
+  existing `IsPairIpCaller` filter. The VM, image, argument value, and
+  experiment switches are not modified. Both hooks log the receiver/class,
+  the member name or raw ID, the returned value, and the return address.
+- Prediction: if `klB` consumes the `Long` through JNI, at least one
+  `jni: GetLongField java.lang.Long.value:J` or
+  `jni: CallLongMethodA java.lang.Long.longValue()J` record appears from a
+  `libpairipcore` caller before the reader crash, and its value is the
+  `exec-prog` argument (`0x79f7efd000`-style split-APK base) or a value
+  derived from it. The crash signature, five globals, reader slots, ring
+  positions, and image diff stay identical to `seq-7e`.
+- Falsification: zero `GetLongField` and zero `CallLongMethodA` records from
+  `libpairipcore` callers before the crash. Then the VM does not unbox the
+  argument through JNI; the `Long` route is closed and the next step is the
+  `0x31`/state-machine branch or a direct-memory read of the boxed value.
+- Follow-up mapping: if a matching record exists, record its call-site
+  offset and value and disassemble that site to find how the base reaches
+  the reader slots. If the only records are on VM-created `Long` objects
+  with hash-like values, the argument is not consumed and the run counts as
+  a falsification for the argument route.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `pairip_jni_trace=true`,
+  debug launcher.
+- Run key: `variant=long-unbox`, code commit `HEAD`, APK sha256 recorded
+  after the build; package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Command target:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_jni_trace true --es pairip_variant long-unbox
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
+```
+
+- Status: pre-registered; ready to build and run.
