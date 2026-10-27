@@ -383,6 +383,27 @@ struct StateRingEntry {
 StateRingEntry g_state_ring[kStateRingSize] = {};
 std::atomic<uint32_t> g_state_ring_pos{0};
 
+// Ring of the state-selection hash checks at +0x3dc0c/+0x3dc50. The hosted
+// path hashes a string before choosing the next state id; the candidate ids
+// (w24/w23) and the comparison flags identify which branch selected the
+// reader state. Keeping the last entries survives logcat volume limits.
+constexpr size_t kHashRingSize = 64;
+struct HashRingEntry {
+    uint64_t computed;
+    uint64_t expected;
+    uint32_t length;
+    uint32_t offset;
+    uint32_t index;
+    uint32_t equal;
+    uint32_t selected;
+    uint32_t candidate_eq;
+    uint32_t candidate_ne;
+    uint32_t reserved;
+    uint8_t sample[32];
+};
+HashRingEntry g_hash_ring[kHashRingSize] = {};
+std::atomic<uint32_t> g_hash_ring_pos{0};
+
 // Ring buffer of the last raw syscalls libpairipcore issued. klB reads the
 // ZIP central directory through the same wrapper (base+0x17430), so the
 // syscall stream identifies whether the repeating VM loop is polling a file,
@@ -578,10 +599,12 @@ bool InstallPairIpTrace() {
         g_builtin_trace.store(rc == 0 && original != nullptr);
     }
 
-    // Log the state-transition hash input and result. A failing check selects
-    // the fallback state; the dumped bytes name the hosted-only value.
+    // Log the state-transition hash input and result. The original +0x3dc08
+    // hook sat on `cbz w25`; Dobby relocates that branch and the callback is
+    // never reached. Hook the non-branch `add` at +0x3dc0c instead, and the
+    // `csel` at +0x3dc50 for the comparison and candidate ids.
     if (g_pairip_hash_input_original == nullptr) {
-        auto *target = reinterpret_cast<void *>(base + 0x3dc08);
+        auto *target = reinterpret_cast<void *>(base + 0x3dc0c);
         void *original = nullptr;
         const int rc = DobbyHook(
             target, reinterpret_cast<void *>(&pairip_hash_input_entry),
@@ -591,7 +614,7 @@ bool InstallPairIpTrace() {
              original);
     }
     if (g_pairip_hash_check_original == nullptr) {
-        auto *target = reinterpret_cast<void *>(base + 0x3dc4c);
+        auto *target = reinterpret_cast<void *>(base + 0x3dc50);
         void *original = nullptr;
         const int rc = DobbyHook(
             target, reinterpret_cast<void *>(&pairip_hash_check_entry),
@@ -2201,6 +2224,32 @@ void DumpSyscallRing() {
     }
 }
 
+// Dump the most recent state-selection hash checks. The last entries show
+// whether the reader state was chosen by a matching or a failing hash and
+// which input string was hashed.
+void DumpHashRing() {
+    const uint32_t pos = g_hash_ring_pos.load(std::memory_order_relaxed);
+    const uint32_t available = pos < kHashRingSize ? pos : kHashRingSize;
+    const uint32_t count = available < 32 ? available : 32;
+    LOGI("trace: hash ring pos=%u dumping last %u", pos, count);
+    for (uint32_t i = count; i > 0; --i) {
+        const HashRingEntry &entry = g_hash_ring[(pos - i) % kHashRingSize];
+        char hex[sizeof(entry.sample) * 2 + 1] = {};
+        char text[sizeof(entry.sample) + 1] = {};
+        for (size_t j = 0; j < sizeof(entry.sample); ++j) {
+            std::snprintf(hex + j * 2, 3, "%02x", entry.sample[j]);
+            text[j] = entry.sample[j] >= 0x20 && entry.sample[j] <= 0x7e
+                          ? entry.sample[j]
+                          : '.';
+        }
+        LOGI("trace: hash[%u] %s computed=%016" PRIx64 " expected=%016" PRIx64
+             " off=%#x len=%u idx=%#x sel=%#x eq=%#x ne=%#x data=%s text=%s",
+             pos - i, entry.equal ? "ok" : "FAIL", entry.computed,
+             entry.expected, entry.offset, entry.length, entry.index,
+             entry.selected, entry.candidate_eq, entry.candidate_ne, hex, text);
+    }
+}
+
 // Dump the most recent state ids seen by the builtin state dispatcher. The
 // last ids show which state path the failing builtin took; a fallback state
 // appears as a different id than the pass path would have selected.
@@ -2243,6 +2292,7 @@ void DumpBuiltinRing() {
 void DumpVmRing() {
     DumpSyscallRing();
     DumpBuiltinRing();
+    DumpHashRing();
     DumpStateRing();
     const uint32_t pos = g_vm_ring_pos.load(std::memory_order_relaxed);
     const uint32_t available = pos < kVmRingSize ? pos : kVmRingSize;
@@ -2349,13 +2399,17 @@ void pairip_state_trace_c(uint64_t *regs) {
 // Debug-only state-transition hash tracing.
 //
 // The giant klB handler performs a hash check before selecting the next state
-// id. The input site (+0x3dc08) hashes `w25` bytes at `image + w29`; the check
-// site (+0x3dc4c) compares the mixed hash against the state's expected value.
-// A mismatch selects a different state, which is how a hosted-only data value
-// can route klB into the fallback ZIP read.
+// id. The original hook at +0x3dc08 sat on the leading `cbz w25`; Dobby's
+// branch relocation bypassed the callback, so the check never logged. The
+// probe now hooks the non-branch sites: +0x3dc0c (`add x9, x8, w29, uxtw`)
+// records the `w25`-byte input at `image + w29`, and +0x3dc50
+// (`csel w5, w24, w23, eq`) records the hash comparison and the two candidate
+// state ids. The shims tail through x9, which the relocated instruction
+// overwrites (input) or which is dead after the csel (check).
 thread_local uint32_t t_hash_length = 0;
 thread_local uint32_t t_hash_offset = 0;
 thread_local uint64_t t_hash_image = 0;
+thread_local bool t_hash_have_input = false;
 
 extern "C" __attribute__((visibility("hidden")))
 void pairip_hash_input_c(uint64_t *regs) {
@@ -2363,8 +2417,9 @@ void pairip_hash_input_c(uint64_t *regs) {
     t_hash_length = static_cast<uint32_t>(regs[25]);
     t_hash_offset = static_cast<uint32_t>(regs[29]);
     t_hash_image = regs[8];
+    t_hash_have_input = true;
     static std::atomic<int> log_count{0};
-    if (t_hash_length == 0 || log_count.fetch_add(1) >= 48) return;
+    if (t_hash_length == 0 || log_count.fetch_add(1) >= 8) return;
 
     uint8_t sample[32] = {};
     const size_t copy = t_hash_length < sizeof(sample) ? t_hash_length
@@ -2386,27 +2441,50 @@ void pairip_hash_check_c(uint64_t *regs) {
     if (regs == nullptr || !g_trace_enabled.load()) return;
     const uint64_t computed = regs[8];
     const uint64_t expected = regs[9];
-    const bool equal = computed == expected;
-    static std::atomic<int> ok_count{0};
-    static std::atomic<int> fail_count{0};
-    if (equal && ok_count.fetch_add(1) >= 12) return;
-    if (!equal && fail_count.fetch_add(1) >= 48) return;
+    // regs[30] is the saved NZCV; the Z flag decides the csel at +0x3dc50.
+    const uint32_t nzcv = static_cast<uint32_t>(regs[30]);
+    const uint32_t equal = (nzcv >> 30) & 1u;
+    const uint32_t candidate_eq = static_cast<uint32_t>(regs[24]);
+    const uint32_t candidate_ne = static_cast<uint32_t>(regs[23]);
+    const uint32_t selected = equal ? candidate_eq : candidate_ne;
+    const uint32_t length = t_hash_have_input ? t_hash_length : 0;
+    const uint32_t offset = t_hash_have_input ? t_hash_offset : 0;
 
     uint8_t sample[32] = {};
-    const size_t copy = t_hash_length < sizeof(sample) ? t_hash_length
-                                                       : sizeof(sample);
-    SafeReadMemory(static_cast<uintptr_t>(t_hash_image + t_hash_offset), sample,
-                   copy);
+    if (length != 0) {
+        const size_t copy = length < sizeof(sample) ? length : sizeof(sample);
+        SafeReadMemory(static_cast<uintptr_t>(t_hash_image + offset), sample,
+                       copy);
+    }
+
+    const uint32_t index = g_hash_ring_pos.fetch_add(1, std::memory_order_relaxed);
+    HashRingEntry &entry = g_hash_ring[index % kHashRingSize];
+    entry.computed = computed;
+    entry.expected = expected;
+    entry.length = length;
+    entry.offset = offset;
+    entry.index = static_cast<uint32_t>(regs[26]);
+    entry.equal = equal;
+    entry.selected = selected;
+    entry.candidate_eq = candidate_eq;
+    entry.candidate_ne = candidate_ne;
+    entry.reserved = 0;
+    for (size_t i = 0; i < sizeof(entry.sample); ++i) {
+        entry.sample[i] = i < sizeof(sample) ? sample[i] : 0;
+    }
+    t_hash_have_input = false;
+
     char hex[sizeof(sample) * 2 + 1] = {};
     char text[sizeof(sample) + 1] = {};
-    for (size_t i = 0; i < copy; ++i) {
+    for (size_t i = 0; i < sizeof(sample); ++i) {
         std::snprintf(hex + i * 2, 3, "%02x", sample[i]);
         text[i] = sample[i] >= 0x20 && sample[i] <= 0x7e ? sample[i] : '.';
     }
     LOGI("hash: %s computed=%016" PRIx64 " expected=%016" PRIx64
-         " off=%#x len=%u idx=%#x data=%s text=%s",
-         equal ? "ok" : "FAIL", computed, expected, t_hash_offset, t_hash_length,
-         static_cast<uint32_t>(regs[26]), hex, text);
+         " off=%#x len=%u idx=%#x sel=%#x eq=%#x ne=%#x z=%u data=%s text=%s",
+         equal ? "ok" : "FAIL", computed, expected, offset, length,
+         static_cast<uint32_t>(regs[26]), selected, candidate_eq, candidate_ne,
+         equal, hex, text);
 }
 
 // Debug-only capture of the FNV-1 input used by the klB 0x1b handler.

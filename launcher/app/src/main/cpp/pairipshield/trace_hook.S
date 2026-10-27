@@ -199,11 +199,14 @@ pairip_builtin_trace_entry:
  * Debug-only shims for the state-transition hash checks in the giant
  * obfuscated klB handler.
  *
- * +0x3dc08 starts an FNV-1 loop over `w25` bytes at `image + w29`; +0x3dc34
- * turns the hash into the state selector (`x8`) and compares it with the
- * value the state expects (`x9`). If the comparison fails the state machine
- * takes a different state id, so logging the input bytes and both sides of
- * the comparison identifies the hosted-only branch gate.
+ * The hook sites are the non-branch instructions: +0x3dc0c
+ * (`add x9, x8, w29, uxtw`) starts the FNV-1 loop over `w25` bytes at
+ * `image + w29`, and +0x3dc50 (`csel w5, w24, w23, eq`) selects the next
+ * state id from the comparison at +0x3dc4c. The original +0x3dc08 hook sat
+ * on `cbz w25`, which Dobby relocates without running the callback.
+ *
+ * The tail branches through x9: the relocated add overwrites it at the input
+ * site, and it is dead after the csel at the check site.
  *
  * Same full-register contract as the other shims.
  */
@@ -256,9 +259,9 @@ pairip_hash_input_entry:
     ldr     x30, [sp, #0xf8]
     add     sp, sp, #0x110
 
-    adrp    x16, g_pairip_hash_input_original
-    ldr     x16, [x16, :lo12:g_pairip_hash_input_original]
-    br      x16
+    adrp    x9, g_pairip_hash_input_original
+    ldr     x9, [x9, :lo12:g_pairip_hash_input_original]
+    br      x9
 
     .size pairip_hash_input_entry, . - pairip_hash_input_entry
 
@@ -310,9 +313,9 @@ pairip_hash_check_entry:
     ldr     x30, [sp, #0xf8]
     add     sp, sp, #0x110
 
-    adrp    x16, g_pairip_hash_check_original
-    ldr     x16, [x16, :lo12:g_pairip_hash_check_original]
-    br      x16
+    adrp    x9, g_pairip_hash_check_original
+    ldr     x9, [x9, :lo12:g_pairip_hash_check_original]
+    br      x9
 
     .size pairip_hash_check_entry, . - pairip_hash_check_entry
 
