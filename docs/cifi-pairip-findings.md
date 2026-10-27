@@ -167,6 +167,7 @@ not a dispatcher-selected state. See the static map below.
 | selector-gate (`+0x383f4`, `+0x38420`) | Both hooks `rc=0` (trampolines `0x7e1e46d250`, `0x7e1e46d26c`), gate ring `pos=0 eq=0 ne=0`: the string-hash selector block never executes before the crash. State tail, five globals, reader slots, and crash are unchanged. The gate is not the producer of `sel=0x31bb`; route closed. |
 | Offset-0 base-APK mapping (`pairip_apk_zero_map`) | Mapping installed at the planned address (`0x7900000000`, `fixed=1`) and appears in klB's maps dump (`r--p 00000000`), yet the crash, reader slots, FNV input, state tail, and builtin tail are unchanged. Falsified: the missing offset-0 mapping is not the gate. |
 | Process-name spoof (`pairip_process_name`) | Main-thread `prctl` succeeded and the VM's `/proc/self/status` read saw `mesCompany.CIFI` (argv0/`__progname` were rewritten too), yet the FNV input, five globals, reader slots, state/builtin tails, crash signature, and image diff are byte-identical to baseline. Falsified: process identity is not the gate. |
+| Identity conjunction (`pairip_process_name` + `pairip_proc_sanitize` + `pairip_apk_zero_map`) | All three facts were active: status showed `Name:\tmesCompany.CIFI` and game uid, the sanitized maps had zero `bepinex` lines (59 in the raw copy), and the game base APK was at offset 0 on line 32. Reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, state tail, crash signature, and image invariants were unchanged. Falsified: the stock identity conjunction is not the gate. |
 | syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
 | Low CD mapping (`pairip_apk_cd_map`) | The base APK's real CD was mapped at `0x7900000000` (`MAP_SHARED`, offset `0x74f5000`), and its `r--s 074f5000` line appeared at byte 3,596, inside the VM's 146,432-byte maps scan. The five globals, reader slots, state/builtin tails, crash signature, and 368-byte/79-range image diff are unchanged. Falsified: a CD line inside the scanned window is not the gate. |
 | JNI call trace (`pairip_jni_trace`) | 3,571 records; no non-null `ExceptionOccurred`, no `ExceptionClear`, no `Throw`/`ThrowNew`, and no pending-exception result before the crash. The only exception-like object is the VM's own `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) used for its `getStackTrace` stack walk; the launcher's spoof hook returns the fabricated 24-frame chain, then the VM calls `Debug.isDebuggerConnected`/`waitingForDebugger` (both false) and reaches the same reader crash. Falsified: `x20` is not a pending exception. |
@@ -1521,3 +1522,45 @@ Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
 - Run key: `variant=identity-conjunction`, code commit `HEAD` with the
   hidden-substring change, APK sha256 recorded after the build.
 - Status: pre-registered; ready to build and run.
+
+## identity-conjunction result (2026-10-28 01:41)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen diagnostic baseline plus the three identity toggles ran one cold
+launch. The pre-registered prediction is **FALSIFIED**.
+
+- Build/install: APK sha256
+  `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`
+  (131,239,294 bytes, 490 entries; `libpairipshield.so` 486,088 bytes).
+  `android install` sent 1.09 MB (99.13% savings); the game APK was not
+  modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 220` ms, one launch
+  only (pid 14833). Log
+  `tmp/cifi-apk/logs/verify/identity-conjunction.log`, 10,010 lines, sha256
+  `0e54ede30a6c3c05008b7a73aa06d4808ae1b59a2c04f310a87cea13dade2a7d`.
+- Identity facts, all confirmed in the VM's own sanitized view:
+  - `process name spoofed: comm=mesCompany.CIFI`; the status dump shows
+    `Name:\tmesCompany.CIFI` and uid/gid `10610`.
+  - `proc: sanitized /proc/self/maps fd=151 bytes=427872`; the sanitized
+    file (`identity-conjunction-maps.txt`, sha256
+    `ad238d11093371fef486cae2f58524165fbd02b2b6b2d9721777a36bda89669b`)
+    has zero `bepinex` lines. The raw copy has 59.
+  - `apk-zero-map` mapped the game base APK at `0x7900000000`; sanitized
+    line 32 is its `r--p 00000000` mapping, the first APK line in the scan.
+- VM invariants: reader slots `bbb9eb6daed20ed0` / `015370f87525d57b`;
+  append `src=0x7ff93727a0 n=46 ... off=0x3e170
+  fields=0000007a89d69ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` = `00000000f93727d8`/`0000007ff9372869`;
+  `vm[0x7f8]` = `0x31bb`; state tail `id=0x872a21c sel=0x31bb
+  reader=0xf93727d8`; builtin tail `0x9a0c0031`/`0x40a73`.
+- Crash: signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `split_config.arm64_v8a.apk (+0)`, at 01:41:13.779. Image
+  `identity-conjunction-image.bin`, sha256
+  `c5a7aed37e811548cbf82335a218f5d2d16c505b491cc817f2585b8c1781279f`;
+  diff vs selector-gate is 81 bytes / 39 ranges with zero new-only offsets.
+- Verdict: presenting the stock process name, the stock APK-first maps view,
+  and the game base APK at offset 0 changes nothing in the reader path. The
+  missing reader-slot writer is not selected by process/maps identity. Move
+  to the next single fork: `contextSeed=false` (stock starts with a null
+  `VMRunner.context`) or a reader-source probe at `+0x3dc88`. Do not repeat
+  identity/maps experiments.

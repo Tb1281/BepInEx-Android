@@ -1574,3 +1574,58 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/identity-conjunction.log
 ```
 
 - Status: pre-registered; ready to build and run.
+
+### 2026-10-28 01:41 — identity-conjunction: FALSIFIED (the stock identity conjunction is not the gate)
+
+- Key: `variant=identity-conjunction`, code commit `8e46583`, APK sha256
+  `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`
+  (131,239,294 bytes, 490 entries; `libpairipshield.so` 486,088 bytes).
+  `android install` sent a 1.09 MB delta (99.13% savings); the game APK was
+  not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 220` ms, one launch
+  only (pid 14833). Both packages were force-stopped and the log buffer was
+  cleared first. Log
+  `tmp/cifi-apk/logs/verify/identity-conjunction.log`, 10,010 lines, sha256
+  `0e54ede30a6c3c05008b7a73aa06d4808ae1b59a2c04f310a87cea13dade2a7d`.
+- Variant line: `variant=identity-conjunction ... processNameSpoof=true
+  procSanitize=true apkZeroMap=true trace=true dumpVmImage=true
+  jniTrace=false preload=true`; every other experiment switch is false.
+- Identity facts actually presented:
+  - Spoof: `process name spoofed: comm=mesCompany.CIFI` at 01:41:11.485,
+    before `libpairipcore.so` was loaded; the VM's status dump shows
+    `Name:\tmesCompany.CIFI` and the game uid/gid (`10610`), not the
+    launcher's.
+  - Maps: `proc: syscall hook rc=0`; `proc: sanitized /proc/self/maps
+    fd=151 bytes=427872`. The sanitized copy
+    (`identity-conjunction-maps.txt`, sha256
+    `ad238d11093371fef486cae2f58524165fbd02b2b6b2d9721777a36bda89669b`)
+    contains **zero** lines with `bepinex`; the unsanitized copy has 59.
+  - Offset-0 APK: `apk-zero-map: base=0x7900000000 size=122714162 hint=...`
+    installed before `libmain`; sanitized maps line 32 is
+    `7900000000-7907508000 r--p 00000000 .../com.OctocubeGamesCompany.CIFI.../base.apk`,
+    the first APK line in the scan.
+  - Status dump: `tmp/cifi-apk/logs/verify/identity-conjunction-status.txt`,
+    sha256 `bb1b9d1f01029077ad39afc10c97a946cb08c88b60908ab9b16e47899db12266`;
+    raw maps dump `...-raw-maps.txt`, sha256
+    `b892d83bb414555be94813ac212e971392ef3a422627960cfb498ad5466de91a`.
+- Probe: the reader slots are still `bbb9eb6daed20ed0` /
+  `015370f87525d57b`; the append record is
+  `src=0x7ff93727a0 n=46 dst=0x7ff9372808 ... off=0x3e170
+  fields=0000007a89d69ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`. `vm[0x540]` is `00000000f93727d8` / `0000007ff9372869` and
+  `vm[0x7f8]` is `00000000000031bb`, the same layout as every hosted run.
+  State tail `id=0x872a21c sel=0x31bb reader=0xf93727d8`; builtin tail is
+  the usual `0x9a0c0031`/`0x40a73` path.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `/data/app/.../com.OctocubeGamesCompany.CIFI.../split_config.arm64_v8a.apk
+  (+0)`, at 01:41:13.779; the process exited by signal 11 at 01:41:13.802.
+- Crash image: `tmp/cifi-apk/logs/verify/identity-conjunction-image.bin`,
+  sha256 `c5a7aed37e811548cbf82335a218f5d2d16c505b491cc817f2585b8c1781279f`.
+  Diff vs the selector-gate image is 81 bytes in 39 ranges; **zero**
+  new-only offsets relative to the known 368-byte variable set. Both ZIP
+  slots are byte-identical to pristine.
+- Verdict: the pre-registered prediction is **FALSIFIED**. All three stock
+  identity facts were active and visible to the VM, yet the reader slots,
+  crash, and tails are unchanged. The identity conjunction is not the gate;
+  do not repeat maps/status/name experiments.
+- Findings updated: yes, in this commit.
