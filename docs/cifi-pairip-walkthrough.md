@@ -157,3 +157,44 @@ Append one entry per completed run; never rewrite an earlier verdict.
   inside `[image, image+0x44feb]`, the bytes match the pristine asset, and
   the observed loop is the registered 419-call loop (plus one counter-0
   boundary call).
+
+## Planned run: hash-gate
+
+- Purpose: identify the state-selection hash check that routes the hosted path
+  into the `0x31` reader state. The reader slots are deterministic: the five
+  globals written at `0xf656/0x1b` are byte-identical in the hosted and
+  `stock-libmain` captures even though the loop counts differ (`0x1a3` vs
+  `0x1a4`), and the `+0x3dc88..+0x3e030` emulation over those globals always
+  yields `w8=0x3f874`, `w9=0x1ba5c`. The gate is therefore earlier: the
+  `+0x3dc08` name-hash check that feeds `csel w5, w24, w23, eq`.
+- Hypothesis: the last hash check before the reader compares a hosted-specific
+  string and the comparison result selects `0x31bb`, the selector that reaches
+  the `0x31` builtin.
+- Falsification: the last check before the reader is `ok` (`computed ==
+  expected`) and still selects `0x31bb`, or the `+0x3dc0c`/`+0x3dc50` sites
+  never run, or the hash input is static image data. In any of those cases the
+  hash result is not the hosted-only gate and the fork moves to the state that
+  fills the `w24`/`w23` candidates.
+- Probe: the original `+0x3dc08` hook sat on `cbz w25`; Dobby relocates that
+  branch without running the callback. The probe now hooks `+0x3dc0c`
+  (`add x9, x8, w29, uxtw`) to record the `w25`-byte input at `image + w29`,
+  and `+0x3dc50` (`csel w5, w24, w23, eq`) to record the computed/expected
+  hash, the saved NZCV, the two candidate ids, and the selected id. Both shims
+  tail through `x9`, which the relocated `add` overwrites or which is dead
+  after the `csel`. A 64-entry ring is dumped from the failing-read path with
+  the other rings.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Run key: `variant=hash-gate`, code commit `c3da43b`, APK sha256
+  `c839417723f1f04009504a67d8ac31aee04c70755aaa72ef8f81d086915f42af`
+  (115,103,986 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Command:
+
+```bash
+OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
+  tmp/cifi-apk/run_variant.sh hash-gate \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true
+```
+
+- Status: pre-registered; not yet run.
