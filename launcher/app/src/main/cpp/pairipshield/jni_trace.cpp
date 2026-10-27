@@ -1259,6 +1259,20 @@ jobject JNICALL HookGetObjectArrayElement(JNIEnv *env, jobjectArray array,
     return result;
 }
 
+const char *JNICALL HookGetStringUTFChars(JNIEnv *env, jstring value,
+                                          jboolean *is_copy) {
+    void *caller = __builtin_return_address(0);
+    const bool trace = IsPairIpCaller(caller);
+    const char *result = g_get_string_utf(env, value, is_copy);
+    if (trace && result != nullptr) {
+        std::string text(result);
+        if (text.size() > 160) text.resize(160);
+        TRACEI("jni: GetStringUTFChars -> \"%s\" caller=%p",
+               Sanitize(std::move(text)).c_str(), caller);
+    }
+    return result;
+}
+
 jint JNICALL HookThrow(JNIEnv *env, jthrowable throwable) {
     void *caller = __builtin_return_address(0);
     if (IsPairIpCaller(caller)) {
@@ -1665,6 +1679,10 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallJniTrace(
              sizeof(void *),
          reinterpret_cast<void *>(&HookGetObjectArrayElement),
          reinterpret_cast<void **>(&g_get_object_array_element)});
+    patches.push_back(
+        {offsetof(JNINativeInterface, GetStringUTFChars) / sizeof(void *),
+         reinterpret_cast<void *>(&HookGetStringUTFChars),
+         reinterpret_cast<void **>(&g_get_string_utf)});
     patches.push_back(
         {offsetof(JNINativeInterface, Throw) / sizeof(void *),
          reinterpret_cast<void *>(&HookThrow),

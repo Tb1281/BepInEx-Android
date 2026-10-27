@@ -159,6 +159,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | JNI `IsSameObject` probe (`pairip_jni_trace` + `IsSameObject`) | 1,053 records; every one of the 529 calls at `+0x702e4` is `0x0 0x0 -> 1`, with no non-null argument and no class name. `[state+0x20]` is null at every observed `0x6ff60` check, so the clear/delete branch is never taken and the `cset eq` flag is 0. Crash, five globals, reader slots, tails, and image diff are unchanged. Falsified: there is no Java object in `x20` to name. |
 | Shared sequence counter (`seq-7e`) | `seqev B seq=12787` (`id=0x40b0007e pc=0x1f813 ctx=0x7ff9372b88 img=b400007b1224d010`) precedes `seqev D seq=12788` (`state=0x7ff9372bd0`, `fetch=0x1f811 next=0x1f813 op=0x7e`, same image) by 1; the second launch repeats it as 12797/12798. PROVEN: the `0x1f813` builtin is the fetch/prep step before the dispatcher entry, `0x6ff60` is the handler for the final `0x7e`, and the nested `0x31` at `pc=0x40a73` (`seq=12824`) runs after the dispatcher entry, inside the handler. |
 | JNI `Long` unboxing (`pairip_jni_trace` + `GetLongField`/`CallLongMethodA`) | Zero `GetLongField` records. Two `CallLongMethodA` calls, both `java.io.File.length()` on `/proc/self/maps` and `/proc/self/status`, each returning 0; no `Long.longValue`, no field read on a `Long`, no method call on a `Long` receiver. The VM constructs 421 `java.lang.Long` objects from hash-like image values but never reads them back through JNI. The argument `0x79f72af000` still resolves to split-APK offset `0x4eec000` (`libunity.so` base). Crash, five globals, reader slots, ring positions, and pointer-only image diff unchanged. Falsified: the `Long` argument is not consumed through JNI. |
+| Anti-debug stack text (`pairip_jni_trace` + `GetStringUTFChars`) | 48 `GetStringUTFChars` records, all from `libpairipcore+0x73814` (the `+0x7380c` call site), returning the 24 fabricated `pairIpUnityLaunchStack` frames twice (two stack walks). The VM stores each UTF-8 pointer and length into native arrays at `[x19]`. Five globals, reader slots, state/builtin tails, and the 368-byte/79-range image diff are byte-identical to `long-unbox`; the crash is unchanged. Ring counters differ (builtin 3,548 vs 3,699; state 39,572 vs 41,366), so path length varies and counters are not an invariant. CONFIRMED: the spoofed stack text is consumed, but it does not populate the reader slots by itself. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -321,6 +322,20 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
 12. Next: after the `0x31` semantics, identify the writer or patch that
     should populate `image+0x3f874`/`image+0x1ba5c`, or prove that a bare
     launch takes a non-null path that avoids both slots.
+13. Done (stack-strings, 2026-10-28): the 48 `GetStringUTFChars` calls from
+    `+0x73814` return the fabricated stack frames, proving the VM copies
+    the spoofed text into native pointer/length arrays at `[x19]`. The
+    crash, five globals, reader slots, and image are unchanged, so the stack
+    text alone does not populate the reader slots. Ring counters are not
+    invariant (builtin 3,548 vs 3,699; state 39,572 vs 41,366); compare
+    final tails and image only.
+14. Next: decode the consumer of the `[x19]` pointer/length arrays from
+    `+0x7380c` (the function's epilogue and its callers) and check whether
+    the text feeds a hash or compare that selects the `0x31` handler's next
+    state. If it does, pre-register a run that changes only the fabricated
+    stack text (or `stackSpoof=false`) and watch the five globals, reader
+    slots, and crash. Falsification: byte-identical globals/slots/crash
+    closes the stack-content route.
 
 ## Pre-registered experiment (2026-10-27, state-router)
 
@@ -1139,4 +1154,58 @@ new hook will not recurse.
   `GetStringUTFChars` hook, APK sha256 recorded after the build; package
   `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
   `ro.debuggable=0`).
-- Status: pre-registered; ready to build and run.
+- Status: run; result below.
+
+### Result
+
+- Build: APK sha256
+  `726786777431d86c7689533bca63a19c808e43a2b335da3eb69326c27195e235`
+  (115,274,306 bytes, 488 entries; `libpairipshield.so` 481,376 bytes).
+  Installed with `android install` (904.94 KB delta); the game APK was not
+  modified, repacked, or re-signed.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 228` ms. Both
+  packages were force-stopped and the log buffer cleared first. One launch
+  only (pid 12999 at 00:16:17).
+- Log: `tmp/cifi-apk/logs/verify/stack-strings.log`, 30,053 lines, sha256
+  `dac35b7ff6e3ca9a1da3e548cbedca35c295246d610106fc4190ea31e66cfd68`.
+- Instrumentation: line 774 reports `variant=stack-strings`,
+  `jniTrace=true`, `trace=true`, `preload=true`, `dumpVmImage=true`,
+  `stackSpoof=true`; every other experiment switch is off. YTw and klB both
+  ran.
+- String reads: 48 `GetStringUTFChars` records, all from the same caller
+  `0x7a9013f814` = `libpairipcore+0x73814` (the return address after the
+  `+0x7380c` load). They are two copies of the same 24 fabricated
+  `pairIpUnityLaunchStack` frames (two `getStackTrace` walks): for example
+  `com.pairip.VMRunner.executeVM(Native Method)`,
+  `com.pairip.VMRunner.invoke(VMRunner.java:69)`,
+  `com.unity3d.player.NativeLoader.load(Native Method)`, and
+  `com.unity3d.player.UnityPlayerActivity$c2020060322V3.onCreate(SourceFile:0)`.
+  The UTF-8 text is the spoof's text, not the launcher's real stack.
+- Static: `+0x7380c` loads `GetStringUTFChars` (`#0x548`); `+0x73814`
+  returns the pointer, `+0x73830` stores it at `[x19]` with byte index
+  `(w26^w24) % w23`, and `+0x7383c` stores the length `w22` at `[x19]` with
+  index `(w26^w25) % w23`. The VM copies the spoofed text into native
+  pointer/length arrays. The reads do not come from `+0x7dc30`.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, caller
+  `split_config.arm64_v8a.apk +0x514`; `vm[0x540]` still holds
+  `bbb9eb6daed20ed0` / `015370f87525d57b`; state tail `id=0x872a21c
+  sel=0x31bb reader=0xf9372668`; builtin tail `id=0x9a0c0031 pc=0x40a73`;
+  the dispatcher ring tail is unchanged.
+- Crash image: `/tmp/opencode/stack-strings-image.bin`, sha256
+  `89512e884c333b75fe9dfa1a062a009aab41e87c7bb68239079dd1e5292b064c`.
+  Five globals are byte-identical to `long-unbox`; reader slots
+  `0x3f874`/`0x1ba5c` are byte-identical to pristine; diff vs pristine is 79
+  ranges / 368 bytes; diff vs `long-unbox` is 30 ranges / 56 bytes, all high
+  bytes of ASLR pointers.
+- Ring counters are **not** identical: builtin 3,548 (vs 3,699), state
+  39,572 (vs 41,366), vm 1,580 (same), image write 2,209 (vs 2,211); the
+  final shared `seq` is 5,127 (vs 5,278). The difference is 151 builtin
+  dispatches, so the VM path length varies run to run (the 48 hook records
+  cannot reduce a counter). Only the final tails and image are invariants;
+  do not use ring positions as a strict cross-run invariant.
+- Verdict: the pre-registered observation is **CONFIRMED**. The VM reads
+  the fabricated anti-debug stack text through `GetStringUTFChars` at
+  `+0x7380c` and copies it into native memory. The reader crash, five
+  globals, reader slots, and image are unchanged, so the stack text alone
+  does not populate the reader slots. The "ring positions identical" clause
+  did not hold; counters are path-length-dependent.

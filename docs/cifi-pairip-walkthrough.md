@@ -1213,4 +1213,47 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
 - Run key: `variant=stack-strings`, code commit `HEAD` plus the hook, APK
   sha256 recorded after the build; package `com.bepinex.android.debug` on
   SM-S931N (Android 17/API 37, `user`, `ro.debuggable=0`).
-- Status: pre-registered; ready to build and run.
+- Status: run; result below.
+
+### Result
+
+- Build: APK sha256
+  `726786777431d86c7689533bca63a19c808e43a2b335da3eb69326c27195e235`
+  (115,274,306 bytes, 488 entries; `libpairipshield.so` 481,376 bytes).
+  `android install` sent a 904.94 KB delta; the game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 228` ms. Both
+  packages were force-stopped and the log buffer cleared first. One launch
+  only (pid 12999 at 00:16:17).
+- Log: `tmp/cifi-apk/logs/verify/stack-strings.log`, 30,053 lines, sha256
+  `dac35b7ff6e3ca9a1da3e548cbedca35c295246d610106fc4190ea31e66cfd68`.
+- Instrumentation: line 774 reports `variant=stack-strings`,
+  `jniTrace=true`, `trace=true`, `preload=true`, `dumpVmImage=true`,
+  `stackSpoof=true`; every other experiment switch is off.
+- String reads: 48 `GetStringUTFChars` records, all from
+  `caller=0x7a9013f814` (`libpairipcore+0x73814`). They are two copies of
+  the 24 fabricated frames, for example
+  `com.pairip.VMRunner.executeVM(Native Method)`,
+  `com.pairip.VMRunner.invoke(VMRunner.java:69)`,
+  `com.unity3d.player.NativeLoader.load(Native Method)`, and
+  `com.unity3d.player.UnityPlayerActivity$c2020060322V3.onCreate(SourceFile:0)`.
+  The VM copies the spoofed text into native pointer/length arrays at
+  `[x19]` (`+0x73830` pointer, `+0x7383c` length).
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, caller
+  `split_config.arm64_v8a.apk +0x514`; `vm[0x540]` keeps
+  `bbb9eb6daed20ed0` / `015370f87525d57b`; state tail `id=0x872a21c
+  sel=0x31bb reader=0xf9372668`; builtin tail `id=0x9a0c0031 pc=0x40a73`.
+- Image: `/tmp/opencode/stack-strings-image.bin`, sha256
+  `89512e884c333b75fe9dfa1a062a009aab41e87c7bb68239079dd1e5292b064c`.
+  Five globals byte-identical to `long-unbox`; reader slots byte-identical
+  to pristine; diff vs pristine 79 ranges / 368 bytes; diff vs `long-unbox`
+  30 ranges / 56 bytes (ASLR pointer high bytes only).
+- Ring counters: builtin 3,548, state 39,572, vm 1,580, image write 2,209;
+  final `seq=5,127`. These are 151 builtins / 1,794 state events lower than
+  `long-unbox` (3,699 / 41,366, `seq=5,278`), so the VM path length varies
+  run to run. The final tails and image are identical; the counters are not
+  an invariant.
+- Verdict: the pre-registered observation is **CONFIRMED** — the VM reads
+  the fabricated stack text into native memory. The crash is unchanged, so
+  the text does not populate the reader slots by itself. The "ring positions
+  identical" clause did not hold; counters are path-length-dependent.
+- Findings updated: yes, in this commit.
