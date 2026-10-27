@@ -605,4 +605,74 @@ sleep 25
 adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/syscall-tail.log
 ```
 
-- Status: pre-registered; ready to run.
+- Status: run; verdict below.
+
+## Verdict log (continued)
+
+### syscall-tail (2026-10-27 21:50)
+
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 249` ms. Both packages
+  were force-stopped first and the log buffer was cleared.
+- Log: `tmp/cifi-apk/logs/verify/syscall-tail.log`, 19,146 lines, sha256
+  `304b6787e1bca798cde94afbc9de4b28fc276a960f81773647c6fc82483523e6`.
+  Crash image: `tmp/cifi-apk/logs/verify/syscall-tail-image.bin`, 282,603
+  bytes, sha256
+  `ede029895f614adc5a0980bcfda7f6eb0f7f02b9d483d1479cb10bea7ba29fba`.
+  Maps: `tmp/cifi-apk/logs/verify/syscall-tail-maps.txt`, 426,335 bytes,
+  sha256
+  `ea11ee397fbe1f659fd9da73cdbc5b18ecdd30849b51e04f0c9694c10e432bd4`.
+- Instrumentation check: the experiment line reports `variant=syscall-tail`,
+  `preload=true`, `trace=true`, `dumpVmImage=true`, `syscallTrace=true`; every
+  other experiment switch is off.
+- `ExecuteProgram`: `name=klB1wZSojiVvDvCN args=0x7ff9373ee0 argc=1
+  caller=0x79fb72d038`; `arg[0]=0x79fa071000`; `vm-args: [0]
+  java.lang.Long=0x79fa071000`. The maps line
+  `79fa071000-79fa565000 r--p 04eec000 ... split_config.arm64_v8a.apk` is the
+  first split-APK mapping, and `libunity.so`'s entry data starts at file
+  offset `0x4eec000` with first `LOAD` `p_offset=0`, `p_vaddr=0`. `arg[0]` is
+  therefore libunity's ELF load base, not an APK base or a ZIP view.
+- Builtin ring: `pos=11260`, last 32 entries dumped. All 32 entries have the
+  same `arg=0x7ff9372ba8`, `out=0x7ff9372ba4`, `img=0xb400007b1224d010`,
+  `len=0x44feb`, and the same six `args=` words:
+  `0000007a89767680,0000007ff9372b88,0042117b000000b0,b400007bb465c2d0,0000000000000000,0000007a89767830`.
+  Only `pc` and `id` vary. The six words are the shared dispatcher context
+  block, not per-builtin operands; the `0x31` entry's operand block is not in
+  the ring. The sixth word is zero, so the pre-registration's "six non-zero"
+  wording was not literal; that is a miss in the prediction's operand
+  expectation, not a falsification of the no-read hypothesis. Final entry:
+  `builtin[11259] id=0x9a0c0031 pc=0x40a73 lr=+0x6adc4`; the preceding five
+  ids are `0x0c`, `0x36`, `0x09`, `0x2d`, `0x5e`.
+- Syscall ring: `pos=181`, all 181 entries dumped. Counts: 7 `openat` (4
+  `/proc/self/maps`, 3 `/proc/self/status`), 6 `close`, 2 `fstat`, 2
+  `fstatfs`, 1 `readlinkat(/proc/self/fd/149)`, 146 `read` (3 status, 143
+  maps), 16 `clock_gettime`, 1 `getpid`. No `path=` ends in `.apk`, and no
+  read consumes an APK descriptor. Every file path in the ring is procfs.
+- Maps scan: 143 full 1,024-byte reads = 146,432 bytes (`0x23c00`), with no
+  short read and no EOF; it stops mid-line. The base APK CD mapping
+  (`r--s 074f5000`) starts at byte 316,554 (line 3263); the split CD mapping
+  (`r--s 06627000`) starts at byte 366,461 (line 3787). Both lie outside the
+  scanned prefix. After the last maps read come 16 `clock_gettime` calls in
+  pairs at vm `0x395ad/0x6d`, `0xf656/0x1b`, `0x158e1/0x92`, `0x1831/0x92`,
+  and `0x1f811/0x7e`; the last pair is at the five-global writer immediately
+  before the fault.
+- Crash: unchanged. `SIGSEGV` in `__memmove_aarch64_nt+140`; shadow frame
+  `#04 ... split_config.arm64_v8a.apk +0x514`; reader slots at `vm[0x540]`
+  are `bbb9eb6daed20ed0` / `015370f87525d57b`; state ring ends
+  `id=0x872a21c sel=0x31bb reader=0xf93727d8`; image diff 368 bytes in 79
+  ranges, both ZIP slots unchanged. The five globals are the baseline values
+  `0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`, `0x4d062af3`.
+- Verdict: **PROVEN** for the pre-registered hypothesis. The native VM's
+  syscall wrapper performs no `openat`/`read` of the game base or split APK
+  before the `0x31` reader, so the unresolved ZIP-view literals are not the
+  residue of a skipped native file read in this process. The file-backed
+  native-resolution branch is ruled out. The scope limit stands: the ring sees
+  only syscalls through `libpairipcore.so`'s wrapper, not Java-side
+  `VMRunner`/`libart` reads.
+- New facts, not part of the hypothesis: `arg[0]` is libunity's load base; the
+  builtin `args=` block is shared dispatcher context; the maps scanner stops
+  at 143 KB while the real CD mappings lie beyond it. The last is a lead, not
+  a proven gate: the earlier maps experiments changed content but never placed
+  the CD line inside the scanned window.
+- Next: static decode of the `0x31` handler/operand block and the preceding
+  state's `next`/`fallback` decision. The maps-window lead is recorded in the
+  findings; it must not be run without a separate pre-registration.

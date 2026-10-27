@@ -153,6 +153,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | state-router retry (`+0x32c20`) | Hook `rc=0`, zero hits (`router ring pos=0`, `eq=0`, `ne=0`); state `0x872a21c` branches directly to the reader at `+0x34d74 b.eq +0x3dc88`; the `0x31` builtin runs at `pc=0x40a73` immediately before the baseline crash. The router hash block is not on the reader path. |
 | Offset-0 base-APK mapping (`pairip_apk_zero_map`) | Mapping installed at the planned address (`0x7900000000`, `fixed=1`) and appears in klB's maps dump (`r--p 00000000`), yet the crash, reader slots, FNV input, state tail, and builtin tail are unchanged. Falsified: the missing offset-0 mapping is not the gate. |
 | Process-name spoof (`pairip_process_name`) | Main-thread `prctl` succeeded and the VM's `/proc/self/status` read saw `mesCompany.CIFI` (argv0/`__progname` were rewritten too), yet the FNV input, five globals, reader slots, state/builtin tails, crash signature, and image diff are byte-identical to baseline. Falsified: process identity is not the gate. |
+| syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -182,12 +183,20 @@ negatively too: `+0x32c20` never executes, and the dispatcher sends state
 game APK mapping is present and visible to the VM, but the same two slots are
 read. The `process-name-spoof` run answered the identity hypothesis
 negatively: the VM saw the stock task name and cmdline, yet the same two slots
-are read. The live part of question 2 is now the `0x31` builtin at bytecode pc
-`0x40a73`: what operand block it executes, and whether it computes the slots
-itself or expects an earlier writer that the hosted path skips. The
-environment-input branch is closed: maps content, uid/gid, process name and
-the offset-0 mapping are all independently changed and none affects the five
-globals or the crash. Do not repeat those three experiments.
+are read. The `syscall-tail` run answered the native file-read branch
+negatively: the VM's syscall wrapper never opens or reads either game APK
+before the `0x31` reader, so the ZIP-view literals are image/VM state rather
+than the residue of a skipped native read. It also showed that the builtin
+ring's `args=` words are shared dispatcher context, so the `0x31` operand
+block cannot be read from that ring. The live part of question 2 is now the
+`0x31` builtin at bytecode pc `0x40a73`: what operand block it executes, and
+whether it computes the slots itself or expects an earlier writer that the
+hosted path skips. The maps object feeding the five globals is read as a
+146,432-byte prefix; both real CD mappings start later in the maps file
+(316,554 and 366,461 bytes), but no experiment has yet placed a CD line inside
+the scanned window, so that is an untested lead, not a proven gate. The
+environment-input branch for maps content, uid/gid, process name and the
+offset-0 mapping remains closed; do not repeat those three experiments.
 
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
@@ -265,9 +274,11 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
    builtin and the `0x40a73` operand block.
 4. Ruled out by the fnv-input result: reproducing stock maps/status content
    for the hash input.
-5. Decode the `0x31` builtin semantics and the `0x40a73` operand block. In
-   progress: the `syscall-tail` run registered below captures the entry's
-   `args=` words and the crash-time raw-syscall tail.
+5. Decode the `0x31` builtin semantics and the `0x40a73` operand block. The
+   `syscall-tail` run proved the builtin ring's six `args=` words are shared
+   dispatcher context (identical for all 32 entries), so the operand block
+   must be recovered from the VM frame/bytecode or with a dedicated probe.
+   Also decode the preceding state's `next`/`fallback` decision.
 6. Only after a real mechanism is proven: apply a gated fix, build, reinstall
    with `android install`, run three cold launches, record results on #62-#64,
    then write the ADR for #60.
@@ -530,3 +541,56 @@ The `args=` words will be compared offline with the reader handler's operand
 block at `[sp+0x538]` and the five-global emulation. If the block points into
 the image, the next step is to decode that operand statically; if it points at
 a heap ZIP view, the next step is to find its writer.
+
+## syscall-tail result (2026-10-27 21:50)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen baseline plus `pairip_syscall_trace=true` ran one cold launch to the
+same crash. The pre-registered no-native-file-read hypothesis is **PROVEN**
+for the native wrapper.
+
+- Syscall ring: `pos=181`, all dumped. Seven `openat` calls (four
+  `/proc/self/maps`, three `/proc/self/status`), six `close`, two `fstat`, two
+  `fstatfs`, one `readlinkat(/proc/self/fd/149)`, 146 `read` calls (three
+  status, 143 maps), 16 `clock_gettime`, one `getpid`. No `.apk` path and no
+  read from an APK descriptor.
+- `ExecuteProgram`: `klB1wZSojiVvDvCN` is called with `argc=1`; `arg[0]` is
+  `java.lang.Long=0x79fa071000`. That address is the first split-APK mapping
+  (`r--p 04eec000`), and `libunity.so`'s entry data starts at file offset
+  `0x4eec000` with first `LOAD` `p_offset=0`, `p_vaddr=0`. It is libunity's
+  ELF load base, not an APK base or a ZIP view.
+- Builtin ring: `pos=11260`, last 32 entries dumped. Every entry has the same
+  `arg`, `out`, `img`, `len`, and six `args=` words; only `pc` and `id` vary.
+  The final entry is `id=0x9a0c0031 pc=0x40a73`, preceded by `0x0c`, `0x36`,
+  `0x09`, `0x2d`, `0x5e`. The shared block is dispatcher context, so the ring
+  does not expose the `0x31` operand block.
+- Crash and image: unchanged from baseline. The reader slots are still
+  `bbb9eb6daed20ed0` / `015370f87525d57b`, the state tail is still
+  `id=0x872a21c sel=0x31bb`, the five globals are still `0x534a6211`,
+  `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`, `0x4d062af3`, and the image diff
+  is 368 bytes in 79 ranges with both ZIP slots unchanged.
+
+### Maps-window lead
+
+The maps reader consumes exactly 143 full 1,024-byte chunks (146,432 bytes,
+`0x23c00`) and then stops mid-line; the maps file at crash time is 426,335
+bytes, so this is not EOF. The base APK's CD mapping (`r--s 074f5000`) starts
+at byte 316,554 (line 3263), and the split APK's CD mapping
+(`r--s 06627000`) starts at byte 366,461 (line 3787); both lie outside the
+scanned prefix.
+
+This is a lead, not a proven gate. `proc-sanitize`, `apk-zero-map` and
+`process-name-spoof` changed maps content, mapping presence and process
+identity but never moved a real CD line into the scanned window, so they do not
+test this mechanism. On the other hand, the five globals did not change under
+those content changes, so the `0x6d` parser may not consume the CD line at all.
+A causal test would have to place a real CD mapping (base offset `0x74f5000`
+or split offset `0x6627000`) at an address whose maps line falls inside the
+146,432-byte prefix, and predict a reader-slot change. No such run is
+pre-registered; do not treat the window as causal until it is.
+
+### Consequence
+
+The file-backed native-resolution branch is ruled out. The live target is the
+`0x31` operand block and the state that re-dispatches to it, not another file
+or maps input experiment.
