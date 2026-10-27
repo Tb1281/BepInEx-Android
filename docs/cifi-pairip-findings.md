@@ -1493,3 +1493,31 @@ walkthrough) plus the ring-field code in
   The append call at `+0x3e16c`/`+0x3e170` consumes the string view from
   the image slots. The append record (`src=0x7ff9372630 n=46 ...
   off=0x3e170`) is that call, not evidence about `w5`.
+
+## Pre-registered experiment (2026-10-28, identity-conjunction)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+- Purpose: test the untested conjunction of stock process name, a maps view
+  with no launcher-package line, and the game base APK mapped at offset 0.
+  The three facts were each tested alone and falsified, but if PairIP picks
+  the first APK identity in maps, every single change still leaves the
+  launcher as the winner.
+- Change: `pairip_process_name=true`, `pairip_proc_sanitize=true` with the
+  host package name added to the hidden substrings, and
+  `pairip_apk_zero_map=true`. No VM, image, or reader change.
+- Prediction: spoof success, a sanitized maps read, and the game zero-map
+  line inside the dump; then either the reader slots differ from
+  `bbb9eb6daed20ed0`/`015370f87525d57b` (and the crash changes), or the
+  state/builtin tail diverges. The five globals may remain stable.
+- Falsification: all three facts are active and visible, but the reader
+  slots, crash signature, and both tails stay byte-identical. Then the
+  identity conjunction is not the gate and the identity branch is closed.
+- Invalid run: any toggle inactive, spoof failure, no sanitized maps read,
+  no zero-map line, or the sanitized maps still shows
+  `com.bepinex.android.debug`.
+- Frozen diagnostic baseline: `pairip_preload=true`, `pairip_trace=true`,
+  `pairip_dump_vm=true`, `stackSpoof=true`, `contextSeed=true`.
+- Run key: `variant=identity-conjunction`, code commit `HEAD` with the
+  hidden-substring change, APK sha256 recorded after the build.
+- Status: pre-registered; ready to build and run.

@@ -1505,3 +1505,72 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/selector-gate.log
 - Findings updated: yes, in this commit: corrected the `0x81398368` entry
   claim and appended the static map to
   [`cifi-pairip-findings.md`](cifi-pairip-findings.md).
+
+## Planned run: identity-conjunction
+
+- Purpose: test the one identity combination that was never run: stock
+  process name **and** no launcher-package line in the VM's `/proc` maps
+  **and** the game base APK mapped at file offset 0. The earlier
+  `process-name-spoof`, `proc-sanitize`, and `apk-zero-map` runs each changed
+  one fact; they were never combined. If PairIP resolves the game by taking
+  the first APK identity it can see, each single change would leave the
+  launcher's APK as the winning candidate.
+- Static/observed basis: the `0x7e` handler opens `/proc/self/status` and
+  `/proc/self/cmdline`; the klB maps reader consumes a 146 KB prefix; the
+  hosted maps prefix exposes the launcher package path, while a stock launch
+  exposes only the game. The `proc-sanitize` policy already hides the
+  launcher's lib/data/APK directories by prefix, but its substring list did
+  not contain the launcher package name itself, so this run makes the
+  identity filter explicit and total.
+- Change from the frozen diagnostic baseline:
+  1. `pairip_process_name=true`;
+  2. `pairip_proc_sanitize=true`, with the launcher package name added to
+     `PairIpShield`'s hidden substrings;
+  3. `pairip_apk_zero_map=true`.
+  No VM, image, hook, or reader change.
+- Prediction: the log shows the spoof success
+  (`process name spoofed: comm=mesCompany.CIFI`), a sanitized maps read
+  (`proc: sanitized /proc/.../maps`), and the zero-map line
+  (`.../base.apk` at offset 0) inside the VM's maps dump. With the launcher
+  package line blanked, the only visible APK identity is the game's. Then
+  either the reader slots differ from `bbb9eb6daed20ed0` /
+  `015370f87525d57b` (and the crash changes or disappears), or the
+  state/builtin tail diverges before the append. A reader-slot or
+  crash-signature change is the primary signal; the five globals may stay
+  identical because their FNV input is static.
+- Invalid run: any of the three toggles is inactive in the variant line, the
+  spoof fails, no sanitized maps read is logged, the zero-map line is absent
+  from the dump, or the sanitized maps still contains
+  `com.bepinex.android.debug`. Then the conjunction was not actually
+  presented and the run is not a falsification.
+- Falsification: all three facts are active and visible, but the reader
+  slots, crash signature, state tail, and builtin tail are byte-identical to
+  the frozen baseline. Then the stock identity conjunction is not the gate;
+  do not repeat identity/maps experiments, and move to `contextSeed=false`
+  or the reader-source probe at `+0x3dc88`.
+- Frozen diagnostic baseline: `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `stackSpoof=true`,
+  `contextSeed=true`, debug launcher.
+- Run key: `variant=identity-conjunction`, code commit `HEAD` with the
+  hidden-substring change, APK sha256 recorded after the build; package
+  `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`).
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant identity-conjunction \
+  --ez pairip_process_name true --ez pairip_proc_sanitize true \
+  --ez pairip_apk_zero_map true
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/identity-conjunction.log
+```
+
+- Status: pre-registered; ready to build and run.

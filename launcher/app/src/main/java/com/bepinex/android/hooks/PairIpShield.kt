@@ -97,6 +97,10 @@ object PairIpShield {
                 "magisk",
                 "/data/local/tmp",
                 "/data/adb",
+                // The game's maps scan sees every launcher-owned path. Hide
+                // the launcher package itself so the hosted process presents
+                // the same APK/data identity as a stock game process.
+                hostContext.packageName,
             )
 
             nativeConfigure(prefixes, substrings, allowed)
