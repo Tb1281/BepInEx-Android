@@ -529,6 +529,16 @@ std::mutex g_apk_zero_map_mutex;
 void *g_apk_zero_map = nullptr;
 size_t g_apk_zero_map_size = 0;
 
+// Debug-only low mapping of the base APK's real central directory. The maps
+// reader consumes only a 143 KB prefix, while the real CD line sits past
+// 316 KB; this duplicate makes the `r--s 074f5000` line visible early.
+std::mutex g_apk_cd_map_mutex;
+void *g_apk_cd_map = nullptr;
+size_t g_apk_cd_map_size = 0;
+constexpr off_t kBaseApkCdOffset = 0x74f5000;
+constexpr size_t kBaseApkCdMapSize = 0x13000;
+constexpr size_t kBaseApkCdEocdOffset = 0x1281c;
+
 // Debug-only post-copy image dump. executeVM copies the Java byte[] into a
 // malloc'd buffer at +0x6a9c8 and only then starts decoding it. Comparing that
 // buffer with the APK asset shows every decryption/relocation the loader
@@ -1166,8 +1176,8 @@ bool MapApkCentralDirectory(const char *apk_path, uintptr_t *data,
 }
 
 // Logs the /proc/self/maps line that starts at `base`, so the experiment
-// record proves the offset-0 mapping is visible to PairIP's maps reader.
-bool LogMapRange(uintptr_t base) {
+// record proves the mapping is visible to PairIP's maps reader.
+bool LogMapRange(uintptr_t base, const char *tag) {
     FILE *maps = fopen("/proc/self/maps", "r");
     if (maps == nullptr) return false;
 
@@ -1180,7 +1190,7 @@ bool LogMapRange(uintptr_t base) {
         if (std::strncmp(line, prefix, prefix_len) != 0) continue;
         const size_t length = std::strlen(line);
         if (length > 0 && line[length - 1] == '\n') line[length - 1] = '\0';
-        LOGI("apk-zero-map: maps %s", line);
+        LOGI("%s: maps %s", tag, line);
         found = true;
         break;
     }
@@ -1240,8 +1250,76 @@ bool InstallApkZeroMap(const char *apk_path, std::string *error) {
          "path=%s",
          map, length, reinterpret_cast<void *>(kHint), fixed ? 1 : 0,
          fallback_errno, apk_path);
-    if (!LogMapRange(reinterpret_cast<uintptr_t>(map))) {
+    if (!LogMapRange(reinterpret_cast<uintptr_t>(map), "apk-zero-map")) {
         LOGI("apk-zero-map: range not found in /proc/self/maps");
+    }
+    return true;
+}
+
+// Debug-only: maps the installed base APK's real central directory at a low
+// address. The VM's /proc/self/maps reader consumes only the first 146,432
+// bytes; the real `r--s 074f5000` line starts at byte 316,554. This duplicate
+// puts an identical CD line inside the scanned prefix without touching the
+// APK. MAP_SHARED mirrors the real mapping's `r--s` flags.
+bool InstallApkCdMap(const char *apk_path, std::string *error) {
+    std::lock_guard<std::mutex> lock(g_apk_cd_map_mutex);
+    if (g_apk_cd_map != nullptr) return true;
+
+    const int fd = open(apk_path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        *error = "open failed";
+        return false;
+    }
+    struct stat status {};
+    if (fstat(fd, &status) != 0 || status.st_size <= 0) {
+        close(fd);
+        *error = "stat failed";
+        return false;
+    }
+    const size_t file_size = static_cast<size_t>(status.st_size);
+    // The real mapping is page-rounded and extends past EOF; only the CD and
+    // its EOCD have to be backed by the file.
+    const size_t required =
+        static_cast<size_t>(kBaseApkCdOffset) + kBaseApkCdEocdOffset + 22;
+    if (file_size < required) {
+        close(fd);
+        *error = "APK too small for the expected central directory";
+        return false;
+    }
+
+    constexpr uintptr_t kHint = 0x7900000000ULL;
+    void *map = mmap(reinterpret_cast<void *>(kHint), kBaseApkCdMapSize,
+                     PROT_READ, MAP_SHARED | MAP_FIXED_NOREPLACE, fd,
+                     kBaseApkCdOffset);
+    const int map_errno = errno;
+    close(fd);
+    if (map == MAP_FAILED) {
+        *error = "mmap failed: " + std::to_string(map_errno);
+        return false;
+    }
+
+    const auto *bytes = static_cast<const uint8_t *>(map);
+    if (std::memcmp(bytes, "PK\x01\x02", 4) != 0) {
+        munmap(map, kBaseApkCdMapSize);
+        *error = "central directory signature mismatch";
+        return false;
+    }
+    if (std::memcmp(bytes + kBaseApkCdEocdOffset, "PK\x05\x06", 4) != 0) {
+        munmap(map, kBaseApkCdMapSize);
+        *error = "end-of-central-directory signature mismatch";
+        return false;
+    }
+
+    g_apk_cd_map = map;
+    g_apk_cd_map_size = kBaseApkCdMapSize;
+    LOGI("apk-cd-map: base=%p size=%zu hint=%p fixed=1 offset=%#lx "
+         "eocd=%#lx path=%s",
+         map, kBaseApkCdMapSize, reinterpret_cast<void *>(kHint),
+         static_cast<unsigned long>(kBaseApkCdOffset),
+         static_cast<unsigned long>(kBaseApkCdOffset + kBaseApkCdEocdOffset),
+         apk_path);
+    if (!LogMapRange(reinterpret_cast<uintptr_t>(map), "apk-cd-map")) {
+        LOGI("apk-cd-map: range not found in /proc/self/maps");
     }
     return true;
 }
@@ -3098,6 +3176,17 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallApkZeroMap(
     const std::string path = JStringToUtf8(env, apk_path);
     std::string error;
     if (!InstallApkZeroMap(path.c_str(), &error)) {
+        return env->NewStringUTF(error.empty() ? "install failed" : error.c_str());
+    }
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_bepinex_android_hooks_PairIpShield_nativeInstallApkCdMap(
+    JNIEnv *env, jclass, jstring apk_path) {
+    const std::string path = JStringToUtf8(env, apk_path);
+    std::string error;
+    if (!InstallApkCdMap(path.c_str(), &error)) {
         return env->NewStringUTF(error.empty() ? "install failed" : error.c_str());
     }
     return nullptr;

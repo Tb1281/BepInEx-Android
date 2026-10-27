@@ -902,6 +902,25 @@ class BootstrapActivity : Activity() {
             }
         }
 
+        if (PairIpExperiment.apkCdMap) {
+            // Debug-only: the real base-APK central-directory mapping sits at
+            // byte 316,554 of /proc/self/maps, past the VM's 143 KB read
+            // window. Duplicate that exact range at the low hint before
+            // libmain runs so its `r--s 074f5000` line is scanned early.
+            val apkPath = gameContext.packageCodePath
+            val error = try {
+                PairIpShield.installApkCdMap(apkPath)
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP APK CD map: install threw", t)
+                t.message ?: "install threw"
+            }
+            if (error == null) {
+                BepInExLog.i("PairIP APK CD map: installed from $apkPath")
+            } else {
+                BepInExLog.e("PairIP APK CD map: $error")
+            }
+        }
+
         if (PairIpExperiment.skipKlb) {
             // Debug-only: neutralize libunity's DT_INIT klB program. The hook
             // must be installed after YTw (a code hook before it trips PairIP's

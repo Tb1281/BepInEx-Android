@@ -188,6 +188,21 @@ object PairIpShield {
     }
 
     /**
+     * Debug-only: map the installed game base APK's real central directory
+     * (`PK\x01\x02`) at the low hint used by the offset-0 diagnostic. klB's
+     * maps reader consumes only the first 146,432 bytes, while the real
+     * `r--s 074f5000` line starts at byte 316,554. This duplicate puts an
+     * identical CD line inside the scanned prefix without modifying the APK.
+     * Must be called before `libmain.so` starts klB.
+     *
+     * @return null on success, or a diagnostic message.
+     */
+    fun installApkCdMap(apkPath: String): String? {
+        ensureLoaded()
+        return nativeInstallApkCdMap(apkPath)
+    }
+
+    /**
      * Debug-only: writes the writable VM image that `executeVM` builds for klB
      * to `klB-image.bin` under [directory], before the interpreter starts.
      * Diffing it against the APK asset shows which bytes the loader decrypts
@@ -250,6 +265,7 @@ object PairIpShield {
     private external fun nativeInstallProcSanitizer(): Boolean
     private external fun nativeInstallFakeCentralDirectory(apkPath: String): String?
     private external fun nativeInstallApkZeroMap(apkPath: String): String?
+    private external fun nativeInstallApkCdMap(apkPath: String): String?
     private external fun nativeInstallVmDump(directory: String): String?
     private external fun nativeInstallSkipKlb(): Boolean
     private external fun nativeInstallReaderGuard(): Boolean
