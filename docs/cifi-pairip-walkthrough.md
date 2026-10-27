@@ -1629,3 +1629,71 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/identity-conjunction.log
   crash, and tails are unchanged. The identity conjunction is not the gate;
   do not repeat maps/status/name experiments.
 - Findings updated: yes, in this commit.
+
+## Planned run: stock-bound-context
+
+Run key: `variant=stock-bound-context`, code commit `d303d6b`, APK sha256
+`f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+Idempotency check: searched the walkthrough and findings for
+`stock-bound-context`, `stock_bound`, and `stockBound`; no prior entry or
+verdict. The `gameApplication` handoff claim is a separate variable (the
+Application object and its `attachBaseContext` checks, not the
+`InitContextProvider` context) and has no run key in this walkthrough.
+
+- Hypothesis: in a stock launch the first `VMRunner.invoke` (YTw) runs from
+  `CoreComponentFactory`'s static initializer while `VMRunner.context` is
+  still null, so `InitContextProvider.tryToCreateContextForBindingApp()`
+  builds the app `ContextImpl` from the game `LoadedApk`. The frozen baseline
+  instead seeds `VMRunner.context` with a `createPackageContext` game
+  `ContextImpl`. If the exact context object is the hosted discriminator, the
+  stock-bound object changes the VM path; if it is not, the reader slots and
+  crash are unchanged.
+- Change from the frozen diagnostic baseline: add
+  `pairip_stock_bound=true`. `pairip_preload=true` already forces
+  `lateHooks=true`, so the deferred factory path prints
+  `PairIP experiment: stock-bound late-hooks path`, points
+  `ActivityThread.mBoundApplication.info` at the game `LoadedApk`, does not
+  call `seedVmRunner`, and restores the field after the factory load. No VM,
+  image, hook, or reader change.
+- Prediction: the variant line shows `stockBound=true` and `contextSeed=true`;
+  the log shows `PairIP experiment: stock-bound late-hooks path`, then
+  `PairIP: stock-bound factory started for com.OctocubeGamesCompany.CIFI`.
+  The context is therefore the `InitContextProvider` app context for the game
+  `LoadedApk` (inferred from the path: no `seedVmRunner`, and the field is
+  pointed at `loadedApk` for the `Class.forName`). Then either the reader
+  slots differ from `bbb9eb6daed20ed0` / `015370f87525d57b` (and the crash or
+  tails change), or they are byte-identical to the frozen baseline.
+- Invalid run: `stockBound=false` in the variant line, `lateHooks=false`,
+  `contextSeed=false`, the stock-bound path line is absent, the factory load
+  fails, or the run does not reach the `0x31` reader / baseline crash.
+- Falsification: the stock-bound path is active, but the reader slots, append
+  record, `vm[0x540]`, `vm[0x7f8]`, state tail, builtin tail, and crash
+  signature are byte-identical to the frozen baseline. Then the context object
+  type is not the gate; close the context branch and move to the
+  Application-as-process variable or the reader-source probe.
+- Frozen diagnostic baseline: `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `stackSpoof=true`,
+  `contextSeed=true`, debug launcher.
+- Starting state: branch `test/feat-cifi` at `d303d6b`, tree clean; installed
+  launcher debug APK has `versionCode=1`, `lastUpdateTime=2026-10-28
+  01:41:10`, after the local build at 01:40:42 with sha256
+  `f4f71ba2...`, and no code commit has touched the launcher since. The
+  install is therefore identical to the identity-conjunction run and is
+  skipped; the game APK is untouched.
+- Command:
+
+```bash
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant stock-bound-context \
+  --ez pairip_stock_bound true
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stock-bound-context.log
+```
+
+- Status: pre-registered; ready to run.
