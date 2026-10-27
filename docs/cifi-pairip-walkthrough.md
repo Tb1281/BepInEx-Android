@@ -2082,3 +2082,66 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/reader-source-trace.log
 ```
 
 - Status: pre-registered; ready to install and run.
+
+### 2026-10-28 02:24 — reader-source-trace: reader consumes unrelocated image slots
+
+- Key: `variant=reader-source-trace`, code commit `9be04e4`, APK sha256
+  `5be5c199376dc5f4d0849a6bd88593429e78d1a2a00a86734b76acf18a124428`.
+  The installed base APK hashes to the same value (`adb shell sha256sum` on
+  the installed `base.apk`), `versionCode=1`,
+  `lastUpdateTime=2026-10-28 02:23:47`, after the 02:22:40 build. The game
+  APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 205` ms, one cold
+  launch (pid 24061). Both packages were force-stopped and logcat cleared
+  first. Log `tmp/cifi-apk/logs/verify/reader-source-trace.log`, 8,820
+  lines, sha256
+  `5c1897538124867bf3c57e6a5ee5331545147ab69d5b506f7a09b6d350f0302b`.
+- Variant line: `variant=reader-source-trace ... stackSpoof=true
+  contextSeed=true lateHooks=true preload=true trace=true
+  dumpVmImage=true`; every other experiment switch is false.
+- Hook: `trace: reader-source hook rc=0 target=0x7a8a782034
+  trampoline=0x7e1b4ef2c0`.
+- Probe (single line):
+
+```text
+reader-source: ctx=0x7ff9372b88 image=0xb400007b1224d010 off_data=0x3f874 off_size=0x1ba5c data=bbb9eb6daed20ed0 size=015370f87525d57b data_ok=1 size_ok=1 ctxw=b400007b1224d010,00040aab00044feb,0000000000000000,00022b395129b68c ctx_ok=1 desc=0x7ff9372ba8 descw=0000007a8a7d7680,0000007ff9372b88,0042117b000000b0,b400007bb465c2d0 desc_ok=1 index=0xf93727d8 entry_ok=0 entry=00000000,00000000,00000000,00000000 fetch=0x1f811 fetch_ok=1 fetch_bytes=e1daf3c012020400 lr=0x690 off=0
+```
+
+- Confirmations: `x10` is the mapped VM image base; the offsets are the
+  literal `0x3f874` and `0x1ba5c`; the loaded words are exactly the pristine
+  asset ciphertext; `descw[2] & 0xffffffff = 0xb0` is the descriptor index;
+  and the image-write ring (`pos=2209`) contains **zero** entries at either
+  offset. Neither slot is in the known 368-byte/79-range variable set.
+- Probe-field caveat: `index=0xf93727d8` is `[sp+0x540]` (w29), i.e. the
+  reader pointer, not the descriptor index; the descriptor index is the low
+  word of `descw[2]`. `entry_ok=0` follows from reading
+  `image+0xf93727d8`, not from an invalid `0xb0` entry. `fetch=0x1f811` is
+  the last dispatcher fetch, not the nested `0x31` pc; the builtin row still
+  carries `pc=0x40a73` (`vm[0x780]` =
+  `... b400007b1224d010 00040a7300044feb ...`). The pre-registration named
+  `index=0xb0` and `fetch=0x40a73` as if the shim printed those slots; those
+  two labels were mis-specified. The pre-registered falsification criteria
+  (image base, `w8`/`w9`, loaded words, descriptor index, ring) all pass, so
+  this is a labeling defect, not an unmet mechanism prediction.
+- Invariants: reader slots `bbb9eb6daed20ed0` / `015370f87525d57b`; append
+  `src=0x7ff93727a0 n=46 dst=0x7ff9372808 lr=0x7a8a782170 off=0x3e170
+  fields=0000007a8a7d7ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` = `00000000f93727d8`/`0000007ff9372869`;
+  `vm[0x7c0]` ends in `0x31bb`; final state
+  `state[130816] id=0x872a21c sel=0x31bb reader=0xf93727d8`; builtin tail
+  `0x9a0c0031 pc=0x40a73`.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140` (`#03`), frame
+  `#04` `split_config.arm64_v8a.apk (+0)`, at 02:24:01.606; the process
+  exited by signal 11 at 02:24:01.633.
+- Verdict: the reader consumes the unrelocated image slots on the hosted
+  path. There is no earlier writer and no alternate buffer: `+0x3e030` loads
+  the two words that the asset stores as ciphertext. The remaining question
+  is why the `0x31` handler is entered with descriptor `0xb0` against those
+  slots, not which buffer supplies them.
+- New lead: the interpreter frame at `vm[0x740]` is a table of
+  `{ctx, tag|offset}` entries and contains both failing offsets:
+  `0x750=0x7ff9372b88`, `0x758=0x6018f1f30003f874`,
+  `0x760=0x7ff9372b88`, `0x768=0x1e9de6930001ba5c`,
+  `0x770=0x7ff9372b88`, `0x778=0x000011c200019b5e`. The descriptor index
+  `0xb0` also appears at `vm[0x640]` as `0x0042117b000000b0`.
+- Findings updated: yes, in this commit.

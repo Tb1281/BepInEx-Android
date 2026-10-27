@@ -1730,3 +1730,83 @@ license-state fork is closed.
   reader's `w8`/`w9` pair, or why the `0x31` handler runs against the
   pristine slots. Do not repeat identity/maps/context/application/license
   experiments.
+
+## reader-source result (2026-10-28 02:24)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen diagnostic baseline plus one observation-only hook at
+`+0x3e034` ran one cold launch. The reader-source hypothesis is
+**CONFIRMED**: the failing reader consumes the unrelocated image slots.
+
+- Build/install: no build; APK sha256
+  `5be5c199376dc5f4d0849a6bd88593429e78d1a2a00a86734b76acf18a124428`.
+  The installed base APK has the same sha256, `versionCode=1`,
+  `lastUpdateTime=2026-10-28 02:23:47`. The game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 205` ms, one
+  launch only (pid 24061). Log
+  `tmp/cifi-apk/logs/verify/reader-source-trace.log`, 8,820 lines, sha256
+  `5c1897538124867bf3c57e6a5ee5331545147ab69d5b506f7a09b6d350f0302b`.
+- At the load: `x10=0xb400007b1224d010` is the mapped VM image base,
+  `w8=0x3f874`, `w9=0x1ba5c`, `image[w8]=bbb9eb6daed20ed0`,
+  `image[w9]=015370f87525d57b`. Both are exactly the pristine asset words.
+  `descw[2] & 0xffffffff = 0xb0` is the descriptor index. The image-write
+  ring (`pos=2209`) has no entry at either offset, and neither slot is in
+  the known 368-byte/79-range variable set.
+- Probe-field caveat: the logged `index=0xf93727d8` is `[sp+0x540]` (w29),
+  the reader pointer, not the descriptor index; the logged `fetch=0x1f811`
+  is the last dispatcher fetch, not the nested `0x31` pc. `entry_ok=0` is a
+  consequence of reading `image+0xf93727d8`, not of an invalid `0xb0`
+  entry. The pre-registration's `index=0xb0` / `fetch=0x40a73` referred to
+  fields the shim does not print; the falsification criteria themselves all
+  pass.
+- Invariants: reader slots `bbb9eb6daed20ed0` / `015370f87525d57b`; append
+  `src=0x7ff93727a0 n=46 ... off=0x3e170
+  fields=0000007a8a7d7ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` = `00000000f93727d8`/`0000007ff9372869`;
+  `vm[0x7c0]` ends in `0x31bb`; final state `id=0x872a21c sel=0x31bb
+  reader=0xf93727d8`; builtin tail `0x9a0c0031`/`0x40a73`.
+- Crash: unchanged, signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `split_config.arm64_v8a.apk (+0)`, at 02:24:01.606; process exit by signal
+  11 at 02:24:01.633.
+- Verdict: there is no alternate buffer and no earlier writer on the hosted
+  path. The reader is reading the asset's own ciphertext at literal offsets,
+  so the hosted/bare difference must be upstream of the reader: either a
+  different descriptor/opcode path reaches `0x31`, or the state that makes
+  `0x31` legal on a bare launch was never established. Do not re-probe the
+  reader source or repeat identity/maps/context/application/license
+  experiments.
+
+## Open lead: tagged offsets at `vm[0x740]` (2026-10-28)
+
+The crash-time interpreter frame holds a table of `{ctx, tag|offset}`
+entries, and it contains both failing offsets:
+
+```
+vm[0x750] 0x0000007ff9372b88  ctx
+vm[0x758] 0x6018f1f30003f874  tag=0x6018f1f3 offset=0x3f874
+vm[0x760] 0x0000007ff9372b88  ctx
+vm[0x768] 0x1e9de6930001ba5c  tag=0x1e9de693 offset=0x1ba5c
+vm[0x770] 0x0000007ff9372b88  ctx
+vm[0x778] 0x000011c200019b5e  tag=0x000011c2 offset=0x19b5e
+```
+
+The descriptor index `0xb0` also appears at `vm[0x640]` as
+`0x0042117b000000b0`. The low words are the literal offsets the reader later
+loads; the high words look like per-entry tags/cookies. Open questions, in
+priority order:
+
+1. Where are `vm[0x750..0x778]` written, and by which code path? A writer in
+   the hosted path that stores `{ctx, tag|offset}` would show whether the
+   table is built from the descriptor or from a separate relocation list.
+2. How does the `0x31` handler select its two offsets? If it reads them from
+   this table, the tags are selector state; if it recomputes them from the
+   descriptor, the table is downstream and not the gate.
+3. What do `0x6018f1f3`, `0x1e9de693`, and `0x000011c2` mean? Test
+   candidates: a type/length tag, an obfuscated index, or an integrity
+   cookie checked before the load. Do not guess a meaning without a writer
+   or a consumer.
+4. Characterize `+0x702e4`: `IsSameObject([0x982e8], x20)` is `(0,0)->1` in
+   the hosted run and branches to `+0x70324`. Determine what a non-null
+   first argument would do on a bare launch and whether that path avoids the
+   `0x31` reader. This is a branch question, not a repeat of the closed
+   JNI/context experiments.
