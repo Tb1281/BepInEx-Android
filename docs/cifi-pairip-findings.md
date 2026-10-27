@@ -35,8 +35,9 @@ The cross-device continuation snapshot is
 
 ## Crash signature
 
-- SIGSEGV in `__memmove_aarch64_nt+144`, fault address shaped like
-  `0xbbb9eb6daed20ed0`, return address `libpairipcore.so+0x8d514`.
+- SIGSEGV in `__memmove_aarch64_nt+140`, fault address shaped like
+  `0xbbb9eb6daed20ed0`; the call is `libpairipcore.so+0x8d514` and the return
+  address is `libpairipcore.so+0x8d518`.
 - The failing read is a 46-byte ZIP central-directory record. `+0x8d460` is a
   stream/reader vtable method (`vtable 0x93ce8`, slot `+0x10`), not
   `std::string::append`. The reader object is laid out as
@@ -81,14 +82,15 @@ built:
 | --- | --- | --- |
 | `0x333eb` | `0x7e` | one combined update of all five |
 | `0x395ad` | `0x6d` | one combined update of all five |
-| `0xf656` | `0x1b` | per-byte loop; counter `0x266f2` runs `0x46` -> 0 |
+| `0xf656` | `0x1b` | per-byte FNV input loop; counter `0x266f2` runs `0x100` -> 0 then `0xa3` -> 0 (419 calls) |
 | `0x158e1` | `0x92` | 16-iteration block loop (`0x2ee6`) |
 | `0x1831` | `0x92` | 16-iteration block loop (`0x33358`) |
 | `0x1f811` | `0x7e` | in progress at the crash; produces the final values |
 
-The `0x1b`/`0x92` shape is a five-word hash state over a 70-byte input (two
-64-byte blocks after padding), i.e. SHA-1/RIPEMD-160-shaped. The input source
-is not identified yet. That is the fork:
+The `0x1b`/`0x92` shape is a five-word hash state. The runtime write ring
+records 419 one-byte updates at `0xf656` (counter `0x266f2`: `0x100` -> 0, then
+`0xa3` -> 0); the earlier 70-byte estimate is not supported by that capture.
+The input source is not identified yet. That is the fork:
 
 - If the input is static image data, a stock launch computes the same five
   globals. Stock must then initialize/relocate the selected slots or take a
@@ -124,7 +126,7 @@ cannot satisfy the reader without a runtime write or a different branch.
 | `memcmp` needle trace | Closed: the captured comparisons are the shield logger's own tag checks, not a klB maps needle. |
 | Five-global emulation | Reproduces `0x3f874`/`0x1ba5c` from the crash image and `0x31c1b`/`0x3b302` from the pristine asset. |
 | Cross-run global comparison | The five globals reach byte-identical values in three hosted runs while ASLR pointers differ. |
-| Image-watch (read-only first page) | Instrumentation added; result not yet recorded. |
+| Image-watch (read-only first page) | One u32 increment at `image+0xae3` from `+0x5f714`; no write to either ZIP slot. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -132,9 +134,9 @@ path valid and it must not become the fix.
 
 ## Open questions
 
-1. What 70-byte input does the five-word hash consume at `0xf656`? Is it
-   static image data, or maps/status/path bytes? The answer decides whether
-   stock computes the same `w8`/`w9`.
+1. What input does the five-word hash consume at `0xf656`? Is it static image
+   data, or maps/status/path bytes? The answer decides whether stock computes
+   the same `w8`/`w9`.
 2. If the input is static, why does stock not hit the invalid slots: does it
    write/relocate the selected slots, or does the state router take an earlier
    branch and never issue the `0x31` call?
@@ -144,6 +146,28 @@ path valid and it must not become the fix.
    interpretation.
 4. Is class-trace #9 (`0xf0df/0x30`) a fake-CD artifact or a genuine decoy path
    that stock also takes?
+
+## Pre-registered experiment (2026-10-27, fnv-input)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The next step is one diagnostic run against the frozen baseline
+(`pairip_preload=true`, `pairip_trace=true`, `pairip_dump_vm=true`, debug
+launcher). It adds one probe, hooked at `libpairipcore.so+0x7fddc` (the
+`add x11, x9, w11, uxtw` immediately before the FNV-1 loop at `+0x7fde0` in the
+`0x1b` handler). The probe is compiled in but only active while
+`pairip_trace` is set; it adds no extra.
+
+- Hypothesis: the `0xf656/0x1b` hash input is static image data.
+- Prediction: every probe call with VM fetch `0xf656` has `x11` inside
+  `[image, image+0x44feb]`, and the accumulated bytes match the pristine `klB`
+  asset at the recorded offsets.
+- Falsification: any call has `x11` outside that range, or the bytes do not
+  match the asset, or the observed input is not the 419-byte image loop. In
+  that case the input is environment-fed and the fork moves to reproducing
+  stock maps/status content.
+- Verdict: not yet recorded; record it in the walkthrough and here only after
+  the run.
 
 ## Reproduction
 
@@ -169,8 +193,9 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
 
 ## Next steps
 
-1. Decode the `0x1b`/`0x92` handlers (byte source and block schedule) and log
-   the 70-byte input at `0xf656`. Decide static vs maps/status/path-derived.
+1. Run the pre-registered `fnv-input` probe at `+0x7fddc` to capture the
+   `0xf656/0x1b` FNV input; decide static vs maps/status/path-derived. Decode
+   the `0x1b`/`0x92` block schedule if the probe is inconclusive.
 2. If static: prove a stock launch computes the same five globals, then find
    the earlier branch stock takes. Decode the `0x31` state selection and the
    preceding state's `next`/`fallback` decision.
