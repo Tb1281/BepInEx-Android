@@ -197,4 +197,79 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true
 ```
 
-- Status: pre-registered; not yet run.
+- Status: completed; verdict appended below.
+
+## Verdict log (continued)
+
+### 2026-10-27 16:33 — hash-gate: FALSIFIED (the hash block is not on the reader path)
+
+- Key: `variant=hash-gate`, code commit `c3da43b`, APK sha256
+  `c839417723f1f04009504a67d8ac31aee04c70755aaa72ef8f81d086915f42af`
+  (115,103,986 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`). Installed 16:32:25.
+- Command: `OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25
+  tmp/cifi-apk/run_variant.sh hash-gate --ez pairip_preload true
+  --ez pairip_trace true --ez pairip_dump_vm true`.
+- Window: 2026-10-27T16:32:52+09:00 to 16:33:20+09:00 (28 s).
+- Hooks: `hash-input hook rc=0 target=+0x3dc0c`, `hash-check hook rc=0
+  target=+0x3dc50`; both trampolines non-null. Target addresses resolve to
+  `base 0x7a90d58000 + 0x3dc0c` and `+ 0x3dc50`.
+- Probe: `trace: hash ring pos=0 dumping last 0`; no `hash:` lines. Neither
+  site executed during the run.
+- State path: 130,225 state entries; the last entry is
+  `state[130224] id=0x872a21c sel=0x31bb reader=0xf93727d8`, immediately after
+  `state[130223] id=0x629d5907 sel=0x31bb`. The `0x31` builtin
+  `id=0x9a0c0031 pc=0x40a73` is the last builtin ring entry.
+- Disassembly check: the state `0x872a21c` dispatch is
+  `+0x34d74 b.eq +0x3dc88`; it enters the reader builder directly. The
+  `+0x3dc08..+0x3dc84` hash block is the tail of a different handler (it ends
+  `+0x3dc84 b +0x51f44`) and is skipped for this state. The earlier
+  "hash check before the reader" attribution was a fall-through assumption,
+  not a real control-flow edge.
+- Crash: SIGSEGV at 16:32:57.907 in `__memmove_aarch64_nt+140`, caller
+  `+0x8d514`; unchanged baseline signature.
+- Verdict: the pre-registered falsification triggered ("the
+  `+0x3dc0c`/`+0x3dc50` sites never run"). The `+0x3dc08` name-hash is not
+  the hosted-only gate. The selector `0x31bb` is produced by the main state
+  router hash at `+0x32c20..+0x32c54`, which is the next probe target; the
+  `+0x3dc08` block is ruled out for this path.
+
+## Planned run: state-router
+
+- Purpose: test whether the main state-router hash at `+0x32c20..+0x32c54`
+  selects the `0x31bb`/reader path, and identify the table entry, comparison
+  result, and candidate selectors (`w24`/`w25`) that produced it. This is the
+  live part of open question 2 after the `+0x3dc08` block was ruled out.
+- Hypothesis: the router comparison at `+0x32c44` (`cmp x8, w22` followed by
+  `+0x32c48 csel w8, w24, w25, eq`) chooses between a pass and a fallback
+  selector; the hosted run takes the side that yields `sel=0x31bb` and the
+  reader state, while the other side is the non-reader path.
+- Prediction: the probe records at least one router transition with the table
+  index, table base, loaded entry, computed value, expected `0x0cd47edb`,
+  `w24`/`w25`, the `eq` flag, and the resulting `w5`. The last transitions
+  before `state[..] id=0x872a21c` identify the side that produced `0x31bb`.
+  A first-`ne` sample is kept even if the last 64 transitions are all `eq`.
+- Falsification: no router transition selects the reader side; the comparison
+  is always `eq` with a static table entry and the selected candidate is
+  constant (the router is a fixed dispatch, not the hosted gate); or the
+  router sites never execute. In any of those cases the router hash is not
+  the gate and the fork moves to the `0x31` builtin's operand block at
+  `0x40a73` and the state that re-dispatches to `0x872a21c`.
+- Probe: hook `+0x32c2c` (`ldrsw x8, [x8, w9, uxtw]`, the table load) and
+  `+0x32c48` (`csel w8, w24, w25, eq`, the selector pick). Both are non-branch
+  sites. Tail through `x10` at the load (dead after the quotient at
+  `+0x32c24`) and `x9` at the csel (dead after `+0x32c40`). A 64-entry ring
+  plus eq/ne counters and one first-`ne` sample are dumped from the
+  failing-read path with the other rings.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Command:
+
+```bash
+OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
+  tmp/cifi-apk/run_variant.sh state-router \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true
+```
+
+- Status: pre-registered; key and APK sha256 appended after the build, before
+  the run.

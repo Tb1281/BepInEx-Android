@@ -118,6 +118,15 @@ Emulating `+0x3dc88..+0x3e030` over the image reproduces the runtime result:
 The pristine pair also points at non-pointer asset bytes, so the shipped `klB`
 cannot satisfy the reader without a runtime write or a different branch.
 
+The reader state is entered directly: the dispatcher's
+`+0x34d74 b.eq +0x3dc88` jumps to the reader body, so the
+`+0x3dc08..+0x3dc84` hash block is not a fall-through predecessor. That block
+belongs to a different handler and ends with `+0x3dc84 b +0x51f44`. The
+hosted-run `hash-gate` probe installed hooks at `+0x3dc0c` and `+0x3dc50` and
+recorded zero hits (`hash ring pos=0`), confirming the block is skipped on the
+crash path. The selector `sel=0x31bb` is produced by the main state-router
+hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
+
 ## Experiments and results
 
 | Experiment | Result |
@@ -133,6 +142,7 @@ cannot satisfy the reader without a runtime write or a different branch.
 | Cross-run global comparison | The five globals reach byte-identical values in three hosted runs while ASLR pointers differ. |
 | Image-watch (read-only first page) | One u32 increment at `image+0xae3` from `+0x5f714`; no write to either ZIP slot. |
 | fnv-input probe (`+0x7fddc`) | 419 calls, `len=1`, all at `image+0x24f47`, byte `0x99`, checksum `ba6cb68e62faac68`; pristine asset and crash image match at that offset; baseline crash unchanged. The input is static image data. |
+| hash-gate probe (`+0x3dc0c`, `+0x3dc50`) | Both hooks `rc=0`, zero hits (`hash ring pos=0`); state `0x872a21c` reaches the reader via `+0x34d74 b.eq +0x3dc88`; the `+0x3dc08` hash block is a different handler's tail. Baseline crash unchanged. The block is not the hosted gate. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -152,6 +162,12 @@ path valid and it must not become the fix.
    interpretation.
 4. Is class-trace #9 (`0xf0df/0x30`) a fake-CD artifact or a genuine decoy path
    that stock also takes?
+
+The `hash-gate` run answered the "name-hash before the reader" branch
+negatively: the `+0x3dc08` block is skipped, so it cannot be the hosted-only
+gate. The live part of question 2 is now the main state-router hash at
+`+0x32c20..+0x32c54`, which produces `sel=0x31bb`; the next experiment targets
+its comparison and candidates.
 
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
@@ -230,3 +246,28 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
 6. Before merge: remove the debug experiment switches,
    `pairip_allow_nondebug_experiments`, the Frida gadget/DiagnosticApp/sleeps,
    and the stale `pairip_desc_trace`/`pairip_branch_trace` declarations.
+
+## Pre-registered experiment (2026-10-27, state-router)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The next step is one diagnostic run against the frozen baseline
+(`pairip_preload=true`, `pairip_trace=true`, `pairip_dump_vm=true`, debug
+launcher). It adds one probe at the main state-router hash, which the
+`hash-gate` run identified as the producer of `sel=0x31bb`.
+
+- Hypothesis: the comparison at `+0x32c44` (`cmp x8, w22`) and the
+  `+0x32c48 csel w8, w24, w25, eq` choose between a pass and a fallback
+  selector; the hosted run takes the side that yields `sel=0x31bb` and the
+  reader state, while the other side is the non-reader path.
+- Prediction: the probe records the table index, table base, loaded entry,
+  computed value, expected `0x0cd47edb`, `w24`/`w25`, the `eq` flag, and the
+  resulting `w5`; the last transitions before `state 0x872a21c` identify the
+  side that produced `0x31bb`. A first-`ne` sample survives even if the last
+  64 transitions are all `eq`.
+- Falsification: no router transition selects the reader side; the comparison
+  is always `eq` with a static table entry and a constant selected candidate
+  (a fixed dispatch, not the hosted gate); or the `+0x32c2c`/`+0x32c48` sites
+  never execute. In any of those cases the router hash is not the gate and
+  the fork moves to the `0x31` operand block at `0x40a73` and the state that
+  re-dispatches to `0x872a21c`.
