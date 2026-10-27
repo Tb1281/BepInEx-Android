@@ -265,7 +265,9 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
    builtin and the `0x40a73` operand block.
 4. Ruled out by the fnv-input result: reproducing stock maps/status content
    for the hash input.
-5. Decode the `0x31` builtin semantics and the `0x40a73` operand block.
+5. Decode the `0x31` builtin semantics and the `0x40a73` operand block. In
+   progress: the `syscall-tail` run registered below captures the entry's
+   `args=` words and the crash-time raw-syscall tail.
 6. Only after a real mechanism is proven: apply a gated fix, build, reinstall
    with `android install`, run three cold launches, record results on #62-#64,
    then write the ADR for #60.
@@ -497,3 +499,34 @@ globals differ, the reader pair differs; if they are the same, stock must
 patch the selected image slots or take a different branch. The next
 diagnostic should discriminate those cases rather than continue chasing the
 tag.
+
+## Pre-registered experiment (2026-10-27, syscall-tail)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The 18:26 process-name-spoof run did reach the crash ring dump (its
+`klB-image-at-crash.bin` and maps were recovered from the device), but the
+logcat buffer rolled over before capture. The `args=` words of the `0x31`
+entry and the crash-time syscall tail therefore exist in no surviving log, and
+no run under this key has combined `pairip_dump_vm` with
+`pairip_syscall_trace`. The next run is the frozen baseline plus that one
+instrumentation toggle.
+
+- Hypothesis: `libpairipcore.so`'s raw syscall wrapper never opens the game
+  `base.apk` or `split_config.arm64_v8a.apk` before the `0x31` reader, so the
+  unresolved ZIP-view literals are not the residue of a skipped native file
+  read in this process.
+- Prediction: the crash-time builtin ring ends with `id=0x9a0c0031
+  pc=0x40a73` and records six `args=` words; the syscall tail's file opens are
+  `/proc/self/status` and `/proc/self/maps` only, with no `path=` ending in
+  `.apk`; the crash and reader slots stay at the frozen values.
+- Falsification: any `openat` (`n=56`) whose recorded path is either game APK
+  before the reader. A changed crash signature or reader-slot pair makes the
+  run inconclusive because the added trace perturbed the path.
+- Scope: the ring sees only syscalls issued through the VM's wrapper, not
+  Java-side `VMRunner`/`libart` reads.
+
+The `args=` words will be compared offline with the reader handler's operand
+block at `[sp+0x538]` and the five-global emulation. If the block points into
+the image, the next step is to decode that operand statically; if it points at
+a heap ZIP view, the next step is to find its writer.

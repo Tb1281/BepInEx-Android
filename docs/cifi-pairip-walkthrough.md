@@ -544,3 +544,65 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   branch/state before the `0x31` reader, not the hash input. Do not repeat
   maps/status/name experiments; the next fork is the `0x31` operand block and
   the preceding state's `next`/`fallback` decision.
+
+## Planned run: syscall-tail
+
+- Purpose: capture the crash-time builtin ring with the six `args=` words of
+  the `0x31` entry at `pc=0x40a73`, and the raw-syscall tail, to decide whether
+  the hosted path attempts a file-backed ZIP-view resolution before the reader.
+  The 18:26 process-name-spoof log that contained these ring dumps was lost
+  when the logcat buffer rolled over; the device image and maps were recovered,
+  but the `args=` fields and syscall tail were not.
+- Hypothesis: under the frozen hosted baseline, `libpairipcore.so`'s raw
+  syscall wrapper performs no `openat`/`read` of the game `base.apk` or
+  `split_config.arm64_v8a.apk` before the `0x31` reader. The two ZIP-view
+  literals are therefore expected from image/VM state, not from a file read
+  that the hosted path skipped.
+- Change from the frozen baseline: add `pairip_syscall_trace=true` and the
+  inert label `pairip_variant=syscall-tail`. No environment input, no code
+  patch, no reader seed, no fake CD.
+- Prediction: the log contains `trace: builtin ring pos=... dumping last 32`
+  with the final entry `id=0x9a0c0031 pc=0x40a73` and six non-zero `args=`
+  words, and `trace: syscall ring pos=... dumping last 256` whose file opens
+  are only `/proc/self/status` and `/proc/self/maps` (plus non-file syscalls
+  such as `clock_gettime`). No `path=` ends in `.apk`. The crash stays
+  `__memmove_aarch64_nt+140` / `+0x8d514`, and the reader slots stay
+  `0xbbb9eb6daed20ed0` / `0x015370f87525d57b`.
+- Discriminator: if the tail confirms no APK open, the `0x31` operand block is
+  the next static target and the file-backed-resolution branch is ruled out.
+  If an `openat` of either game APK appears, the native VM did attempt a
+  file-backed resolution; that call site becomes the next probe.
+- Scope limit: the ring covers only syscalls issued through
+  `libpairipcore.so`'s wrapper. It cannot see Java-side reads in `VMRunner` or
+  `libart`; a negative result rules out the native VM path only.
+- Invalid run: no `trace: builtin ring` line, no `0x31` entry in the ring, or
+  no `trace: syscall ring` line (syscall trace not installed). Then the run
+  does not test either branch.
+- Falsification: an `openat` (`n=56`) with `path=` containing `base.apk` or
+  `split_config.arm64_v8a.apk`, or a different crash signature / reader-slot
+  pair. The latter two mean the added tracing perturbed the path, so the run is
+  inconclusive rather than a falsification.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Run key: `variant=syscall-tail`, code commit `2ab9720` (code identical to
+  `4cd16ed`; later commits are documentation-only), APK sha256
+  `9aa20aa3e3481fb3e1cde83729df34bb17b145d9ef5a1ce2eb411970c576b892`
+  (115,104,390 bytes), installed `lastUpdateTime=2026-10-27 17:53:23`,
+  package `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`).
+- Command:
+
+```bash
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_syscall_trace true --es pairip_variant syscall-tail
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/syscall-tail.log
+```
+
+- Status: pre-registered; ready to run.
