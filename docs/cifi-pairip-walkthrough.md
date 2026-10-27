@@ -956,3 +956,50 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/jni-x20.log
 ```
 
 - Status: pre-registered; ready to run.
+
+### jni-x20 (2026-10-27 23:27)
+
+- Run key: `variant=jni-x20`, code commit `62427ce`, APK sha256
+  `0cf2353393eeb6a2aaed311d5b19e0311c08e9d76dba521def91463298661b92`
+  (115,274,306 bytes, 488 entries).
+- Idempotency check: the walkthrough contained only the pre-registration for
+  this run key; no verdict existed.
+- Install: `android install` replaced the debug APK with the 488-entry build
+  described in the pre-registration; the game APK was not touched.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 244` ms. Both
+  packages were force-stopped first and the log buffer was cleared.
+- Log: `tmp/cifi-apk/logs/verify/jni-x20.log`, 14,005 lines, sha256
+  `00987a9039a3e6bd19ec7ac928980d31b0d762708e25cfd04a4dbdc5a027e3e0`.
+- Instrumentation: line 398 reports `variant=jni-x20`, `preload=true`,
+  `trace=true`, `jniTrace=true`, `dumpVmImage=true`; every other experiment
+  switch is off. `jni: patched 36 slots in [0x7b51e19000, 0x7b51e1a000)
+  prot=1` at 23:26:58.112, and `PairIP JNI trace: installed=true` before
+  `libmain constructor` at 23:26:58.113.
+- JNI result: 1,053 `IsSameObject` records. Every one of the 529 records at
+  `caller=+0x702e4` is `0x0 0x0 -> 1`; no `class=` line exists at that site.
+  The other 524 records are 468 at `+0x76cf0`, 52 at `+0x7aa80`, 3 at
+  `+0x71eb8`, and 1 at `+0x79e84`. The last `+0x702e4` record is at
+  23:26:59.057; the append dump follows in the same millisecond and the crash
+  at 23:26:59.075.
+- Crash: unchanged; signal 11 in `__memmove_aarch64_nt+140`, caller frame
+  `split_config.arm64_v8a.apk +0x514`. `vm[0x540]` still holds
+  `bbb9eb6daed20ed0` / `015370f87525d57b`.
+- Rings: `state pos=44258`, tail `state[44257] id=0x872a21c sel=0x31bb`;
+  `builtin pos=3944`, `builtin[3917] id=0x40b0007e pc=0x1f813
+  lr=+0x6adc4`, tail `builtin[3943] id=0x9a0c0031 pc=0x40a73`;
+  `vminsn[1579] fetch=0x1f811 next=0x1f813 op=0x7e`; `image write ring
+  pos=2211`.
+- Image: `/tmp/opencode/jni-x20-image.bin`, sha256
+  `d474671d048b9fb877ec4f19e6d99bd6284f4e74cd346b250b9b12f9293a2cdd`.
+  Diff vs `jni-trace-image.bin` is 30 ranges / 53 bytes; vs
+  `apk-cd-map-image.bin` 35 / 81; vs the pristine asset 79 / 368. The five
+  globals and both reader slots are byte-identical.
+- Static follow-up: the dispatcher table at `+0x103ec` maps opcode `0x7e`
+  to `0x6ff60`; the only direct `bl +0x31de4` is at `0x6adc0`, and `0x6ff60`
+  does not call `+0x31de4` directly. The `0x1f813` builtin entry is therefore
+  a nested or preceding helper event, not yet ordered against the `0x1f811`
+  dispatcher entry.
+- Verdict: the pre-registered prediction is **FALSIFIED** and the run is
+  valid. `[state+0x20]` is null at every observed check; there is no Java
+  object to name. The null branch is taken and the crash still follows.
+- Findings updated: yes, commit `4e1091d`.

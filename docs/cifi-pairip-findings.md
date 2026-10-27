@@ -156,6 +156,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
 | Low CD mapping (`pairip_apk_cd_map`) | The base APK's real CD was mapped at `0x7900000000` (`MAP_SHARED`, offset `0x74f5000`), and its `r--s 074f5000` line appeared at byte 3,596, inside the VM's 146,432-byte maps scan. The five globals, reader slots, state/builtin tails, crash signature, and 368-byte/79-range image diff are unchanged. Falsified: a CD line inside the scanned window is not the gate. |
 | JNI call trace (`pairip_jni_trace`) | 3,571 records; no non-null `ExceptionOccurred`, no `ExceptionClear`, no `Throw`/`ThrowNew`, and no pending-exception result before the crash. The only exception-like object is the VM's own `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) used for its `getStackTrace` stack walk; the launcher's spoof hook returns the fabricated 24-frame chain, then the VM calls `Debug.isDebuggerConnected`/`waitingForDebugger` (both false) and reaches the same reader crash. Falsified: `x20` is not a pending exception. |
+| JNI `IsSameObject` probe (`pairip_jni_trace` + `IsSameObject`) | 1,053 records; every one of the 529 calls at `+0x702e4` is `0x0 0x0 -> 1`, with no non-null argument and no class name. `[state+0x20]` is null at every observed `0x6ff60` check, so the clear/delete branch is never taken and the `cset eq` flag is 0. Crash, five globals, reader slots, tails, and image diff are unchanged. Falsified: there is no Java object in `x20` to name. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -200,6 +201,15 @@ bytecode pc `0x40a73`: what operand block it executes, and whether it
 computes the slots itself or expects an earlier writer that the hosted path
 skips. It must be recovered statically from the interpreter/bytecode or with
 a dedicated probe, not from the builtin ring.
+
+The `jni-x20` run answered the `x20` naming question negatively: the slot is
+null at every observed `0x6ff60` check, so there is no Java object to name
+and the clear/delete branch is never taken. The live question is now the
+opposite: why the null branch is the crashing one, i.e. what should have
+written `image+0x3f874`/`image+0x1ba5c`, or what should have made the handler
+avoid reading them. It also leaves the `0x1f811` dispatcher entry and the
+`0x1f813` builtin entry unordered; that ordering is the next empirical
+question.
 
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
@@ -291,6 +301,11 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
    `pairip_allow_nondebug_experiments`, the Frida gadget/DiagnosticApp/sleeps,
    and the stale `pairip_desc_trace`/`pairip_branch_trace` declarations.
    Include `pairip_apk_cd_map` and the other mapping diagnostics.
+9. jni-x20 (2026-10-27): `[state+0x20]` is null at all 529 observed checks,
+   so the JNI-object route is closed. Order the final `0x1f811` dispatcher
+   entry (`0x6ff60`) against the `0x1f813` builtin entry (`+0x31de4`) with a
+   shared sequence counter, then identify which code reads
+   `image+0x3f874`/`image+0x1ba5c` and what should have written them.
 
 ## Pre-registered experiment (2026-10-27, state-router)
 
@@ -785,3 +800,61 @@ site so unrelated VM comparisons do not acquire avoidable JNI traffic.
   would not by itself explain the hosted-only gate.
 - Diagnostic only: the new `IsSameObject` logging must be removed with
   `pairip_jni_trace` before merge.
+
+## jni-x20 result (2026-10-27 23:27)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The frozen baseline plus `pairip_jni_trace=true` (with the new
+`IsSameObject` hook) ran one cold launch: `Status: ok`, `LaunchState: COLD`,
+`TotalTime: 244` ms. The APK sha256 is
+`0cf2353393eeb6a2aaed311d5b19e0311c08e9d76dba521def91463298661b92`
+(115,274,306 bytes, 488 entries); only `lib/arm64-v8a/libpairipshield.so`
+differs from the installed baseline. The tracer patched 36 slots at
+23:26:58.112, before `libmain` (23:26:58.113), and logged 1,053
+`IsSameObject` records. The log is `tmp/cifi-apk/logs/verify/jni-x20.log`
+(14,005 lines, sha256
+`00987a9039a3e6bd19ec7ac928980d31b0d762708e25cfd04a4dbdc5a027e3e0`).
+
+The pre-registered prediction is **FALSIFIED**. All 529 records at
+`caller=+0x702e4` are `IsSameObject 0x0 0x0 -> 1`; there is no non-null first
+argument and no `class=` line at that site. `[state+0x20]` is therefore null
+at every observed `0x6ff60` check, the `b.ne` at `+0x702e8` is taken every
+time (the clear/delete branch at `+0x702ec` is skipped), and the `cset eq` at
+`+0x70448` evaluates to 0. The other call sites are unrelated: 468 at
+`+0x76cf0`, 52 at `+0x7aa80`, 3 at `+0x71eb8`, 1 at `+0x79e84`.
+
+The crash and every compared value are unchanged. The signal is still 11 in
+`__memmove_aarch64_nt+140` with the `split_config.arm64_v8a.apk +0x514`
+frame; `vm[0x540]` still holds `bbb9eb6daed20ed0` / `015370f87525d57b`; the
+five globals are `0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`,
+`0x4d062af3`; the state tail is `id=0x872a21c sel=0x31bb`; the builtin tail
+is `id=0x9a0c0031 pc=0x40a73`; the final VM fetch is
+`vminsn[1579] fetch=0x1f811 op=0x7e`. Ring positions are state 44,258,
+builtin 3,944, image 2,211, and VM 1,580. The crash image is
+`/tmp/opencode/jni-x20-image.bin` (sha256
+`d474671d048b9fb877ec4f19e6d99bd6284f4e74cd346b250b9b12f9293a2cdd`); the
+diff vs the `jni-trace` image is 30 ranges / 53 bytes, vs `apk-cd-map` 35 /
+81, and vs the pristine asset 79 / 368. The five globals and both reader
+slots are byte-identical in all three crash images.
+
+Static follow-up for the final `0x7e`: the dispatcher table at `+0x103ec`
+maps `(w1 & 0xffff) - 0xd = 0x71` (opcode `0x7e`) to `0x6ff60`. The builtin
+ring records `builtin[3917] id=0x40b0007e pc=0x1f813 lr=+0x6adc4`, followed
+by 26 more entries ending at `builtin[3943] id=0x9a0c0031 pc=0x40a73`. The
+only direct `bl +0x31de4` in the library is at `0x6adc0` (return
+`+0x6adc4`); `0x6ff60` has no direct call to `+0x31de4`. The final
+dispatcher fetch therefore enters `0x6ff60`, and the builtin `0x7e` at
+`0x1f813` is a nested or preceding helper event with the same opcode and the
+next pc. Their order is not yet proven.
+
+Consequence: the "name the Java object in `x20`" route is closed; there is
+no object. The last observed `0x6ff60` null check is at 23:26:59.057, in the
+same millisecond as the append dump that precedes the crash, and it is null.
+The image-backed string view is read after that check. The open question is
+now which code writes the two image slots (or why the null branch is
+supposed to be safe in a bare launch), and whether the `0x1f813` builtin
+event runs before or inside the `0x6ff60` handler.
+
+`pairip_jni_trace` and the `IsSameObject` hook are diagnostic only and must
+be removed before merge.
