@@ -1414,3 +1414,49 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/selector-gate.log
 ```
 
 - Status: pre-registered; ready to run.
+
+### Result (2026-10-28 01:15)
+
+- Build/install: debug APK `131,239,292` bytes, sha256
+  `711c602db877bc65836f88951f785c4d9929bcd2b2a84a07a7e06e971a5affaf`;
+  `libpairipshield.so` `486,088` bytes, 490 entries. `android install` sent a
+  1.29 MB delta (98.97% savings); the game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 221` ms, one launch
+  only (pid 10464). Both packages were force-stopped and the log buffer was
+  cleared first. Log `tmp/cifi-apk/logs/verify/selector-gate.log`, 22,477
+  lines, sha256 `7e853d7b1cd00087abdb4385c801393ef3e2f9bbbd1114b5cd52f5b8588c3124`.
+- Hooks: both installed. `gate-len hook rc=0 target=0x7a9b54c3f4
+  trampoline=0x7e1e46d250`; `gate hook rc=0 target=0x7a9b54c420
+  trampoline=0x7e1e46d26c`; base `0x7a9b514000`. The other observation hooks
+  also installed (`rc=0`), so the failure is not an install error.
+- Gate ring: `pos=0 eq=0 ne=0`. No `gate:` record and no first-`ne` record
+  was ever emitted, so the `+0x383f4`/`+0x38420` block does not run on the
+  crashing path at all. The hash ring and router ring are also empty
+  (`pos=0`, `eq=0`, `ne=0`); this agrees with the earlier `hash-gate` and
+  `state-router-retry` results.
+- State tail: `state ring pos=39158`, last
+  `state[39157] id=0x872a21c sel=0x31bb reader=0xf9372668`. The carried
+  selector is unchanged. Builtin ring `pos=3513`, VM ring `pos=1580`, image
+  write ring `pos=2211`; these counters are within the known path-length
+  variance and are not invariants.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, caller
+  `split_config.arm64_v8a.apk+0x514`; `vm[0x540]`=`0x00000000f9372668`,
+  `+0x544`=`0x0000007ff93726f9`, `+0x548`=`0xbbb9eb6daed20ed0`,
+  `+0x550`=`0x015370f87525d57b`; `vm[0x7f8]`=`0x31bb`. The append record is
+  `src=0x7ff9372630 n=46 dst=0x7ff9372698 lr=0x7a9b552170 off=0x3e170
+  fields=0000007a9b5a7ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; the reader object still uses slot A as data and slot B as size.
+- Crash image: `/tmp/opencode/selector-gate-image.bin`, sha256
+  `952fa36e4d60dfbbc87334f8c65065bbc6d34f7f6befed39e4bb3db688aa0bfa`.
+  Diff vs `stack-len-plus-one` is 31 ranges / 58 bytes, but there are **zero**
+  new-only differing offsets: every difference already varies across the
+  older runs. The five globals and both reader slots are byte-identical to
+  every prior image.
+- Verdict: the pre-registered prediction is **FALSIFIED**. The hooks install
+  but the gate block records no execution; the last gate record does not
+  exist and cannot equal `0x31bb`. The `+0x38420` string-hash selector gate is
+  not the producer of the crash selector, and the route is closed. No further
+  probes at `+0x38420`, `+0x32c20`, `+0x3dc0c`, or `+0x3dc50` are warranted.
+- Findings updated: yes, in this commit: the old claim that `+0x32c20`
+  produces `sel=0x31bb` is corrected, and the selector-gate falsification is
+  recorded.

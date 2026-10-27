@@ -131,8 +131,15 @@ The reader state is entered directly: the dispatcher's
 belongs to a different handler and ends with `+0x3dc84 b +0x51f44`. The
 hosted-run `hash-gate` probe installed hooks at `+0x3dc0c` and `+0x3dc50` and
 recorded zero hits (`hash ring pos=0`), confirming the block is skipped on the
-crash path. The selector `sel=0x31bb` is produced by the main state-router
-hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
+crash path. The earlier statement that `sel=0x31bb` is produced by the main
+state-router hash at `+0x32c20..+0x32c54` is **withdrawn**: both the
+`+0x32c20` router hook and the `+0x383f4`/`+0x38420` selector-gate hooks
+recorded zero hits. Statically, `sel=0x31bb` first appears at state
+`0x81398368`, entered from `0x7ae3f9a6`, and is then carried unchanged
+through `0x5ddd74f5`, `0x65faffff`, `0xd72aa61e`, `0x692efcd5`,
+`0x1e35ad97`, `0xeb7a0bec`, `0x629d5907` into `0x872a21c`. The live
+producer question is the `0x7ae3f9a6` state handler / the transition into
+`0x81398368`, not any of the zero-hit blocks.
 
 ## Experiments and results
 
@@ -151,6 +158,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | fnv-input probe (`+0x7fddc`) | 419 calls, `len=1`, all at `image+0x24f47`, byte `0x99`, checksum `ba6cb68e62faac68`; pristine asset and crash image match at that offset; baseline crash unchanged. The input is static image data. |
 | hash-gate probe (`+0x3dc0c`, `+0x3dc50`) | Both hooks `rc=0`, zero hits (`hash ring pos=0`); state `0x872a21c` reaches the reader via `+0x34d74 b.eq +0x3dc88`; the `+0x3dc08` hash block is a different handler's tail. Baseline crash unchanged. The block is not the hosted gate. |
 | state-router retry (`+0x32c20`) | Hook `rc=0`, zero hits (`router ring pos=0`, `eq=0`, `ne=0`); state `0x872a21c` branches directly to the reader at `+0x34d74 b.eq +0x3dc88`; the `0x31` builtin runs at `pc=0x40a73` immediately before the baseline crash. The router hash block is not on the reader path. |
+| selector-gate (`+0x383f4`, `+0x38420`) | Both hooks `rc=0` (trampolines `0x7e1e46d250`, `0x7e1e46d26c`), gate ring `pos=0 eq=0 ne=0`: the string-hash selector block never executes before the crash. State tail, five globals, reader slots, and crash are unchanged. The gate is not the producer of `sel=0x31bb`; route closed. |
 | Offset-0 base-APK mapping (`pairip_apk_zero_map`) | Mapping installed at the planned address (`0x7900000000`, `fixed=1`) and appears in klB's maps dump (`r--p 00000000`), yet the crash, reader slots, FNV input, state tail, and builtin tail are unchanged. Falsified: the missing offset-0 mapping is not the gate. |
 | Process-name spoof (`pairip_process_name`) | Main-thread `prctl` succeeded and the VM's `/proc/self/status` read saw `mesCompany.CIFI` (argv0/`__progname` were rewritten too), yet the FNV input, five globals, reader slots, state/builtin tails, crash signature, and image diff are byte-identical to baseline. Falsified: process identity is not the gate. |
 | syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
@@ -1384,3 +1392,47 @@ Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
 - Run key: `variant=selector-gate`, code commit `HEAD` plus the hooks,
   committed with this record; APK sha256 recorded after the build.
 - Status: pre-registered; ready to run.
+
+## selector-gate result (2026-10-28 01:15)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen baseline plus the two observation hooks ran one cold launch to the
+same crash. The pre-registered producer prediction is **FALSIFIED**.
+
+- Build/install: debug APK `131,239,292` bytes, sha256
+  `711c602db877bc65836f88951f785c4d9929bcd2b2a84a07a7e06e971a5affaf`;
+  `libpairipshield.so` `486,088` bytes, 490 entries. `android install` sent a
+  1.29 MB delta (98.97% savings); the game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 221` ms, one launch
+  only (pid 10464). Log `tmp/cifi-apk/logs/verify/selector-gate.log`, 22,477
+  lines, sha256
+  `7e853d7b1cd00087abdb4385c801393ef3e2f9bbbd1114b5cd52f5b8588c3124`.
+- Hooks: `gate-len hook rc=0 target=0x7a9b54c3f4 trampoline=0x7e1e46d250`
+  and `gate hook rc=0 target=0x7a9b54c420 trampoline=0x7e1e46d26c`, base
+  `0x7a9b514000`. All other observation hooks also installed with `rc=0`.
+- Gate ring: `pos=0 eq=0 ne=0`; no `gate:` record and no first-`ne` record.
+  The `+0x383f4`/`+0x38420` block is never entered on the crashing path. The
+  hash ring and router ring are likewise empty (`pos=0`), consistent with the
+  `hash-gate` and `state-router-retry` results.
+- State tail: `state ring pos=39158`, last
+  `state[39157] id=0x872a21c sel=0x31bb reader=0xf9372668`. Builtin ring
+  `pos=3513`, VM ring `pos=1580`, image write ring `pos=2211`; these are
+  path-length counters, not invariants.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, caller
+  `split_config.arm64_v8a.apk+0x514`; `vm[0x540]`=`0xf9372668`,
+  `+0x544`=`0x7ff93726f9`, `+0x548`=`0xbbb9eb6daed20ed0`,
+  `+0x550`=`0x015370f87525d57b`; `vm[0x7f8]`=`0x31bb`. Append record
+  `src=0x7ff9372630 n=46 dst=0x7ff9372698 lr=0x7a9b552170 off=0x3e170
+  fields=0000007a9b5a7ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`.
+- Crash image: `/tmp/opencode/selector-gate-image.bin`, sha256
+  `952fa36e4d60dfbbc87334f8c65065bbc6d34f7f6befed39e4bb3db688aa0bfa`.
+  Diff vs `stack-len-plus-one` is 31 ranges / 58 bytes with **zero** new-only
+  offsets; five globals and both reader slots are byte-identical to every
+  prior image.
+- Verdict: the `+0x38420` string-hash selector gate is not the producer of
+  `sel=0x31bb`; the route is closed together with `+0x32c20`, `+0x3dc0c`,
+  and `+0x3dc50`. The next step is static decoding of handler `0x56c54`
+  (state `0x7ae3f9a6`) and the transition into `0x81398368`, where the
+  selector first appears. Do not install further probes at the closed
+  addresses.
