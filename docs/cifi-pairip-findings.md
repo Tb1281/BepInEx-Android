@@ -82,23 +82,26 @@ built:
 | --- | --- | --- |
 | `0x333eb` | `0x7e` | one combined update of all five |
 | `0x395ad` | `0x6d` | one combined update of all five |
-| `0xf656` | `0x1b` | per-byte FNV input loop; counter `0x266f2` runs `0x100` -> 0 then `0xa3` -> 0 (419 calls) |
+| `0xf656` | `0x1b` | per-byte FNV input loop; counter `0x266f2` (u32) runs `0x1a3` -> 1 over 419 calls |
 | `0x158e1` | `0x92` | 16-iteration block loop (`0x2ee6`) |
 | `0x1831` | `0x92` | 16-iteration block loop (`0x33358`) |
 | `0x1f811` | `0x7e` | in progress at the crash; produces the final values |
 
 The `0x1b`/`0x92` shape is a five-word hash state. The runtime write ring
-records 419 one-byte updates at `0xf656` (counter `0x266f2`: `0x100` -> 0, then
-`0xa3` -> 0); the earlier 70-byte estimate is not supported by that capture.
-The same ring shows the counter written at 4-, 2-, and 1-byte widths (the
-`0x100` value needs two bytes), so it is read as a little-endian u32.
-The input source is not identified yet. That is the fork:
-
-- If the input is static image data, a stock launch computes the same five
-  globals. Stock must then initialize/relocate the selected slots or take a
-  different branch before the `0x31` call.
-- If the input is maps/status/path-derived, the globals and `w8`/`w9` differ
-  in stock, and that difference is the gate.
+records 419 one-byte updates at `0xf656`; the earlier 70-byte estimate is not
+supported by that capture. The fnv-input probe reads the counter as a u32 and
+sees one `0x1a3` -> 1 countdown over those 419 calls (plus a counter-0
+boundary call). The ring's `0x100` -> `0xff` and `0xa3` -> `0xa2` entries are
+consistent with 2-byte and 1-byte stores of the same countdown, not separate
+phases.
+The fnv-input probe identifies the input: the same static image byte `0x99`
+at `image+0x24f47` is hashed once per call for the 419-call loop (plus one
+counter-0 boundary call). It matches the pristine asset at that offset and
+lies outside every runtime diff range, so the input is static image data.
+A stock launch therefore computes the same five globals; the gate is not the
+input source. What remains is why stock does not hit the invalid slots: it
+either initializes/relocates the selected slots or takes a different branch
+before the `0x31` call.
 
 The crash image reads `0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`,
 `0x4d062af3` at `0x1da6f`, `0x1f422`, `0x2129a`, `0x377ff`, `0x38edd`.
@@ -129,6 +132,7 @@ cannot satisfy the reader without a runtime write or a different branch.
 | Five-global emulation | Reproduces `0x3f874`/`0x1ba5c` from the crash image and `0x31c1b`/`0x3b302` from the pristine asset. |
 | Cross-run global comparison | The five globals reach byte-identical values in three hosted runs while ASLR pointers differ. |
 | Image-watch (read-only first page) | One u32 increment at `image+0xae3` from `+0x5f714`; no write to either ZIP slot. |
+| fnv-input probe (`+0x7fddc`) | 419 calls, `len=1`, all at `image+0x24f47`, byte `0x99`, checksum `ba6cb68e62faac68`; pristine asset and crash image match at that offset; baseline crash unchanged. The input is static image data. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -136,9 +140,9 @@ path valid and it must not become the fix.
 
 ## Open questions
 
-1. What input does the five-word hash consume at `0xf656`? Is it static image
-   data, or maps/status/path bytes? The answer decides whether stock computes
-   the same `w8`/`w9`.
+1. Answered (fnv-input, 2026-10-27): the `0xf656` input is the static image
+   byte `0x99` at `image+0x24f47`, hashed 419 times. Stock computes the same
+   five globals for that input; the input source is not the gate.
 2. If the input is static, why does stock not hit the invalid slots: does it
    write/relocate the selected slots, or does the state router take an earlier
    branch and never issue the `0x31` call?
@@ -181,7 +185,12 @@ launcher). It adds one probe, hooked at `libpairipcore.so+0x7fddc` (the
   `+0x7fdbc`, consumed at `+0x7fe18`), so the hook corrupted the hash
   comparison. `x15` is dead there (the loop at `+0x7fde0` overwrites it), so
   the retry branches through `x15` and accepts a counter up to `0x1000`.
-- Attempt 2 (`b3f6dfd`, APK `d8dc1f00…`): prepared; verdict pending.
+- Attempt 2 (`b3f6dfd`, APK `d8dc1f00…`): CONFIRMED. 419 calls (counter
+  `0x1a3` -> 1), all `off=0x24f47`, `len=1`, byte `0x99`, `outside=0`,
+  checksum `ba6cb68e62faac68`, plus one counter-0 boundary call with the same
+  byte. The pristine asset and the crash image both hold `0x99` at `0x24f47`;
+  `0x24f47` is outside all 78 runtime diff ranges. The baseline
+  `__memmove_aarch64_nt+140` / `+0x8d514` crash is unchanged.
 
 ## Reproduction
 
@@ -207,15 +216,13 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
 
 ## Next steps
 
-1. Run the pre-registered `fnv-input` probe at `+0x7fddc` to capture the
-   `0xf656/0x1b` FNV input; decide static vs maps/status/path-derived. Decode
-   the `0x1b`/`0x92` block schedule if the probe is inconclusive.
-2. If static: prove a stock launch computes the same five globals, then find
-   the earlier branch stock takes. Decode the `0x31` state selection and the
-   preceding state's `next`/`fallback` decision.
-3. If environment-fed: reproduce stock's maps/status content and ordering.
-   Running `libunity`'s `DT_INIT` before the Fusion/.NET preload is a
-   diagnostic worth trying.
+1. Done (fnv-input, 2026-10-27): the `0xf656` input is static image data, so
+   the next question is why stock does not hit the invalid slots.
+2. Static branch: prove a stock launch computes the same five globals, then
+   find the earlier branch stock takes. Decode the `0x31` state selection and
+   the preceding state's `next`/`fallback` decision.
+3. Ruled out by the fnv-input result: reproducing stock maps/status content
+   for the hash input.
 4. Decode the `0x31` builtin semantics and the `0x40a73` operand block.
 5. Only after a real mechanism is proven: apply a gated fix, build, reinstall
    with `android install`, run three cold launches, record results on #62-#64,

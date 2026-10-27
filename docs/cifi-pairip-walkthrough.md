@@ -122,4 +122,38 @@ Append one entry per completed run; never rewrite an earlier verdict.
 - Expected falsification unchanged; the input buffer must lie in
   `[image, image+0x44feb]` and match the pristine asset at the recorded
   offsets.
-- Status: prepared; no verdict yet.
+- Status: completed; verdict appended below.
+
+## Verdict log (continued)
+
+### 2026-10-27 16:11 — fnv-input retry: CONFIRMED (static image byte)
+
+- Key: `variant=fnv-input-retry`, code commit `b3f6dfd`, APK sha256
+  `d8dc1f00a74e43f9f369f0e51a2cf735f8599d40357ec859d17694c33cffad25`,
+  package `com.bepinex.android.debug` on SM-S931N (Android 17/API 37,
+  `user`, `ro.debuggable=0`). Installed 16:11:02.
+- Command: `OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25
+  tmp/cifi-apk/run_variant.sh fnv-input-retry --ez pairip_preload true
+  --ez pairip_trace true --ez pairip_dump_vm true`.
+- Window: 2026-10-27T16:11:07+09:00 to 16:11:37+09:00 (30 s).
+- Hook: installed, `rc=0`, target `0x7a8f549ddc`, base `0x7a8f4ca000`.
+- Probe: 419 calls with counter `0x1a3` -> 1, every call `off=0x24f47`,
+  `len=1`, byte `0x99`; `outside=0`, `nonunit_len=0`, accumulated `419`
+  bytes, FNV-1 checksum `ba6cb68e62faac68`. One further counter-0 boundary
+  call repeated the same byte (checksum `af63bd4c8601b746`). The 419-byte
+  checksum re-computes exactly from `0x99` repeated 419 times.
+- Comparison: the pristine asset at `0x24f47` is `0x99` (sha256
+  `112b6e592c18c9877b90b8f0df2c2d4dd037bf0742bacbd914a03eed242011fa`),
+  the crash image at `0x24f47` is `0x99` (sha256
+  `1861a24abd21aed494b8fa0a43ee1ac794096f97032c26a563969ed4fc3d04c5`),
+  and `0x24f47` is outside all 78 runtime diff ranges (367 bytes).
+- Crash: SIGSEGV in `__memmove_aarch64_nt+140`, caller frame
+  `split_config.arm64_v8a.apk +0x514` (the baseline `+0x8d514`), at
+  16:11:12.225. The probe did not change the crash signature.
+- Verdict: hypothesis confirmed. The `0xf656/0x1b` hash input is static
+  image data, not maps/status/path-derived: it is the single byte `0x99` at
+  `image+0x24f47`, hashed once per call for the 419-call loop. The
+  falsification conditions did not trigger: every computed input pointer is
+  inside `[image, image+0x44feb]`, the bytes match the pristine asset, and
+  the observed loop is the registered 419-call loop (plus one counter-0
+  boundary call).
