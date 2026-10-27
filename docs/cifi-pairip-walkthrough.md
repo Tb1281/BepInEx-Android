@@ -343,3 +343,27 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   (115,103,986 bytes), package `com.bepinex.android.debug` on SM-S931N
   (Android 17/API 37, `user`, `ro.debuggable=0`).
 - Status: pre-registered; ready to install and run.
+
+### 2026-10-27 16:59 — state-router-retry: FALSIFIED (router block is not on the reader path)
+
+- Key: `variant=state-router-retry`, code commit `d20fa9e`, APK sha256
+  `8694a819709f9797538d78c20ce5dbd710c6d0589ae8562a6ff22b9bfabe1df2`
+  (115,103,986 bytes), installed 16:58:18 (installed hash matches).
+- Command: `OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25
+  tmp/cifi-apk/run_variant.sh state-router-retry --ez pairip_preload true
+  --ez pairip_trace true --ez pairip_dump_vm true`.
+- Window: 2026-10-27T16:59:07+09:00 to 16:59:35+09:00 (28 s).
+- Hooks: only `router-load hook rc=0 target=+0x32c20`, trampoline non-null.
+  The `+0x32c2c` load and `+0x32c48` csel sites are not hooked.
+- Probe: `router ring pos=0 eq=0 ne=0 dumping last 0`; no `router:` line.
+  The probe did not perturb the run. The state ring reached
+  `state[130814] id=0x872a21c sel=0x31bb reader=0xf93727d8`, and the builtin
+  ring shows `id=0x9a0c0031 pc=0x40a73` immediately before the crash.
+- Crash: `__memmove_aarch64_nt+140` (the frozen baseline signature), with the
+  reader slots `bbb9eb6daed20ed0` / `015370f87525d57b` in the VM dump. The
+  attempt-1 `malloc(...)` / `split+0x4c4` crash did not recur.
+- Verdict: the `+0x32c20` hash block never executes on this path. The
+  dispatcher compares `w8` with `0x872a21c` at `+0x34d68..+0x34d74` and branches
+  directly to `+0x3dc88` (`b.eq 0x3dc88`), so state `0x872a21c` builds the
+  reader without the router hash. The router is not the hosted gate. The
+  retry is a clean falsification, not an invalid probe.

@@ -143,6 +143,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | Image-watch (read-only first page) | One u32 increment at `image+0xae3` from `+0x5f714`; no write to either ZIP slot. |
 | fnv-input probe (`+0x7fddc`) | 419 calls, `len=1`, all at `image+0x24f47`, byte `0x99`, checksum `ba6cb68e62faac68`; pristine asset and crash image match at that offset; baseline crash unchanged. The input is static image data. |
 | hash-gate probe (`+0x3dc0c`, `+0x3dc50`) | Both hooks `rc=0`, zero hits (`hash ring pos=0`); state `0x872a21c` reaches the reader via `+0x34d74 b.eq +0x3dc88`; the `+0x3dc08` hash block is a different handler's tail. Baseline crash unchanged. The block is not the hosted gate. |
+| state-router retry (`+0x32c20`) | Hook `rc=0`, zero hits (`router ring pos=0`, `eq=0`, `ne=0`); state `0x872a21c` branches directly to the reader at `+0x34d74 b.eq +0x3dc88`; the `0x31` builtin runs at `pc=0x40a73` immediately before the baseline crash. The router hash block is not on the reader path. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -165,9 +166,11 @@ path valid and it must not become the fix.
 
 The `hash-gate` run answered the "name-hash before the reader" branch
 negatively: the `+0x3dc08` block is skipped, so it cannot be the hosted-only
-gate. The live part of question 2 is now the main state-router hash at
-`+0x32c20..+0x32c54`, which produces `sel=0x31bb`; the next experiment targets
-its comparison and candidates.
+gate. The `state-router-retry` run answered the main state-router hash
+negatively too: `+0x32c20` never executes, and the dispatcher sends state
+`0x872a21c` straight to the reader at `+0x34d74 b.eq +0x3dc88`. The live part
+of question 2 is now the `0x31` builtin at bytecode pc `0x40a73`: what operand
+block it executes and which state re-dispatches to `0x872a21c`.
 
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
@@ -235,8 +238,10 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
 1. Done (fnv-input, 2026-10-27): the `0xf656` input is static image data, so
    the next question is why stock does not hit the invalid slots.
 2. Static branch: prove a stock launch computes the same five globals, then
-   find the earlier branch stock takes. Decode the `0x31` state selection and
-   the preceding state's `next`/`fallback` decision.
+   find the earlier branch stock takes. The state-router hash block at
+   `+0x32c20` is ruled out (the dispatcher sends `0x872a21c` directly to the
+   reader at `+0x34d74`); decode the `0x31` state selection and the preceding
+   state's `next`/`fallback` decision instead.
 3. Ruled out by the fnv-input result: reproducing stock maps/status content
    for the hash input.
 4. Decode the `0x31` builtin semantics and the `0x40a73` operand block.
@@ -271,3 +276,23 @@ launcher). It adds one probe at the main state-router hash, which the
   never execute. In any of those cases the router hash is not the gate and
   the fork moves to the `0x31` operand block at `0x40a73` and the state that
   re-dispatches to `0x872a21c`.
+
+### Retry result (2026-10-27 16:59, `d20fa9e`)
+
+Attempt 1 (`71072b5`) was invalid: hooking `+0x32c2c` and `+0x32c48` crashed in
+`malloc(...)` / `split_config.arm64_v8a.apk+0x4c4` before any router callback.
+The retry hooks only `+0x32c20`, tails through `x9`, and computes the table
+lookup, comparison, and selector offline.
+
+The retry is **FALSIFIED**. The hook installed at `+0x32c20` (`rc=0`,
+trampoline non-null), but the ring stayed at `pos=0 eq=0 ne=0`; no `router:`
+line appeared. The probe did not perturb the run: the crash is the frozen
+baseline `__memmove_aarch64_nt+140` with the same bad reader slots, and the
+state ring ends at `id=0x872a21c sel=0x31bb` with `builtin id=0x9a0c0031
+pc=0x40a73` immediately before it.
+
+Static confirmation: the dispatcher at `+0x34d68..+0x34d74` compares the state
+with `0x872a21c` and branches directly to `+0x3dc88` (the reader builder), so
+the route is `state 0x872a21c -> reader`, not `state -> +0x32c20 -> reader`.
+The `+0x32c20` block is reached from `+0x3d760`/`+0x3d798` in a different
+handler tail and is not on the reader path. The router is not the gate.
