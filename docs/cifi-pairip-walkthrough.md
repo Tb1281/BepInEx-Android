@@ -1144,3 +1144,47 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
 ```
 
 - Status: pre-registered; ready to build and run.
+
+### long-unbox (2026-10-28 00:06)
+
+- Run key: `variant=long-unbox`, code commit `d89fde3` plus the
+  `jni_trace.cpp` `GetLongField`/`CallLongMethodA` hooks, committed with this
+  record. APK sha256
+  `f676f109c165a020feef3b132824556c52d1ed18c7021aea96860429991c9fca`
+  (115,274,306 bytes, 488 entries; `libpairipshield.so` 480,736 bytes).
+- Idempotency check: the walkthrough contained only the pre-registration for
+  this run key; no verdict existed.
+- Install: `android install` sent a 904.94 KB delta patch; the game APK was
+  not modified, repacked, or re-signed.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 317` ms. Both
+  packages were force-stopped first and the log buffer was cleared. One
+  launch only (pid 8138 at 00:06:22), so no replay caveat this time.
+- Log: `tmp/cifi-apk/logs/verify/long-unbox.log`, 26,235 lines, sha256
+  `637f1569772a4ae09c095064ab69793f803f2b2ac4e58bab539ac87813ee9241`.
+- Instrumentation: line 1,783 reports `variant=long-unbox`, `jniTrace=true`,
+  `trace=true`, `preload=true`, `dumpVmImage=true`; every other experiment
+  switch is off. YTw and klB both ran at 00:06:24.
+- Argument: `vm-args: [0] java.lang.Long=0x79f72af000`, resolved by maps line
+  32 to `r--p 04eec000` of `split_config.arm64_v8a.apk` (the `libunity.so`
+  ELF base). Only the ASLR base differs from `seq-7e`.
+- `GetLongField`: 0 records. `CallLongMethodA`: 2 calls, both
+  `java.io.File.length()J` on `/proc/self/maps` and `/proc/self/status`,
+  each returning 0. No `Long.longValue`, no `Long` field read, no method call
+  on any `Long` receiver. The VM constructs 421 `java.lang.Long` objects from
+  hash-like values but never unboxes them through JNI.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, caller
+  `split_config.arm64_v8a.apk +0x514`; `vm[0x540]` keeps
+  `bbb9eb6daed20ed0` / `015370f87525d57b`; state tail `id=0x872a21c
+  sel=0x31bb`; builtin tail `id=0x9a0c0031 pc=0x40a73`; dispatcher tail
+  `fetch=0x1f811 op=0x7e`.
+- Ring positions match `jni-trace`: builtin 3,699, state 41,366, vm 1,580,
+  image write 2,211.
+- Image: `klB-image-at-crash.bin` pulled to
+  `/tmp/opencode/long-unbox-image-at-crash.bin`, sha256
+  `f5d547c5ef9c8ffd471d06caa8e86c329724b181af039694b538f36a8ee234d5`.
+  Five globals byte-identical to `seq-7e`, reader slots byte-identical to
+  pristine, diff vs pristine 79 ranges / 368 bytes, diff vs `jni-trace` 29
+  ranges / 53 bytes (ASLR pointer high bytes only).
+- Verdict: the pre-registered prediction is **FALSIFIED**. The `klB`
+  argument is not unboxed through JNI; the argument route is closed.
+- Findings updated: yes, in this commit.

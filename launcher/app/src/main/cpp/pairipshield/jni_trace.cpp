@@ -129,6 +129,7 @@ using GetStaticBooleanFieldFn = jboolean(JNICALL *)(JNIEnv *, jclass, jfieldID);
 using GetStaticIntFieldFn = jint(JNICALL *)(JNIEnv *, jclass, jfieldID);
 using GetBooleanFieldFn = jboolean(JNICALL *)(JNIEnv *, jobject, jfieldID);
 using GetIntFieldFn = jint(JNICALL *)(JNIEnv *, jobject, jfieldID);
+using GetLongFieldFn = jlong(JNICALL *)(JNIEnv *, jobject, jfieldID);
 using NewObjectVFn = jobject(JNICALL *)(JNIEnv *, jclass, jmethodID, va_list);
 using NewObjectAFn = jobject(JNICALL *)(JNIEnv *, jclass, jmethodID,
                                        const jvalue *);
@@ -144,6 +145,8 @@ using CallIntMethodVFn = jint(JNICALL *)(JNIEnv *, jobject, jmethodID,
                                         va_list);
 using CallIntMethodAFn = jint(JNICALL *)(JNIEnv *, jobject, jmethodID,
                                         const jvalue *);
+using CallLongMethodAFn = jlong(JNICALL *)(JNIEnv *, jobject, jmethodID,
+                                          const jvalue *);
 using CallVoidMethodVFn = void(JNICALL *)(JNIEnv *, jobject, jmethodID,
                                          va_list);
 using CallVoidMethodAFn = void(JNICALL *)(JNIEnv *, jobject, jmethodID,
@@ -199,6 +202,7 @@ GetStaticBooleanFieldFn g_get_static_boolean_field = nullptr;
 GetStaticIntFieldFn g_get_static_int_field = nullptr;
 GetBooleanFieldFn g_get_boolean_field = nullptr;
 GetIntFieldFn g_get_int_field = nullptr;
+GetLongFieldFn g_get_long_field = nullptr;
 NewObjectVFn g_new_object_v = nullptr;
 NewObjectAFn g_new_object_a = nullptr;
 CallObjectMethodVFn g_call_object_v = nullptr;
@@ -207,6 +211,7 @@ CallBooleanMethodVFn g_call_boolean_v = nullptr;
 CallBooleanMethodAFn g_call_boolean_a = nullptr;
 CallIntMethodVFn g_call_int_v = nullptr;
 CallIntMethodAFn g_call_int_a = nullptr;
+CallLongMethodAFn g_call_long_a = nullptr;
 CallVoidMethodVFn g_call_void_v = nullptr;
 CallVoidMethodAFn g_call_void_a = nullptr;
 CallStaticObjectMethodVFn g_call_static_object_v = nullptr;
@@ -874,6 +879,22 @@ jint JNICALL HookGetIntField(JNIEnv *env, jobject object, jfieldID id) {
     return result;
 }
 
+jlong JNICALL HookGetLongField(JNIEnv *env, jobject object, jfieldID id) {
+    void *caller = __builtin_return_address(0);
+    const bool trace = IsPairIpCaller(caller);
+    const jlong result = g_get_long_field(env, object, id);
+    if (trace && g_exception_check != nullptr && !g_exception_check(env)) {
+        const MemberInfo info = LookupField(id);
+        TRACEI("jni: GetLongField %s.%s:%s on %s -> %#llx (%lld) id=%p "
+               "caller=%p",
+               info.clazz.c_str(), info.name.c_str(), info.sig.c_str(),
+               ClassName(env, object).c_str(),
+               static_cast<unsigned long long>(result),
+               static_cast<long long>(result), id, caller);
+    }
+    return result;
+}
+
 jobject JNICALL HookNewObjectV(JNIEnv *env, jclass clazz, jmethodID id,
                                va_list args) {
     void *caller = __builtin_return_address(0);
@@ -1018,6 +1039,26 @@ jint JNICALL HookCallIntMethodA(JNIEnv *env, jobject object, jmethodID id,
     }
     const jint result = g_call_int_a(env, object, id, args);
     if (trace) TRACEI("jni: CallIntMethodA -> %d", result);
+    return result;
+}
+
+jlong JNICALL HookCallLongMethodA(JNIEnv *env, jobject object, jmethodID id,
+                                  const jvalue *args) {
+    void *caller = __builtin_return_address(0);
+    const bool trace = IsPairIpCaller(caller);
+    if (trace) {
+        const MemberInfo info = LookupMethod(id);
+        TRACEI("jni: CallLongMethodA %s.%s:%s args=[%s] caller=%p",
+               ClassName(env, object).c_str(), info.name.c_str(),
+               info.sig.c_str(), FormatArgsA(env, info.sig, args).c_str(),
+               caller);
+    }
+    const jlong result = g_call_long_a(env, object, id, args);
+    if (trace) {
+        TRACEI("jni: CallLongMethodA -> %#llx (%lld)",
+               static_cast<unsigned long long>(result),
+               static_cast<long long>(result));
+    }
     return result;
 }
 
@@ -1447,6 +1488,7 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallJniTrace(
     g_get_static_int_field = env->functions->GetStaticIntField;
     g_get_boolean_field = env->functions->GetBooleanField;
     g_get_int_field = env->functions->GetIntField;
+    g_get_long_field = env->functions->GetLongField;
     g_new_object_v = env->functions->NewObjectV;
     g_new_object_a = env->functions->NewObjectA;
     g_call_object_v = env->functions->CallObjectMethodV;
@@ -1455,6 +1497,7 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallJniTrace(
     g_call_boolean_a = env->functions->CallBooleanMethodA;
     g_call_int_v = env->functions->CallIntMethodV;
     g_call_int_a = env->functions->CallIntMethodA;
+    g_call_long_a = env->functions->CallLongMethodA;
     g_call_void_v = env->functions->CallVoidMethodV;
     g_call_void_a = env->functions->CallVoidMethodA;
     g_call_static_object_v = env->functions->CallStaticObjectMethodV;
@@ -1530,6 +1573,10 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallJniTrace(
          reinterpret_cast<void *>(&HookGetIntField),
          reinterpret_cast<void **>(&g_get_int_field)});
     patches.push_back(
+        {offsetof(JNINativeInterface, GetLongField) / sizeof(void *),
+         reinterpret_cast<void *>(&HookGetLongField),
+         reinterpret_cast<void **>(&g_get_long_field)});
+    patches.push_back(
         {offsetof(JNINativeInterface, NewObjectV) / sizeof(void *),
          reinterpret_cast<void *>(&HookNewObjectV),
          reinterpret_cast<void **>(&g_new_object_v)});
@@ -1561,6 +1608,10 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallJniTrace(
         {offsetof(JNINativeInterface, CallIntMethodA) / sizeof(void *),
          reinterpret_cast<void *>(&HookCallIntMethodA),
          reinterpret_cast<void **>(&g_call_int_a)});
+    patches.push_back(
+        {offsetof(JNINativeInterface, CallLongMethodA) / sizeof(void *),
+         reinterpret_cast<void *>(&HookCallLongMethodA),
+         reinterpret_cast<void **>(&g_call_long_a)});
     patches.push_back(
         {offsetof(JNINativeInterface, CallVoidMethodV) / sizeof(void *),
          reinterpret_cast<void *>(&HookCallVoidMethodV),

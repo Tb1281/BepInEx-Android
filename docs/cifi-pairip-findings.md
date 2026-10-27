@@ -158,6 +158,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | JNI call trace (`pairip_jni_trace`) | 3,571 records; no non-null `ExceptionOccurred`, no `ExceptionClear`, no `Throw`/`ThrowNew`, and no pending-exception result before the crash. The only exception-like object is the VM's own `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) used for its `getStackTrace` stack walk; the launcher's spoof hook returns the fabricated 24-frame chain, then the VM calls `Debug.isDebuggerConnected`/`waitingForDebugger` (both false) and reaches the same reader crash. Falsified: `x20` is not a pending exception. |
 | JNI `IsSameObject` probe (`pairip_jni_trace` + `IsSameObject`) | 1,053 records; every one of the 529 calls at `+0x702e4` is `0x0 0x0 -> 1`, with no non-null argument and no class name. `[state+0x20]` is null at every observed `0x6ff60` check, so the clear/delete branch is never taken and the `cset eq` flag is 0. Crash, five globals, reader slots, tails, and image diff are unchanged. Falsified: there is no Java object in `x20` to name. |
 | Shared sequence counter (`seq-7e`) | `seqev B seq=12787` (`id=0x40b0007e pc=0x1f813 ctx=0x7ff9372b88 img=b400007b1224d010`) precedes `seqev D seq=12788` (`state=0x7ff9372bd0`, `fetch=0x1f811 next=0x1f813 op=0x7e`, same image) by 1; the second launch repeats it as 12797/12798. PROVEN: the `0x1f813` builtin is the fetch/prep step before the dispatcher entry, `0x6ff60` is the handler for the final `0x7e`, and the nested `0x31` at `pc=0x40a73` (`seq=12824`) runs after the dispatcher entry, inside the handler. |
+| JNI `Long` unboxing (`pairip_jni_trace` + `GetLongField`/`CallLongMethodA`) | Zero `GetLongField` records. Two `CallLongMethodA` calls, both `java.io.File.length()` on `/proc/self/maps` and `/proc/self/status`, each returning 0; no `Long.longValue`, no field read on a `Long`, no method call on a `Long` receiver. The VM constructs 421 `java.lang.Long` objects from hash-like image values but never reads them back through JNI. The argument `0x79f72af000` still resolves to split-APK offset `0x4eec000` (`libunity.so` base). Crash, five globals, reader slots, ring positions, and pointer-only image diff unchanged. Falsified: the `Long` argument is not consumed through JNI. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -307,10 +308,17 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
    the fetch/prep step and `0x6ff60` is the handler. The nested `0x31` at
    `pc=0x40a73` runs after the dispatcher entry, inside the handler, and
    writes the five globals.
-10. Trace `0x6ff60` forward from the nested `0x31` return to the
-    `+0x834dc`/`+0x834f0` setter and the string builder at `0x3e12c`.
-    Identify which branch reaches the setter, what creates `x20`, and why a
-    hosted run never executes it. Then identify the writer or patch that
+10. Closed statically (2026-10-28): `+0x83470` is the `ExceptionCheck`
+    epilogue and `+0x834dc`/`+0x834f0` is its pending-exception save into
+    `[state+0x20]`, not the reader-slot writer. With no pending exception the
+    branch is never taken, which is correct. Do not look for a writer there.
+11. Done (long-unbox, 2026-10-28): the `klB` argument is not unboxed through
+    JNI. The only `CallLongMethodA` calls are two `File.length()` probes that
+    return 0; there is no `GetLongField` and no `Long.longValue`. The
+    argument route is closed; the missing reader-slot initialization must
+    come from a different state-machine branch, a direct-memory read of the
+    boxed `Long`, or a writer outside the current trace.
+12. Next: after the `0x31` semantics, identify the writer or patch that
     should populate `image+0x3f874`/`image+0x1ba5c`, or prove that a bare
     launch takes a non-null path that avoids both slots.
 
@@ -1035,3 +1043,57 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
 ```
 
 - Status: pre-registered; ready to build and run.
+
+### Result
+
+- Build: APK sha256
+  `f676f109c165a020feef3b132824556c52d1ed18c7021aea96860429991c9fca`
+  (115,274,306 bytes, 488 entries, `libpairipshield.so` 480,736 bytes).
+  The installed game APK was not touched.
+- Install: `android install` sent a 904.94 KB delta patch. Both packages were
+  force-stopped and the log buffer was cleared before the launch.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 317` ms. Unlike
+  `seq-7e`, this run produced exactly one launch (pid 8138 at 00:06:22), so
+  the counters below are directly comparable to a single `seq-7e` launch.
+- Log: `tmp/cifi-apk/logs/verify/long-unbox.log`, 26,235 lines, sha256
+  `637f1569772a4ae09c095064ab69793f803f2b2ac4e58bab539ac87813ee9241`.
+- Instrumentation: line 1,783 reports `variant=long-unbox`,
+  `jniTrace=true`, `trace=true`, `preload=true`, `dumpVmImage=true`; every
+  other experiment switch is off.
+- Argument: `vm-args: [0] java.lang.Long=0x79f72af000`. The maps dump line
+  32 resolves it to `79f72af000-79f77a3000 r--p 04eec000
+  split_config.arm64_v8a.apk`, i.e. the same `libunity.so` ELF base as
+  `seq-7e` (offset `0x4eec000`). ASLR changed the numeric base; the mapping
+  identity did not.
+- JNI surface: 4,628 records (3,571 from the `jni-trace` baseline plus 1,053
+  `IsSameObject` records already compiled into the tracer plus the four new
+  `CallLongMethodA` records). `GetLongField`: 0 records.
+  `CallLongMethodA`: 2 calls, both `java.io.File.length()J`, on
+  `/proc/self/maps` and `/proc/self/status`, each returning `0`. There is no
+  `Long.longValue`, no `GetFieldID`/`GetObjectClass` on `java.lang.Long`,
+  and no `Call*Method` on a `Long` receiver.
+- The VM does construct 421 `java.lang.Long` objects from hash-like 64-bit
+  image values (for example `0x112268b1c431feb3`), but it never reads them
+  back through JNI. They are VM data values, not the `klB` argument.
+- Ring positions are byte-identical to `jni-trace`: builtin 3,699, state
+  41,366, vm 1,580, image write 2,211 (`seq-7e`'s two-launch log ends at the
+  same positions because it reports the second launch).
+- Crash signature unchanged: signal 11 in `__memmove_aarch64_nt+140`, caller
+  `split_config.arm64_v8a.apk +0x514`; `vm[0x540]` still holds
+  `bbb9eb6daed20ed0` / `015370f87525d57b`; state tail `id=0x872a21c
+  sel=0x31bb`; builtin tail `id=0x9a0c0031 pc=0x40a73`; dispatcher tail
+  `fetch=0x1f811 op=0x7e`.
+- Crash image: `klB-image-at-crash.bin`, pulled to
+  `/tmp/opencode/long-unbox-image-at-crash.bin`, sha256
+  `f5d547c5ef9c8ffd471d06caa8e86c329724b181af039694b538f36a8ee234d5`.
+  Five globals `11624a530406f4d0`, `3b9c9ee2f30925fb`, `2deb1a8aeb610c80`,
+  `cb58e4bf99df9e13`, `f32a064d1ef862fb` are byte-identical to `seq-7e` and
+  differ from pristine at `0x1da6f`/`0x1f422`/`0x2129a`/`0x377ff`/`0x38edd`.
+  Reader slots `0x3f874`/`0x1ba5c` are byte-identical to pristine. Diff vs
+  pristine is 79 ranges / 368 bytes, the same as `seq-7e`; diff vs
+  `jni-trace` is 29 ranges / 53 bytes, all high bytes of ASLR pointers.
+- Verdict: the pre-registered prediction is **FALSIFIED**. The `Long`
+  argument is not consumed through JNI, so the JNI-unboxing explanation for
+  the missing reader slots is closed. The reader-slot source must be a
+  different state-machine branch, a direct-memory read of the boxed `Long`,
+  or a writer outside the current trace.
