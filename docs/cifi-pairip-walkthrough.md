@@ -676,3 +676,63 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/syscall-tail.log
 - Next: static decode of the `0x31` handler/operand block and the preceding
   state's `next`/`fallback` decision. The maps-window lead is recorded in the
   findings; it must not be run without a separate pre-registration.
+
+## Planned run: apk-cd-map
+
+- Purpose: test whether the maps window is the gate. klB's maps reader consumes
+  exactly the first 146,432 bytes; the real base-APK central-directory line
+  (`r--s 074f5000`) starts at byte 316,554, so the VM never sees it. This run
+  maps the real CD at a low address so an identical line appears inside the
+  scanned prefix. It is not a repeat of `apk-zero-map`: that run mapped file
+  offset 0 (`r--p 00000000`) and did not put a CD-offset line anywhere.
+- Hypothesis: if the `0x6d` maps parser uses the `r--s 074f5000` line to locate
+  the base APK central directory, the low duplicate will change the five
+  globals or the reader slots, or move the crash past the failing read.
+- Change from the frozen baseline: add `pairip_apk_cd_map=true` and the inert
+  label `pairip_variant=apk-cd-map`. The debug APK also contains the new
+  debug-only switch (commit `e5cd358`); no game APK is modified, repacked, or
+  re-signed.
+- Prediction: the log contains `apk-cd-map: base=0x7900000000 size=0x13000
+  hint=0x7900000000 fixed=1 offset=0x74f5000 eocd=0x750781c` and the maps dump
+  has an `r--s 074f5000` line starting at `0x7900000000` within the first
+  146,432 bytes. If the window is causal, at least one of the five globals
+  differs from `0x534a6211`/`0xe29e9c3b`/`0x8a1aeb2d`/`0xbfe458cb`/`0x4d062af3`,
+  the reader slots differ from `bbb9eb6daed20ed0`/`015370f87525d57b`, or the
+  crash no longer stops at `__memmove_aarch64_nt+140`.
+- Falsification: the line is present inside the prefix, yet the five globals,
+  reader slots, state/builtin tails, crash signature, and image diff are
+  byte-identical to baseline. Then the maps window is not the gate; close the
+  lead and return to the `0x31` operand block. If the mapping is absent, lies
+  outside the prefix, or `apk-cd-map:` reports an error, the run is invalid.
+- Scope limit: the mapping makes the CD line visible to the maps parser; it
+  does not prove that the parser reads the CD bytes or that stock's maps
+  ordering matches. A positive result still needs the parser's consumption
+  path; a negative closes the window lead only.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Run key: `variant=apk-cd-map`, code commit `e5cd358`, APK sha256
+  `e36de8a080d7cc131b205f2f22d73fccdbdbb8d426d0a7f23976aa6398334071`
+  (115,274,306 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`). Installed hash and
+  `lastUpdateTime` are recorded after the install.
+- Build note: the ignored Frida gadget (`libaudiopolicy.so`, 39 MB) was moved
+  out of `jniLibs` for this build and restored afterwards, so the APK matches
+  the installed baseline's 488 entries. The `BepInEx.Android.zip` asset is
+  rebuilt and differs slightly; it is not loaded before the PairIP crash.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_apk_cd_map true --es pairip_variant apk-cd-map
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/apk-cd-map.log
+```
+
+- Status: pre-registered; ready to install and run.

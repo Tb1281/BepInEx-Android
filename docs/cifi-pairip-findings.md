@@ -594,3 +594,32 @@ pre-registered; do not treat the window as causal until it is.
 The file-backed native-resolution branch is ruled out. The live target is the
 `0x31` operand block and the state that re-dispatches to it, not another file
 or maps input experiment.
+
+## Pre-registered experiment (2026-10-27, apk-cd-map)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The syscall-tail run narrowed the maps lead: klB reads 143 full 1 KB chunks
+(146,432 bytes) and stops mid-line, while the real base-APK CD mapping
+(`r--s 074f5000`) starts at byte 316,554 and the split CD at byte 366,461.
+The earlier offset-0 experiment did not test this window because it exposed
+`r--p 00000000`, not a CD-offset line. This run maps the base APK's real CD at
+`0x7900000000` with `MAP_SHARED`, inside the scanned prefix, and adds no other
+variable.
+
+- Hypothesis: if the `0x6d` maps parser uses the `r--s 074f5000` line (offset
+  or shared flag) to locate the base APK central directory, the duplicate line
+  will change the five globals, the reader slots, or the crash.
+- Prediction: `apk-cd-map: base=0x7900000000 size=0x13000 hint=0x7900000000
+  fixed=1 offset=0x74f5000 eocd=0x750781c`, with an `r--s 074f5000` line at
+  `0x7900000000` inside the first 146,432 bytes. A change in the five globals,
+  the `bbb9…`/`0153…` reader slots, or the `__memmove_aarch64_nt+140` crash is
+  a positive result.
+- Falsification: the line is inside the prefix, but the five globals, reader
+  slots, state/builtin tails, crash signature, and image diff are byte-
+  identical to baseline. Then the maps window is not the gate.
+- Invalid: mapping error, missing or out-of-prefix line, or an unrelated
+  perturbation. The low mapping is diagnostic only and must not ship.
+- Scope: this makes the CD line visible; it does not prove the parser consumes
+  the CD bytes or that stock's maps order matches. A negative closes the
+  window lead; it does not reopen maps-content/identity experiments.
