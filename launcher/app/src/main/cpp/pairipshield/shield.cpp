@@ -88,6 +88,10 @@ extern "C" __attribute__((visibility("hidden"))) void pairip_hash_check_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_hash_check_c(
     uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_hash_check_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_fnv_trace_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_fnv_trace_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_fnv_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_class_trace_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_class_trace_c(uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_class_original;
@@ -594,6 +598,19 @@ bool InstallPairIpTrace() {
             &original);
         g_pairip_hash_check_original = original;
         LOGI("trace: hash-check hook rc=%d target=%p trampoline=%p", rc, target,
+             original);
+    }
+    // Capture the FNV-1 input of the 0xf656/0x1b hash phase. The hook sits on
+    // the `add x11, x9, w11, uxtw` before the loop at +0x7fde0; x11 is the
+    // input range and w26 its length.
+    if (g_pairip_fnv_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x7fddc);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_fnv_trace_entry),
+            &original);
+        g_pairip_fnv_original = original;
+        LOGI("trace: fnv-input hook rc=%d target=%p trampoline=%p", rc, target,
              original);
     }
     if (g_pairip_state_original == nullptr) {
@@ -1832,6 +1849,9 @@ extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_hash_check_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_fnv_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_state_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
@@ -2387,6 +2407,180 @@ void pairip_hash_check_c(uint64_t *regs) {
          " off=%#x len=%u idx=%#x data=%s text=%s",
          equal ? "ok" : "FAIL", computed, expected, t_hash_offset, t_hash_length,
          static_cast<uint32_t>(regs[26]), hex, text);
+}
+
+// Debug-only capture of the FNV-1 input used by the klB 0x1b handler.
+//
+// The handler's default branch at +0x7fd64 hashes a byte range from the
+// writable image. The shim runs instead of the `add x11, x9, w11, uxtw` at
+// +0x7fddc, before the loop at +0x7fde0. Because the add is relocated into
+// Dobby's trampoline and executes after this callback, x11 at entry is still
+// the zero-extended offset; the input byte is at x9 + offset and w26 is the
+// length. The 0xf656 loop calls this path once per byte; accumulate the bytes
+// until the image counter at +0x266f2 reaches its phase end, then dump them.
+static constexpr size_t kFnvInputMax = 0x400;
+static uint8_t g_fnv_input_bytes[kFnvInputMax] = {};
+static uint32_t g_fnv_input_offsets[kFnvInputMax] = {};
+static size_t g_fnv_input_len = 0;
+static uint32_t g_fnv_input_calls = 0;
+static uint32_t g_fnv_input_outside = 0;
+static uint32_t g_fnv_input_start = 0;
+static uint32_t g_fnv_input_min = 0xffffffffu;
+static uint32_t g_fnv_input_max = 0;
+static uint64_t g_fnv_input_checksum = 0xcbf29ce484222325ull;
+static uint32_t g_fnv_seen_calls = 0;
+static uint32_t g_fnv_bad_counter = 0;
+static uint32_t g_fnv_nonunit_length = 0;
+static uint32_t g_fnv_first_length = 0;
+static uint32_t g_fnv_counter_last = 0xffffffffu;
+static uint32_t g_fnv_counter_min = 0xffffffffu;
+static uint32_t g_fnv_counter_max = 0;
+static uint32_t g_fnv_counter_bumps = 0;
+
+static void DumpFnvInput(uintptr_t image) {
+    if (g_fnv_input_len == 0) return;
+    const bool contiguous =
+        g_fnv_input_min != 0xffffffffu &&
+        g_fnv_input_max - g_fnv_input_min + 1 == g_fnv_input_len;
+    LOGI("fnv-input: image=%p calls=%u seen=%u bytes=%zu start=%#x min=%#x "
+         "max=%#x contiguous=%d outside=%u checksum=%016" PRIx64
+         " bad_counter=%u nonunit_len=%u first_len=%u counter_range=%#x..%#x "
+         "bumps=%u",
+         reinterpret_cast<void *>(image), g_fnv_input_calls, g_fnv_seen_calls,
+         g_fnv_input_len, g_fnv_input_start, g_fnv_input_min,
+         g_fnv_input_max, contiguous ? 1 : 0, g_fnv_input_outside,
+         g_fnv_input_checksum, g_fnv_bad_counter, g_fnv_nonunit_length,
+         g_fnv_first_length,
+         g_fnv_counter_min == 0xffffffffu ? 0 : g_fnv_counter_min,
+         g_fnv_counter_max, g_fnv_counter_bumps);
+
+    // Log the address runs, not 419 individual lines. A contiguous capture has
+    // one run; a scattered one shows exactly where the probe read.
+    size_t run = 0;
+    size_t i = 0;
+    while (i < g_fnv_input_len) {
+        const uint32_t start = g_fnv_input_offsets[i];
+        size_t end = i + 1;
+        if (start != 0xffffffffu) {
+            while (end < g_fnv_input_len &&
+                   g_fnv_input_offsets[end] == start + (end - i)) {
+                ++end;
+            }
+        }
+        if (run < 96) {
+            LOGI("fnv-input run[%zu]: off=%#x len=%zu", run, start, end - i);
+        } else if (run == 96) {
+            LOGI("fnv-input: further runs omitted");
+        }
+        ++run;
+        i = end;
+    }
+
+    const size_t edge = 16;
+    for (size_t j = 0; j < g_fnv_input_len && j < edge; ++j) {
+        LOGI("fnv-input head[%zu] off=%#x byte=%02x", j,
+             g_fnv_input_offsets[j], g_fnv_input_bytes[j]);
+    }
+    for (size_t j = g_fnv_input_len > edge ? g_fnv_input_len - edge : 0;
+         j < g_fnv_input_len && j >= edge; ++j) {
+        LOGI("fnv-input tail[%zu] off=%#x byte=%02x", j,
+             g_fnv_input_offsets[j], g_fnv_input_bytes[j]);
+    }
+
+    for (size_t base = 0; base < g_fnv_input_len; base += 128) {
+        const size_t count =
+            g_fnv_input_len - base < 128 ? g_fnv_input_len - base : 128;
+        char hex[128 * 2 + 1] = {};
+        char text[128 + 1] = {};
+        for (size_t j = 0; j < count; ++j) {
+            const uint8_t byte = g_fnv_input_bytes[base + j];
+            std::snprintf(hex + j * 2, 3, "%02x", byte);
+            text[j] =
+                byte >= 0x20 && byte <= 0x7e ? static_cast<char>(byte) : '.';
+        }
+        LOGI("fnv-input[%#zx]: %s | %s", base, hex, text);
+    }
+
+    g_fnv_input_len = 0;
+    g_fnv_input_calls = 0;
+    g_fnv_input_outside = 0;
+    g_fnv_input_start = 0;
+    g_fnv_input_min = 0xffffffffu;
+    g_fnv_input_max = 0;
+    g_fnv_input_checksum = 0xcbf29ce484222325ull;
+}
+
+extern "C" __attribute__((visibility("hidden")))
+void pairip_fnv_trace_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+    if (t_last_vm_fetch != 0xf656) return;
+    const uintptr_t image = static_cast<uintptr_t>(regs[9]);
+    const uint32_t offset = static_cast<uint32_t>(regs[11]);
+    const uintptr_t buffer = image + offset;
+    const uint32_t length = static_cast<uint32_t>(regs[26]);
+    if (image == 0 || length == 0 || length > 0x1000) return;
+    ++g_fnv_seen_calls;
+    if (g_fnv_first_length == 0) g_fnv_first_length = length;
+    if (length != 1) ++g_fnv_nonunit_length;
+
+    uint32_t counter = 0;
+    const bool readable = SafeReadMemory(image + 0x266f2, &counter, 4);
+    if (g_fnv_counter_last != 0xffffffffu && counter > g_fnv_counter_last) {
+        ++g_fnv_counter_bumps;
+    }
+    g_fnv_counter_last = counter;
+    if (counter < g_fnv_counter_min) g_fnv_counter_min = counter;
+    if (counter > g_fnv_counter_max) g_fnv_counter_max = counter;
+    if (!readable || counter > 0x100) {
+        ++g_fnv_bad_counter;
+        static std::atomic<int> diag_log{0};
+        if (diag_log.fetch_add(1) < 8) {
+            LOGI("fnv-input: skip readable=%d image=%p off=%#x buffer=%p "
+                 "len=%u counter=%#x",
+                 readable ? 1 : 0, reinterpret_cast<void *>(image), offset,
+                 reinterpret_cast<void *>(buffer), length, counter);
+        }
+        return;
+    }
+
+    if (g_fnv_input_len == 0) g_fnv_input_start = counter;
+    ++g_fnv_input_calls;
+
+    const bool in_image =
+        buffer >= image && buffer - image < kKlBImageLength;
+    if (!in_image) {
+        static std::atomic<int> outside_log{0};
+        if (outside_log.fetch_add(1) < 8) {
+            LOGI("fnv-input: OUTSIDE image=%p buffer=%p len=%u counter=%#x "
+                 "fetch=%#x",
+                 reinterpret_cast<void *>(image),
+                 reinterpret_cast<void *>(buffer), length, counter,
+                 t_last_vm_fetch);
+        }
+    }
+
+    for (uint32_t i = 0; i < length && g_fnv_input_len < kFnvInputMax; ++i) {
+        uint8_t byte = 0;
+        if (!SafeReadMemory(buffer + i, &byte, 1)) break;
+        const bool byte_in_image =
+            buffer + i >= image && buffer + i - image < kKlBImageLength;
+        const uint32_t byte_offset =
+            byte_in_image ? static_cast<uint32_t>(buffer + i - image)
+                          : 0xffffffffu;
+        g_fnv_input_bytes[g_fnv_input_len] = byte;
+        g_fnv_input_offsets[g_fnv_input_len] = byte_offset;
+        if (byte_in_image) {
+            if (byte_offset < g_fnv_input_min) g_fnv_input_min = byte_offset;
+            if (byte_offset > g_fnv_input_max) g_fnv_input_max = byte_offset;
+        } else {
+            ++g_fnv_input_outside;
+        }
+        g_fnv_input_checksum =
+            (g_fnv_input_checksum * 0x100000001b3ull) ^ byte;
+        ++g_fnv_input_len;
+    }
+
+    if (counter <= 1) DumpFnvInput(image);
 }
 
 void pairip_append_trace_c(uint64_t *regs) {
