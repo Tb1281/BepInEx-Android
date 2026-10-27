@@ -1247,7 +1247,8 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
   `89512e884c333b75fe9dfa1a062a009aab41e87c7bb68239079dd1e5292b064c`.
   Five globals byte-identical to `long-unbox`; reader slots byte-identical
   to pristine; diff vs pristine 79 ranges / 368 bytes; diff vs `long-unbox`
-  30 ranges / 56 bytes (ASLR pointer high bytes only).
+  30 ranges / 56 bytes (pointer-like values at unaligned offsets, low/mid
+  and high bytes, plus small counters).
 - Ring counters: builtin 3,548, state 39,572, vm 1,580, image write 2,209;
   final `seq=5,127`. These are 151 builtins / 1,794 state events lower than
   `long-unbox` (3,699 / 41,366, `seq=5,278`), so the VM path length varies

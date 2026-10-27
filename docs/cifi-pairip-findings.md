@@ -1198,8 +1198,9 @@ new hook will not recurse.
   `89512e884c333b75fe9dfa1a062a009aab41e87c7bb68239079dd1e5292b064c`.
   Five globals are byte-identical to `long-unbox`; reader slots
   `0x3f874`/`0x1ba5c` are byte-identical to pristine; diff vs pristine is 79
-  ranges / 368 bytes; diff vs `long-unbox` is 30 ranges / 56 bytes, all high
-  bytes of ASLR pointers.
+  ranges / 368 bytes; diff vs `long-unbox` is 30 ranges / 56 bytes:
+  pointer-like values at unaligned offsets (low/mid as well as high bytes)
+  plus small counters, not only ASLR high bytes.
 - Ring counters are **not** identical: builtin 3,548 (vs 3,699), state
   39,572 (vs 41,366), vm 1,580 (same), image write 2,209 (vs 2,211); the
   final shared `seq` is 5,127 (vs 5,278). The difference is 151 builtin
