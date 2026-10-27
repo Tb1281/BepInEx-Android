@@ -1872,3 +1872,74 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/game-application.log
   (`licenseCheckState` / the retry result) has not been measured. Inspect the
   existing JNI/dex evidence first; do not assume the license path is the gate.
 - Findings updated: yes, in this commit.
+
+## Planned run: license-consumption-trace
+
+Run key: `variant=license-consumption-trace`, code commit `0e9051b`, APK
+sha256 `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+Idempotency check: searched the walkthrough and findings for
+`license-consumption`, `gameApplication` plus `jniTrace`, and
+`licenseCheckState`; no run key or verdict exists. The existing
+`jni-trace` run has `gameApplication=false`, so it cannot rule out a read
+that is conditional on the Application context; the existing
+`game-application` run has no JNI trace. This run is the missing
+combination, not a repeat.
+
+- Hypothesis: klB does not consume `LicenseClient` state. If it does, its
+  JNI calls will name `com/pairip/licensecheck/LicenseClient` or read a
+  static field from it; the hosted-only bind failure would then be an input
+  to the crashing VM rather than an unrelated log line.
+- Static basis: in the decompiled Java, only
+  `com.pairip.application.Application.attachBaseContext` references
+  `LicenseClient`; `VMRunner`, `StartupLauncher`, and `SignatureCheck` do
+  not. The baseline `jni-trace` log (3,571 records, full run to the reader
+  crash) has zero `GetStaticFieldID`, `GetStaticObjectField`,
+  `GetStaticBooleanField`, and `GetFieldID` records, and its `FindClass`
+  set is `Object`, `File`, `Long`, `Exception`, `StackTraceElement`, and
+  `Debug`. That trace ran with `gameApplication=false`.
+- Change from the game-application baseline: add
+  `pairip_jni_trace=true`. `pairip_preload=true` keeps the post-YTw install
+  point, so klB's JNI calls are traced without instrumenting YTw. No
+  Application, VM, image, hook, or reader change.
+- Prediction: the variant line shows `gameApplication=true`,
+  `gameApplicationAsProcess=false`, `jniTrace=true`, `preload=true`,
+  `trace=true`; the log shows `PairIP JNI trace: installed=true` before the
+  first `PairIpJni: jni:` record. Then either the trace contains a
+  `LicenseClient` class/field/method access (read is live), or it contains
+  none and the reader slots, append, tails, and crash remain identical to
+  the game-application run.
+- Invalid run: `jniTrace=false` in the variant line, `installed=false`, the
+  Application creation or signature-check lines are absent, fewer than
+  1,000 JNI records, the trace stops before the `0x31` reader, or the crash
+  is not the baseline `__memmove_aarch64_nt+140` signature.
+- Falsification: any trace record naming
+  `com/pairip/licensecheck/LicenseClient`, `LicenseCheckState`, or
+  `licenseCheckState` (FindClass, fields, methods, or a static access).
+  Then license state is a live input and its causal role must be measured
+  separately. If none appears, close the license fork and move to the
+  reader-source probe at `+0x3dc88`.
+- Frozen diagnostic baseline: `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `stackSpoof=true`,
+  `contextSeed=true`, debug launcher.
+- Starting state: branch `test/feat-cifi` at `0e9051b`, tree clean; installed
+  launcher debug APK is the same `versionCode=1` build with sha256
+  `f4f71ba2...` installed at 01:41:10, and no launcher code changed since.
+  The install is skipped; the game APK is untouched.
+- Command:
+
+```bash
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_jni_trace true \
+  --es pairip_variant license-consumption-trace \
+  --ez pairip_game_application true
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/license-consumption-trace.log
+```
+
+- Status: pre-registered; ready to run.
