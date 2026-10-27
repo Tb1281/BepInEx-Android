@@ -90,6 +90,8 @@ built:
 The `0x1b`/`0x92` shape is a five-word hash state. The runtime write ring
 records 419 one-byte updates at `0xf656` (counter `0x266f2`: `0x100` -> 0, then
 `0xa3` -> 0); the earlier 70-byte estimate is not supported by that capture.
+The same ring shows the counter written at 4-, 2-, and 1-byte widths (the
+`0x100` value needs two bytes), so it is read as a little-endian u32.
 The input source is not identified yet. That is the fork:
 
 - If the input is static image data, a stock launch computes the same five
@@ -159,13 +161,16 @@ launcher). It adds one probe, hooked at `libpairipcore.so+0x7fddc` (the
 `pairip_trace` is set; it adds no extra.
 
 - Hypothesis: the `0xf656/0x1b` hash input is static image data.
-- Prediction: every probe call with VM fetch `0xf656` has `x11` inside
-  `[image, image+0x44feb]`, and the accumulated bytes match the pristine `klB`
-  asset at the recorded offsets.
-- Falsification: any call has `x11` outside that range, or the bytes do not
-  match the asset, or the observed input is not the 419-byte image loop. In
-  that case the input is environment-fed and the fork moves to reproducing
-  stock maps/status content.
+- Prediction: every probe call with VM fetch `0xf656` has the computed input
+  pointer `x9 + uxtw(x11)` inside `[image, image+0x44feb]`, and the accumulated
+  bytes match the pristine `klB` asset at the recorded offsets. At the hook
+  `x11` is the pre-`add` offset; the relocated `add` runs in the trampoline
+  after the callback. The probe reads the counter as the u32 at
+  `image+0x266f2` and dumps when it is `<= 1`.
+- Falsification: any call has the computed pointer outside that range, or the
+  bytes do not match the asset, or the observed input is not the 419-byte
+  image loop. In that case the input is environment-fed and the fork moves to
+  reproducing stock maps/status content.
 - Verdict: not yet recorded; record it in the walkthrough and here only after
   the run.
 

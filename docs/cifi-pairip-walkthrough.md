@@ -58,10 +58,17 @@ documentation-only.
   match the pristine asset at the recorded offsets.
 - Probe: hook `libpairipcore.so+0x7fddc` (the `add x11, x9, w11, uxtw` before
   the FNV-1 loop at `+0x7fde0`), log `x9`/`x11`/`w26`, and accumulate bytes
-  while `image+0x266f2` is in the observed loop ranges; dump at counter `1`.
+  while `image+0x266f2` is in the observed loop ranges; dump when the counter
+  is `<= 1`. At entry `x11` is still the zero-extended offset because Dobby's
+  trampoline runs the relocated `add` afterwards, so the probe reads
+  `x9 + uxtw(x11)`. The counter is the little-endian u32 at `image+0x266f2`
+  (the image ring shows 4-, 2-, and 1-byte writes there).
 - Frozen baseline: `variant=default`, `pairip_preload=true`,
   `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
-- Run key: `variant=fnv-input`, code commit `TBD`, APK sha256 `TBD`.
+- Run key: `variant=fnv-input`, code commit `599cf34`, APK sha256
+  `be31b43e80bdc215d58f883f873ccc35596f18e6b9e7556c3d6d591f6edfbecf`
+  (115,103,986 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
 - Command:
 
 ```bash
@@ -70,7 +77,7 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true
 ```
 
-- Status: planned; no verdict yet.
+- Status: prepared; run key recorded, no verdict yet.
 
 ## Verdict log
 
