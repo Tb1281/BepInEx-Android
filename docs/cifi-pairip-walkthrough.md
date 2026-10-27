@@ -1741,3 +1741,71 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stock-bound-context.log
   slots, append, tails, crash, and image invariants are unchanged. The
   context object type is not the gate; close the context branch.
 - Findings updated: yes, in this commit.
+
+## Planned run: game-application
+
+Run key: `variant=game-application`, code commit `cd0e77e`, APK sha256
+`f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+Idempotency check: searched the walkthrough and findings for
+`game-application`, `gameApplication`, and `pairip_game_application`; no run
+key or verdict exists. The 2026-10-27 handoff says the lifecycle was tried
+and did not fix klB, but that claim has no log, run key, or reader-slot
+measurement in this repository; it is UNVERIFIABLE as a falsification. This
+run adds the current slot/image instrumentation and is the next unmeasured
+part of the stock boot after the context-object result.
+
+- Hypothesis: a stock launch creates the game `Application` before klB, so
+  `Application.attachBaseContext` points `VMRunner.context` at the Application
+  and runs `SignatureCheck.verifyIntegrity` and `LicenseClient.checkLicense`.
+  The hosted baseline keeps the launcher's Application and never runs those
+  checks. If that lifecycle (or the Application context) is the hosted
+  discriminator, the reader slots, append, tails, or crash change; otherwise
+  they stay identical.
+- Change from the frozen diagnostic baseline: add
+  `pairip_game_application=true`. `seedPairIpContext` still runs YTw first;
+  `installGameApplication` then calls `LoadedApk.makeApplication(false,
+  instrumentation)`, logs the created Application, calls
+  `VMRunner.setContext(app)`, and leaves `mInitialApplication` alone because
+  `pairip_game_application_process` is false. `pairip_preload=true` still
+  forces `lateHooks=true` and runs klB after the Application is created. No
+  VM, image, hook, or reader change.
+- Prediction: the variant line shows `gameApplication=true`,
+  `gameApplicationAsProcess=false`, `lateHooks=true`, `preload=true`; the log
+  shows `PairIP experiment: game Application com.pairip.application.Application
+  package=com.OctocubeGamesCompany.CIFI`, and `SignatureCheck: Signature check
+  ok` (or an explicit license-check line). Then either the reader slots differ
+  from `bbb9eb6daed20ed0` / `015370f87525d57b` (and the crash or tails change),
+  or they are byte-identical to the frozen baseline.
+- Invalid run: `gameApplication=false` in the variant line; the Application
+  creation line is absent or reports `creation failed`/`was not created`; the
+  signature check does not run; the run does not reach the `0x31` reader; or
+  the crash is not the baseline `__memmove_aarch64_nt+140` signature.
+- Falsification: the Application is created, the signature check runs, but
+  the reader slots, append record, `vm[0x540]`, `vm[0x7c0]` tail, state tail,
+  builtin tail, crash signature, and image invariants are byte-identical to
+  the frozen baseline. Then the Application lifecycle is not the gate; close
+  it and move to the reader-source probe at `+0x3dc88`.
+- Frozen diagnostic baseline: `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `stackSpoof=true`,
+  `contextSeed=true`, debug launcher.
+- Starting state: branch `test/feat-cifi` at `cd0e77e`, tree clean; installed
+  launcher debug APK is the same `versionCode=1` build with sha256
+  `f4f71ba2...` installed at 01:41:10, and no launcher code changed since.
+  The install is skipped; the game APK is untouched.
+- Command:
+
+```bash
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant game-application \
+  --ez pairip_game_application true
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/game-application.log
+```
+
+- Status: pre-registered; ready to run.
