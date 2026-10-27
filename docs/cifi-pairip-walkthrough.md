@@ -1260,3 +1260,53 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/long-unbox.log
   "ring positions identical" clause did not hold; counters are
   path-length-dependent.
 - Findings updated: yes, in this commit.
+
+## Planned run: stack-len-plus-one
+
+- Idempotency check: searched this walkthrough for
+  `variant=stack-len-plus-one`; no prior entry. The `stack-strings` run
+  already has a verdict, but it did not change the frame text.
+- Purpose: test whether the per-frame UTF-8 length stored by the
+  stack-string handler at `+0x7383c` is consumed by the failing path.
+- Change: in `pairIpUnityLaunchStack()`, change the `NativeLoader` method
+  name from `load` to `loade` (one extra UTF-8 byte; 51 -> 52). No other
+  spoof frame, switch, hook, or baseline change.
+- Ruled-out check: this is not a repeat of `long-unbox` (JNI `Long`
+  unboxing) or `stack-strings` (observe `GetStringUTFChars`). It changes
+  the fabricated frame length, which no prior run varied.
+- Prediction: the `GetStringUTFChars` log shows
+  `com.unity3d.player.NativeLoader.loade(Native Method)` with length 52, and
+  at least one of the five globals, the reader slots, the tails, or the
+  crash image differs from `stack-strings`; the runtime length is an input
+  to the failing path.
+- Falsification: the new frame appears with length 52, but the five
+  globals, reader slots, state/builtin tails, crash signature, and image
+  diff (apart from ASLR pointer bytes) are byte-identical to
+  `stack-strings`. Then the per-frame length is not consumed by the failing
+  path and the stack-content route is closed.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `pairip_jni_trace=true`,
+  `stackSpoof=true`, `contextSeed=true`, debug launcher.
+- Run key: `variant=stack-len-plus-one`, code commit `HEAD` plus the
+  one-frame change, APK sha256 recorded after the build; package
+  `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`).
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_jni_trace true --es pairip_variant stack-len-plus-one
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stack-len-plus-one.log
+```
+
+- Status: pre-registered; ready to build and run.
+- Findings updated: yes, in this commit (the static correction and this
+  pre-registration).

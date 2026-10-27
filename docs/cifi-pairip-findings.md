@@ -330,13 +330,17 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
     alone does not populate the reader slots. Ring counters are not
     invariant (builtin 3,548 vs 3,699; state 39,572 vs 41,366); compare
     final tails and image only.
-14. Next: find the consumer of the image slots written at
-    `+0x73830`/`+0x7383c` (the hash-table read path and its callers) and
-    check whether the text feeds a hash or compare that selects the `0x31`
-    handler's next state. If it does, pre-register a run that changes only
-    the fabricated stack text (or `stackSpoof=false`) and watch the five
-    globals, reader slots, and crash. Falsification: byte-identical
-    globals/slots/crash closes the stack-content route.
+14. Corrected statically (2026-10-28): the `+0x7cdf4` gate hashes
+    image-static bytes at `image[(w26^image32[pc+0x22])%size]`, not the
+    JNI text; the expected hash, candidates, and salt are bytecode/image
+    values. The "text hash gate" hypothesis is withdrawn, and the
+    observation-only gate probe was not run.
+15. Next: test whether the transient per-frame length slot written at
+    `+0x7383c`, `image[(w26^image32[pc+6])%size]`, is consumed. Pre-register
+    a one-frame length change (append one character to
+    `NativeLoader.load`) and watch the five globals, reader slots, tails,
+    and crash. Falsification: the JNI log shows the new length but the five
+    globals/slots/tails/crash stay byte-identical to `stack-strings`.
 
 ## Pre-registered experiment (2026-10-27, state-router)
 
@@ -1213,3 +1217,80 @@ new hook will not recurse.
   globals, reader slots, and image are unchanged, so the stack text alone
   does not populate the reader slots. The "ring positions identical" clause
   did not hold; counters are path-length-dependent.
+
+## Static correction (2026-10-28): the +0x7cdf4 gate is not a text check
+
+The register-level decode of the handler at `0x73718-0x7383c` and the gate
+at `0x7cdb4-0x7ce08` changes the interpretation of the stack-string block.
+
+- At `+0x73718` the handler loads `w23` (image size) and `w13` (operand pc)
+  from `[x19+8]`. It then reads, from the image at `pc`:
+  a 16-bit length (`w27`) at `+0`, the 32-bit candidate `w24` at `+2`, the
+  32-bit candidate `w25` at `+6`, the salt-index mix at `+0xa`, the
+  hash-bucket mix at `+0x16`, the 64-bit expected value at `+0x1a`, and the
+  hash-input offset at `+0x22`.
+- `GetStringUTFLength` (`#0x540`) returns the runtime UTF-8 length in `w22`;
+  `+0x7383c` stores it at `image[(w26^image32[pc+6])%size]`.
+  `GetStringUTFChars` (`#0x548`) returns the runtime pointer; `+0x73830`
+  stores it at `image[(w26^image32[pc+2])%size]`.
+- The hash loop at `+0x73864` does **not** read the JNI buffer. It reads
+  `w27` bytes from `image[(w26^image32[pc+0x22])%size]`, and `w27` is the
+  16-bit immediate at `pc`, not the runtime length.
+- At `+0x7cdc0` the VM reads the 32-bit signed salt at
+  `image[(w26^image32[pc+0xa])%size]`. At `+0x7cdf0` it compares
+  `FNV1(image bytes) ^ salt` with the 64-bit immediate at `pc+0x1a`.
+  At `+0x7cdf8` it selects `w25` on equality else `w24`, and at `+0x83470`
+  it stores the selected result.
+- Therefore the gate is a static bytecode/image self-check, not a comparison
+  of the fabricated stack text. The text only reaches the image as a
+  transient pointer/length pair. The "text hash gate" hypothesis is
+  withdrawn; the planned observation-only probe at `+0x7cdf4` was not run
+  because its `eq` pattern cannot discriminate the spoof.
+- The runtime length is the only deterministic text-derived value that
+  enters the image. The next experiment changes one frame's length.
+
+## Pre-registered experiment (2026-10-28, stack-len-plus-one)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+- Purpose: test whether the per-frame UTF-8 length stored by the
+  stack-string handler at `+0x7383c` is consumed by the failing path.
+- Change: in `pairIpUnityLaunchStack()`, change the `NativeLoader` method
+  name from `load` to `loade` (one extra UTF-8 byte; 51 -> 52). No other
+  spoof frame, switch, hook, or baseline change.
+- Prediction: the `GetStringUTFChars` log shows
+  `com.unity3d.player.NativeLoader.loade(Native Method)` with length 52, and
+  at least one of the five globals, the reader slots, the tails, or the
+  crash image differs from `stack-strings`; the runtime length is an input
+  to the failing path.
+- Falsification: the new frame appears with length 52, but the five
+  globals, reader slots, state/builtin tails, crash signature, and image
+  diff (apart from ASLR pointer bytes) are byte-identical to
+  `stack-strings`. Then the per-frame length is not consumed by the failing
+  path and the stack-content route is closed.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `pairip_jni_trace=true`,
+  `stackSpoof=true`, `contextSeed=true`, debug launcher.
+- Run key: `variant=stack-len-plus-one`, code commit `HEAD` plus the
+  one-frame change, APK sha256 recorded after the build; package
+  `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`).
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_jni_trace true --es pairip_variant stack-len-plus-one
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stack-len-plus-one.log
+```
+
+The character append also changes the frame text. The handler stores only
+the pointer and length, not the bytes, so the length is the intended
+variable.
