@@ -258,10 +258,11 @@ Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
 
 The next step is one diagnostic run against the frozen baseline
 (`pairip_preload=true`, `pairip_trace=true`, `pairip_dump_vm=true`, debug
-launcher). It adds one probe at the main state-router hash, which the
-`hash-gate` run identified as the producer of `sel=0x31bb`.
+launcher). It tests the main state-router hash, which the `hash-gate` run
+originally pointed at as the producer of `sel=0x31bb` (the retry result below
+falsifies that route).
 
-- Hypothesis: the comparison at `+0x32c44` (`cmp x8, w22`) and the
+- Hypothesis: the comparison at `+0x32c44` (`cmp x8, x22`) and the
   `+0x32c48 csel w8, w24, w25, eq` choose between a pass and a fallback
   selector; the hosted run takes the side that yields `sel=0x31bb` and the
   reader state, while the other side is the non-reader path.
