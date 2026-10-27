@@ -444,3 +444,53 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   mapping is not the hosted gate. The next fork is the `0x31` builtin at
   `pc=0x40a73`: instrument its operand block, or prove stock takes an earlier
   branch before the reader.
+
+## Planned run: process-name-spoof
+
+- Purpose: test whether the hosted process identity is the PairIP gate. The
+  `0x7e` handler reads `/proc/self/status` and `/proc/self/cmdline`; the
+  hosted `:game` process exposes `com.bepinex.android.debug:game` there while
+  a stock launch exposes `com.OctocubeGamesCompany.CIFI`. Every other hosted
+  difference exercised so far (missing offset-0 APK mapping, host maps lines,
+  uid/gid) has been falsified.
+- Hypothesis: PairIP's first VM takes the decoy/integrity branch because the
+  process name is the launcher's, not the game's. Restoring the stock name
+  before the first VM makes the VM select or initialize the reader slots the
+  way stock does.
+- Change from the frozen baseline: add `pairip_process_name=true`. The debug
+  launcher rewrites argv0 in place to `com.OctocubeGamesCompany.CIFI`
+  (29 bytes, fits the current 30-byte buffer) and sets the task name to its
+  last 15 characters, `mesCompany.CIFI`, matching Android's own suffix rule.
+  No maps sanitizer, no offset-0 mapping, no fake CD, no seed.
+- Prediction: the log shows `process name spoofed: comm=mesCompany.CIFI` and
+  the VM's status sample at `fetch=0x333eb op=0x7e` starts with
+  `Name:\tmesCompany.CIFI` (instead of `Name:\troid.debug:game`), and the
+  cmdline sample is `com.OctocubeGamesCompany.CIFI`. Either the reader slots
+  differ from `0xbbb9eb6daed20ed0` / `0x015370f87525d57b` (and the
+  `__memmove_aarch64_nt+140` crash disappears or diverges to a different
+  failure), or the state/builtin tail diverges before the reader.
+- Invalid run: the spoof call fails, or the VM's status sample still shows the
+  launcher name. Then the identity variable was not actually changed and the
+  result is not a falsification.
+- Falsification: the spoof succeeds and the VM status sample shows the stock
+  name, but the crash signature, both reader slots, the five-global values,
+  the FNV input, the state tail (`id=0x872a21c sel=0x31bb`), and the builtin
+  tail (`id=0x9a0c0031 pc=0x40a73`) are byte-identical to baseline. Then the
+  process name is not the hosted gate.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Run key: `variant=process-name-spoof`, code commit `defa262`, APK sha256
+  `9aa20aa3e3481fb3e1cde83729df34bb17b145d9ef5a1ce2eb411970c576b892`
+  (115,104,390 bytes), installed `lastUpdateTime=2026-10-27 17:53:23`,
+  package `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`).
+- Command:
+
+```bash
+OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
+  tmp/cifi-apk/run_variant.sh process-name-spoof \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_process_name true
+```
+
+- Status: pre-registered; ready to run.

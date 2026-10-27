@@ -378,3 +378,33 @@ crash image `tmp/cifi-apk/vmrun/klB-image-zero-map.bin` (sha256
 The crash image differs from the retry image by only 50 bytes in 29 ranges,
 all ASLR pointers plus the known `image+0xae3` counter. The offset-0 mapping
 had no behavioral effect.
+
+## Pre-registered experiment (2026-10-27, process-name-spoof)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The `0x7e` handler reads `/proc/self/status` and `/proc/self/cmdline` before
+writing the five globals. The hosted `:game` process reports
+`com.bepinex.android.debug:game` (task name `roid.debug:game`); a stock launch
+reports `com.OctocubeGamesCompany.CIFI`. The maps/uid/gid and offset-0 APK
+differences are already falsified, so the process identity is the remaining
+environmental tell not yet exercised.
+
+- Hypothesis: PairIP takes the decoy/integrity branch because the process
+  name is the launcher's. Spoofing argv0 and the task name to the game before
+  the first VM restores the stock branch.
+- Change from the frozen baseline: add `pairip_process_name=true`. The
+  launcher rewrites argv0 in place to the 29-byte game package and sets the
+  task name to its last 15 characters, `mesCompany.CIFI`. Everything else is
+  unchanged.
+- Prediction: the spoof succeeds, the VM's status sample shows
+  `Name:\tmesCompany.CIFI`, and either the reader slots differ from
+  `0xbbb9eb6daed20ed0` / `0x015370f87525d57b` or the crash/path diverges
+  before the reader.
+- Falsification: the spoof succeeds and is visible to the VM, but the crash
+  signature, reader slots, five globals, FNV input, state tail, and builtin
+  tail are byte-identical to baseline.
+- Invalid: the spoof fails or the VM still sees the launcher name.
+- Diagnostic only: the spoof must not ship; if it changes the path, the
+  production fix has to reproduce the stock launch shape, not rename the
+  hosted process.
