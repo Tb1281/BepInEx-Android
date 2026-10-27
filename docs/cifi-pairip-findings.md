@@ -335,12 +335,18 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
     JNI text; the expected hash, candidates, and salt are bytecode/image
     values. The "text hash gate" hypothesis is withdrawn, and the
     observation-only gate probe was not run.
-15. Next: test whether the transient per-frame length slot written at
-    `+0x7383c`, `image[(w26^image32[pc+6])%size]`, is consumed. Pre-register
-    a one-frame length change (append one character to
-    `NativeLoader.load`) and watch the five globals, reader slots, tails,
-    and crash. Falsification: the JNI log shows the new length but the five
-    globals/slots/tails/crash stay byte-identical to `stack-strings`.
+15. Closed (stack-len-plus-one, 2026-10-28): the transient per-frame length
+    written at `+0x7383c` is not consumed by the failing path. A 51 -> 52
+    byte frame produced zero new image offsets beyond the known
+    ASLR/counter noise, and the five globals, reader slots, tails, and
+    crash stayed identical. The stack-content route is closed; do not vary
+    the spoof text again.
+16. Next (reader source): the reader slots `0x3f874`/`0x1ba5c` are still
+    pristine at the crash and no traced image write touches them. Follow
+    the reader value back from `+0x8d460` to the state handler that fills
+    the `data`/`size` offsets (`w8`/`w9`) and identify which context or
+    image field should supply them. The five globals are stable across
+    every hosted run, so they are not the missing discriminator.
 
 ## Pre-registered experiment (2026-10-27, state-router)
 
@@ -1294,3 +1300,52 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stack-len-plus-one.log
 The character append also changes the frame text. The handler stores only
 the pointer and length, not the bytes, so the length is the intended
 variable.
+
+## stack-len-plus-one result (2026-10-28 00:39)
+
+- Build/install: debug APK 131,054,961 bytes, sha256
+  `98bf9c7c2f059302e547e728579d383788d96a0eb346fb23c47a0132228acf6f`;
+  `android install` sent a 15.99 MB delta (87.21% savings); the game APK
+  was not modified. Device SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`).
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 224` ms, one
+  launch only (pid 24902). Log
+  `tmp/cifi-apk/logs/verify/stack-len-plus-one.log`, 25,867 lines, sha256
+  `0c99a19332368b22e121dfa25043e118f7ef7fbf0c15fb64da62d2b2bea013c3`.
+- Change observed: the fabricated frame appears twice as
+  `com.unity3d.player.NativeLoader.loade(Native Method)` (52 UTF-8 bytes)
+  at the two `GetStringUTFChars` stack walks. The run still has exactly 48
+  `GetStringUTFChars` records, all from the same
+  `libpairipcore+0x73814` caller.
+- Invariants: signal 11 in `__memmove_aarch64_nt+140`, caller
+  `split_config.arm64_v8a.apk +0x514`; `vm[0x540]` still holds
+  `bbb9eb6daed20ed0` / `015370f87525d57b`; state tail
+  `id=0x872a21c sel=0x31bb reader=0xf9372668`; builtin tail
+  `id=0x9a0c0031 pc=0x40a73`; dispatcher tail `fetch=0x1f811 op=0x7e`,
+  next `0x1f813`.
+- Five globals `11624a530406f4d0`, `3b9c9ee2f30925fb`,
+  `2deb1a8aeb610c80`, `cb58e4bf99df9e13`, `f32a064d1ef862fb` are
+  byte-identical to `stack-strings`, `long-unbox`, `jni-trace`,
+  `jni-x20`, and `seq-7e`. Reader slots `0x3f874`/`0x1ba5c` are
+  byte-identical to pristine, and no image-write ring entry before the
+  crash touches either slot.
+- Crash image: `/tmp/opencode/stack-len-plus-one-image.bin`, sha256
+  `28b923f54e2c5b02baf08ef2e5d0928936409df057b5eb66b84fee3121f77c9d`.
+  Diff vs `stack-strings` is 30 ranges / 51 bytes, but there are **zero**
+  new-only differing offsets: every difference already varies across
+  `seq-7e`/`jni-trace`/`jni-x20`/`long-unbox`/`stack-strings`. The
+  non-pointer `image+0xae3` counter is `0x21a`, inside the observed
+  run-to-run range `0x215..0x21a` (`jni-trace` is also `0x21a`). Diff vs
+  pristine is 78 ranges / 367 bytes.
+- Ring counters: builtin 3,729, state 41,720, vm 1,580, image write 2,211;
+  final `seq=5,308`. They differ from `stack-strings` (3,548 / 39,572 /
+  1,580 / 2,209, `seq=5,127`) as in earlier identical-input runs, so the
+  differences are path-length variance, not an effect of the length.
+- Verdict: the pre-registered prediction is **FALSIFIED**. The 52-byte
+  frame reaches the VM, but no deterministic image, global, reader, or tail
+  difference follows. The literal "byte-identical image" clause fails only
+  on the nondeterministic `0xae3` counter; with zero new-only offsets the
+  falsification holds in substance. The per-frame runtime length is not
+  consumed by the failing path. The stack-content route is closed: neither
+  the fabricated text bytes nor their length gate the reader
+  initialization.

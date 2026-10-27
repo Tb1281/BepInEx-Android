@@ -1307,6 +1307,48 @@ sleep 25
 adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stack-len-plus-one.log
 ```
 
-- Status: pre-registered; ready to build and run.
-- Findings updated: yes, in this commit (the static correction and this
-  pre-registration).
+- Status: run; result below.
+
+### Result
+
+- Build: APK sha256
+  `98bf9c7c2f059302e547e728579d383788d96a0eb346fb23c47a0132228acf6f`
+  (131,054,961 bytes). `android install` sent a 15.99 MB delta (87.21%
+  savings); the game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 224` ms. Both
+  packages were force-stopped and the log buffer cleared first. One launch
+  only (pid 24902 at 00:39:39).
+- Log: `tmp/cifi-apk/logs/verify/stack-len-plus-one.log`, 25,867 lines,
+  sha256 `0c99a19332368b22e121dfa25043e118f7ef7fbf0c15fb64da62d2b2bea013c3`.
+- Change observed: `com.unity3d.player.NativeLoader.loade(Native Method)`
+  (52 UTF-8 bytes) appears twice, once per stack walk, at
+  `GetStringUTFChars` `caller=0x7a8cbc0814` (`libpairipcore+0x73814`). The
+  run still has 48 `GetStringUTFChars` records, the same count as
+  `stack-strings`.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, caller
+  `split_config.arm64_v8a.apk +0x514`; `vm[0x540]` keeps
+  `bbb9eb6daed20ed0` / `015370f87525d57b`; state tail `id=0x872a21c
+  sel=0x31bb reader=0xf9372668`; builtin tail `id=0x9a0c0031 pc=0x40a73`;
+  dispatcher tail `fetch=0x1f811 op=0x7e`, next `0x1f813`.
+- Image: `/tmp/opencode/stack-len-plus-one-image.bin`, sha256
+  `28b923f54e2c5b02baf08ef2e5d0928936409df057b5eb66b84fee3121f77c9d`.
+  Five globals byte-identical to `stack-strings`/`long-unbox`/`seq-7e`;
+  reader slots `0x3f874`/`0x1ba5c` byte-identical to pristine and not
+  touched by any traced image write; diff vs pristine 78 ranges / 367
+  bytes; diff vs `stack-strings` 30 ranges / 51 bytes, but **zero**
+  new-only offsets: every difference already varies across the older runs.
+  The non-pointer `image+0xae3` counter is `0x21a`, inside the observed
+  run-to-run range `0x215..0x21a`.
+- Ring counters: builtin 3,729, state 41,720, vm 1,580, image write 2,211;
+  final `seq=5,308`. They differ from `stack-strings` (3,548 / 39,572 /
+  1,580 / 2,209, `seq=5,127`) as in earlier identical-input runs, so the
+  difference is path-length variance, not an effect of the length.
+- Verdict: the pre-registered prediction is **FALSIFIED**. The 52-byte
+  frame reaches the VM, but no deterministic image, global, reader, or tail
+  difference follows. The literal image-is-byte-identical clause fails only
+  on the nondeterministic `0xae3` counter; with zero new-only offsets the
+  falsification holds in substance. The per-frame runtime length is not
+  consumed by the failing path, and the stack-content route is closed. The
+  one-character spoof change was reverted after the run; the tree returns
+  to the pre-experiment code state.
+- Findings updated: yes, in this commit.
