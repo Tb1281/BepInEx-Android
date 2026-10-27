@@ -169,6 +169,7 @@ not a dispatcher-selected state. See the static map below.
 | Process-name spoof (`pairip_process_name`) | Main-thread `prctl` succeeded and the VM's `/proc/self/status` read saw `mesCompany.CIFI` (argv0/`__progname` were rewritten too), yet the FNV input, five globals, reader slots, state/builtin tails, crash signature, and image diff are byte-identical to baseline. Falsified: process identity is not the gate. |
 | Identity conjunction (`pairip_process_name` + `pairip_proc_sanitize` + `pairip_apk_zero_map`) | All three facts were active: status showed `Name:\tmesCompany.CIFI` and game uid, the sanitized maps had zero `bepinex` lines (59 in the raw copy), and the game base APK was at offset 0 on line 32. Reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, state tail, crash signature, and image invariants were unchanged. Falsified: the stock identity conjunction is not the gate. |
 | Stock-bound context (`pairip_stock_bound` with `lateHooks`) | PairIP's own `InitContextProvider` ran (`ContextImpl.createAppContext` hidden-API grant from `com/pairip/InitContextProvider`) and built the app context from the game LoadedApk, instead of the seeded package context. Final state `0x872a21c sel=0x31bb`, reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, builtin tail, crash signature, and both ZIP slots were unchanged; the 45-byte image diff vs identity is entirely inside the known 368-byte variable set. Falsified: the context object type is not the gate. |
+| Game Application (`pairip_game_application`) | `LoadedApk.makeApplication` created `com.pairip.application.Application`; `VMRunner.context` was set to it, `SignatureCheck` passed, and `LicenseClient` attempted its check. The licensing bind was rejected because the real Binder UID is the launcher's (10616), not the game's (10610). Final state `0x872a21c sel=0x31bb`, reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, builtin tail, crash signature, and both ZIP slots were unchanged; the 48-byte/29-range image diff vs identity is inside the known 368-byte variable set with zero new-only offsets. Falsified: the Application lifecycle is not the gate. The license bind failure remains an unmeasured hosted-only condition. |
 | syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
 | Low CD mapping (`pairip_apk_cd_map`) | The base APK's real CD was mapped at `0x7900000000` (`MAP_SHARED`, offset `0x74f5000`), and its `r--s 074f5000` line appeared at byte 3,596, inside the VM's 146,432-byte maps scan. The five globals, reader slots, state/builtin tails, crash signature, and 368-byte/79-range image diff are unchanged. Falsified: a CD line inside the scanned window is not the gate. |
 | JNI call trace (`pairip_jni_trace`) | 3,571 records; no non-null `ExceptionOccurred`, no `ExceptionClear`, no `Throw`/`ThrowNew`, and no pending-exception result before the crash. The only exception-like object is the VM's own `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) used for its `getStackTrace` stack walk; the launcher's spoof hook returns the fabricated 24-frame chain, then the VM calls `Debug.isDebuggerConnected`/`waitingForDebugger` (both false) and reaches the same reader crash. Falsified: `x20` is not a pending exception. |
@@ -1611,3 +1612,54 @@ launch. The pre-registered prediction is **FALSIFIED**.
   falsification; the new run must state the current invariants. If it is
   unchanged, close the Application branch and move to the reader-source
   probe at `+0x3dc88`. Do not repeat identity/maps/context-only experiments.
+
+## game-application result (2026-10-28 02:04)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen diagnostic baseline plus `pairip_game_application=true` ran one
+cold launch. The pre-registered prediction is **FALSIFIED**.
+
+- Build/install: no build; APK sha256
+  `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+  Install skipped because the installed APK's `lastUpdateTime` is after the
+  build and no launcher code changed since. The game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 202` ms, one launch
+  only (pid 20237). Log
+  `tmp/cifi-apk/logs/verify/game-application.log`, 10,331 lines, sha256
+  `333ab8538198fb4223e3095a9a0fc283d8cb3ad83426792170f973fb7dbf1a93`.
+- Lifecycle: `installGameApplication` used `LoadedApk.makeApplication` and
+  logged `game Application com.pairip.application.Application
+  package=com.OctocubeGamesCompany.CIFI uid=10610 myUid=10616`. PairIP's
+  `SignatureCheck` ran and logged `Signature check ok`; `VMRunner.context`
+  was the Application for the subsequent klB execution. This is the part of
+  the stock boot that the context-object probe did not cover.
+- License: `LicenseClient: Connecting to the main licensing service...`
+  follows the Application line. The platform rejects the bind:
+  `com.OctocubeGamesCompany.CIFI does not belong to uid 10616`,
+  `Permission Denial: Accessing service .../LicensingService from pid=20237,
+  uid=10616 requires com.android.vending.CHECK_LICENSE`, then
+  `License check failed with error 'Not allowed to bind with the licensing
+  service: com.android.vending.licensing.ILicensingService'`. The real
+  Binder caller UID is the launcher's 10616, not the game's 10610; the
+  native `getuid`/status spoof does not affect Binder. This is a hosted-only
+  fact, not yet a measured gate.
+- Invariants: final state `id=0x872a21c sel=0x31bb reader=0xf93727d8`;
+  reader slots `bbb9eb6daed20ed0` / `015370f87525d57b`; append
+  `src=0x7ff93727a0 n=46 ... off=0x3e170
+  fields=0000007a90df2ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` = `00000000f93727d8`/`0000007ff9372869`;
+  `vm[0x7c0]` ends in `0x31bb`; builtin tail `0x9a0c0031`/`0x40a73`.
+- Crash: unchanged, signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `split_config.arm64_v8a.apk (+0)`, at 02:04:13.474; process exit by signal
+  11 at 02:04:13.501. Image `game-application-image.bin`, sha256
+  `0ccecb66b8b097d70dbfc6614bd41f339fabef5cb9de37b9dfa45aae96a30b46`;
+  it differs from the identity-conjunction image in 48 bytes across 29
+  ranges, all inside the known 368-byte variable set, with zero new-only
+  offsets. The five globals and both ZIP slots are byte-identical.
+- Verdict: creating the game Application, running `attachBaseContext`'s
+  signature check, and setting `VMRunner.context` to the Application change
+  no reader invariant. The Application lifecycle is not the gate; close it.
+  The only new fact is the hosted-only license bind rejection. Before any
+  device run, inspect whether klB reads the `LicenseClient` result or
+  `licenseCheckState`; if it does not, the next probe is the reader source at
+  `+0x3dc88`. Do not repeat identity/maps/context/application experiments.

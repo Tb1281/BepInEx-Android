@@ -1809,3 +1809,66 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/game-application.log
 ```
 
 - Status: pre-registered; ready to run.
+
+### 2026-10-28 02:04 — game-application: FALSIFIED (the Application lifecycle is not the gate)
+
+- Key: `variant=game-application`, code commit `24b4111`, APK sha256
+  `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+  Install skipped: the installed APK's `lastUpdateTime=2026-10-28 01:41:10`
+  is after the 01:40:42 build of the same sha256, and no launcher code
+  changed since. The game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 202` ms, one cold
+  launch (pid 20237). Both packages were force-stopped and logcat cleared
+  first. Log `tmp/cifi-apk/logs/verify/game-application.log`, 10,331 lines,
+  sha256 `333ab8538198fb4223e3095a9a0fc283d8cb3ad83426792170f973fb7dbf1a93`.
+- Variant line: `variant=game-application ... contextSeed=true stockBound=false
+  naturalFactory=false lateHooks=true preload=true trace=true
+  gameApplication=true gameApplicationAsProcess=false dumpVmImage=true`;
+  every other experiment switch is false.
+- Application evidence: `VMRunner: Finished executing YTw4BW9dg3brGdIP` and
+  `PairIP: seeded VMRunner context and started factory` at 02:04:12.479, then
+  the `LoadedApk.makeApplication` request. `SignatureCheck: Signature check
+  ok` at 02:04:12.482, and
+  `PairIP experiment: game Application com.pairip.application.Application
+  package=com.OctocubeGamesCompany.CIFI uid=10610 myUid=10616` at
+  02:04:12.483. `VMRunner.setContext` therefore ran on the game Application,
+  and both `attachBaseContext` checks executed before klB.
+- License path: `LicenseClient: Connecting to the main licensing service...`
+  at 02:04:12.483, immediately followed by the ActivityManager errors
+  `com.OctocubeGamesCompany.CIFI does not belong to uid 10616` and
+  `Permission Denial: Accessing service .../LicensingService from pid=20237,
+  uid=10616 requires com.android.vending.CHECK_LICENSE`, then
+  `LicenseClient: Retry #1. License check failed with error 'Not allowed to
+  bind with the licensing service:
+  com.android.vending.licensing.ILicensingService'. Next try in 2s...`.
+  The real Binder caller UID is the launcher's 10616, not the game's 10610;
+  the native shield's `getuid`/status spoof does not change it. This is a
+  hosted-only fact, not yet a proven gate.
+- Probe: the final state is `state[131111] id=0x872a21c sel=0x31bb
+  reader=0xf93727d8`; the append record is
+  `src=0x7ff93727a0 n=46 ... off=0x3e170
+  fields=0000007a90df2ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` is `00000000f93727d8`/`0000007ff9372869`;
+  `vm[0x7c0]` ends in `00000000000031bb`; builtin[11289] is
+  `id=0x9a0c0031 pc=0x40a73`.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `split_config.arm64_v8a.apk (+0)`, at 02:04:13.474; the process exited by
+  signal 11 at 02:04:13.501.
+- Crash image: `tmp/cifi-apk/logs/verify/game-application-image.bin`,
+  sha256 `0ccecb66b8b097d70dbfc6614bd41f339fabef5cb9de37b9dfa45aae96a30b46`.
+  It differs from the identity-conjunction image in 48 bytes across 29
+  ranges, and **all offsets are inside the known 368-byte variable set**;
+  there are zero new-only offsets. The five globals
+  (`0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`, `0x4d062af3`)
+  and both ZIP slots are byte-identical to the identity-conjunction image.
+- Verdict: the pre-registered prediction is **FALSIFIED**. The game
+  Application was created, `VMRunner.context` was set to it, and
+  `SignatureCheck` passed, yet the final reader state, slots, append, tails,
+  crash, and image invariants are unchanged. The Application lifecycle
+  (`attachBaseContext`, signature check, Application-as-context) is not the
+  gate; close that branch.
+- New hosted-only fork: the licensing service rejects the bind because the
+  real UID is the launcher's. Whether klB consumes `LicenseClient`'s state
+  (`licenseCheckState` / the retry result) has not been measured. Inspect the
+  existing JNI/dex evidence first; do not assume the license path is the gate.
+- Findings updated: yes, in this commit.
