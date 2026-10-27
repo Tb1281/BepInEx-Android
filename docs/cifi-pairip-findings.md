@@ -155,6 +155,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | Process-name spoof (`pairip_process_name`) | Main-thread `prctl` succeeded and the VM's `/proc/self/status` read saw `mesCompany.CIFI` (argv0/`__progname` were rewritten too), yet the FNV input, five globals, reader slots, state/builtin tails, crash signature, and image diff are byte-identical to baseline. Falsified: process identity is not the gate. |
 | syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
 | Low CD mapping (`pairip_apk_cd_map`) | The base APK's real CD was mapped at `0x7900000000` (`MAP_SHARED`, offset `0x74f5000`), and its `r--s 074f5000` line appeared at byte 3,596, inside the VM's 146,432-byte maps scan. The five globals, reader slots, state/builtin tails, crash signature, and 368-byte/79-range image diff are unchanged. Falsified: a CD line inside the scanned window is not the gate. |
+| JNI call trace (`pairip_jni_trace`) | 3,571 records; no non-null `ExceptionOccurred`, no `ExceptionClear`, no `Throw`/`ThrowNew`, and no pending-exception result before the crash. The only exception-like object is the VM's own `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) used for its `getStackTrace` stack walk; the launcher's spoof hook returns the fabricated 24-frame chain, then the VM calls `Debug.isDebuggerConnected`/`waitingForDebugger` (both false) and reaches the same reader crash. Falsified: `x20` is not a pending exception. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -696,3 +697,54 @@ probe for whether `x20` is a pending exception.
   observed a Java failure; it does not prove stock sees a null `x20`, so a
   positive still needs the class/message to be a hosted-only condition.
 - Diagnostic only: `pairip_jni_trace` must be removed before merge.
+
+## jni-trace result (2026-10-27 23:17)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The frozen baseline plus `pairip_jni_trace=true` ran one cold launch
+(`LaunchState: COLD`, `TotalTime: 419` ms). The tracer patched 35 JNIEnv slots
+at 23:17:31.972, before `libmain`/klB, and logged 3,571 `PairIpJni` records.
+The log is `tmp/cifi-apk/logs/verify/jni-trace.log` (22,386 lines, sha256
+`9b95ca6a677cdc3b1adf14f849282d05f70883fc7f9288b0d6593439e31bac9e`).
+
+The pre-registered pending-exception prediction is **FALSIFIED**. There is
+exactly one `ExceptionOccurred` record, and it returned `0x0` on thread 25201
+(the Play Integrity `LOG_TELEMETRY` path). There is no `ExceptionClear`, no
+`Throw`/`ThrowNew`, and no `Call* -> <pending exception>` result from
+`libpairipcore` anywhere before the crash. `x20` is therefore not a pending
+exception visible to the JNI tracer.
+
+The trace did expose the VM's own stack walk. On the main thread, twice
+(33.887 and 34.076), PairIP calls `FindClass("java/lang/Exception")`,
+`NewObjectA java.lang.Exception`, and `CallObjectMethodA
+java.lang.Exception.getStackTrace`. Each result triggers
+`PairIP: stack trace spoofed for executeVM (nativeLoader=true)`: the
+launcher's `Throwable.getStackTrace` hook replaces the real chain with the
+fabricated 24-frame `pairIpUnityLaunchStack`. The tracer's `DumpStackTrace`
+frames are that fabricated chain, not a real VM anti-debug walk. After the
+second walk the VM calls `Debug.isDebuggerConnected()` and
+`Debug.waitingForDebugger()`; both return `false`, and the run then reaches
+the same reader/crash path.
+
+The crash, the five globals, and both reader slots are unchanged: signal 11
+in `__memmove_aarch64_nt+140` with the `split_config.arm64_v8a.apk +0x514`
+frame; `bbb9eb6daed20ed0` / `015370f87525d57b` at `vm[0x540]`; state tail
+`id=0x872a21c sel=0x31bb`; builtin tail `id=0x9a0c0031 pc=0x40a73`; fetch
+`0x1f811 op=0x7e`. The state/builtin ring positions (`41366`/`3699`) are lower
+than the baseline (`130460`/`11234`) because the tracer slowed the loop; the
+tails and every compared byte are unchanged. The crash image is
+`tmp/cifi-apk/logs/verify/jni-trace-image.bin` (sha256
+`c952fdaa414120d7d8dd6561301a57e9e38e47d9300512949e97cb3984865d6d`); diff vs
+the prior crash image is 34 ranges / 76 bytes (ASLR/heap/counters), and vs
+the pristine asset 79 ranges / 368 bytes.
+
+The remaining question is what object the final `0x7e` handler reads from
+`[state+0x20]`. The JNI trace proves it is not a pending exception, but it
+cannot see `IsSameObject`, `NewLocalRef`, or `DeleteLocalRef`, and it does not
+print raw object pointers for every result. The only exception-like object in
+the window is the VM's own `java.lang.Exception`; the next diagnostic must
+hook `IsSameObject` and log the raw object/class (and, if safe, the class
+name) at the handler's call site.
+
+`pairip_jni_trace` is diagnostic only and must be removed before merge.

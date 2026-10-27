@@ -838,3 +838,55 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/jni-trace.log
 ```
 
 - Status: pre-registered; ready to run.
+
+### jni-trace (2026-10-27 23:17)
+
+- Install: `android install` sent a 728.94 KB delta patch; the installed base
+  APK remained
+  `e36de8a080d7cc131b205f2f22d73fccdbdbb8d426d0a7f23976aa6398334071`
+  (115,274,306 bytes), the same debug build used by `apk-cd-map`.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 419` ms. Both packages
+  were force-stopped first and the log buffer was cleared.
+- Log: `tmp/cifi-apk/logs/verify/jni-trace.log`, 22,386 lines, sha256
+  `9b95ca6a677cdc3b1adf14f849282d05f70883fc7f9288b0d6593439e31bac9e`.
+- Instrumentation check: line 1,205 reports `variant=jni-trace`,
+  `preload=true`, `trace=true`, `dumpVmImage=true`, `jniTrace=true`; every
+  other experiment switch is off.
+- Tracer: `jni: patched 35 slots in [0x7b51e19000, 0x7b51e1a000) prot=1`,
+  `jni: trace installed, libpairipcore=[0x7a8d352000, 0x7a8d3eb4c8)`, and
+  `PairIP JNI trace: installed=true` at 23:17:31.972, before `libmain`/klB.
+  3,571 `PairIpJni` records.
+- JNI result: one `ExceptionOccurred -> 0x0` on thread 25201 (Play Integrity
+  `LOG_TELEMETRY`), zero `ExceptionClear`, zero `Throw`/`ThrowNew`, and zero
+  `pending exception` results anywhere. The main thread's window instead
+  contains two `FindClass("java/lang/Exception")` ->
+  `NewObjectA java.lang.Exception` -> `getStackTrace` sequences (lines 8,357
+  and 8,830, at 33.887 and 34.076). Each is followed by
+  `PairIP: stack trace spoofed for executeVM (nativeLoader=true)`, so the
+  launcher's hook returned the fabricated 24-frame `pairIpUnityLaunchStack`;
+  the tracer's `DumpStackTrace` output is that fabricated chain, not the real
+  Java stack. After the second walk PairIP calls
+  `Debug.isDebuggerConnected()` and `Debug.waitingForDebugger()`, both `false`,
+  then reaches the reader/crash path.
+- Crash: unchanged; signal 11 in `__memmove_aarch64_nt+140`, with the
+  `split_config.arm64_v8a.apk +0x514` frame. `vm[0x540]` still holds
+  `bbb9eb6daed20ed0` / `015370f87525d57b`.
+- Rings: `state pos=41366`, tail `state[41365] id=0x872a21c sel=0x31bb`;
+  `builtin pos=3699`, tail `builtin[3698] id=0x9a0c0031 pc=0x40a73`;
+  `vminsn[1579] fetch=0x1f811 op=0x7e`. The ring positions are lower than the
+  baseline (`130460`/`11234`) because the tracer slowed the loop; the tails,
+  the five globals, and both reader slots are identical.
+- Image: `tmp/cifi-apk/logs/verify/jni-trace-image.bin`, sha256
+  `c952fdaa414120d7d8dd6561301a57e9e38e47d9300512949e97cb3984865d6d`. The
+  five globals (`0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`,
+  `0x4d062af3`) and both reader slots are byte-identical to
+  `apk-cd-map-image.bin`. Diff vs the prior crash image is 34 ranges / 76
+  bytes (ASLR, heap and counters); diff vs the pristine asset is 79 ranges /
+  368 bytes.
+- Verdict: the pre-registered pending-exception prediction is **FALSIFIED**,
+  and the run is valid. `x20` is not a pending exception visible to the
+  tracer. The JNI trace did identify the only exception-like object in the
+  window: the VM's own `java.lang.Exception` used for the stack walk, whose
+  frames the launcher replaces. Whether `[state+0x20]` holds that exception,
+  the `StackTraceElement[]`, or a different object is still open; the next
+  diagnostic must read the object at the `IsSameObject` call.
