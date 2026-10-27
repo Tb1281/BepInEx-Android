@@ -325,10 +325,16 @@ struct VmRingEntry {
     uint32_t raw_word;
     uint32_t next_pc;
     uint32_t reserved[3];
+    uint64_t seq;
 };
 VmRingEntry g_vm_ring[kVmRingSize] = {};
 std::atomic<uint32_t> g_vm_ring_pos{0};
 std::atomic<bool> g_vm_trace_enabled{false};
+
+// Shared entry counter for the dispatcher and builtin hooks. The two rings
+// are dumped independently, so this is the only way to order a dispatcher
+// entry against a builtin entry in the crash dump.
+std::atomic<uint64_t> g_trace_seq{0};
 
 // Debug-only image-write attribution. The copy hook snapshots klB's writable
 // image just before the interpreter starts; the dispatcher hook then compares
@@ -370,6 +376,7 @@ struct BuiltinRingEntry {
     uint32_t pc;
     uint32_t length;
     uint32_t lr_offset;
+    uint64_t seq;
 };
 BuiltinRingEntry g_builtin_ring[kBuiltinRingSize] = {};
 std::atomic<uint32_t> g_builtin_ring_pos{0};
@@ -2346,6 +2353,25 @@ void pairip_dispatch_trace_c(uint64_t *regs) {
     if (!SafeReadMemory(image, &magic, sizeof(magic))) return;
     if (magic != 0x50414900u) return;  // "\0IAP"
 
+    const uint64_t seq = g_trace_seq.fetch_add(1, std::memory_order_relaxed);
+    const uintptr_t lr = reinterpret_cast<uintptr_t>(regs[31]);
+    const uintptr_t base = g_pairip_base.load();
+    const uint32_t lr_offset =
+        lr >= base ? static_cast<uint32_t>(lr - base) : 0;
+    if (fetch_pc == 0x1f811u &&
+        (static_cast<uint32_t>(regs[1]) & 0xffffu) == 0x7eu) {
+        uint64_t q[8] = {};
+        SafeReadMemory(state, q, sizeof(q));
+        LOGI("trace: seqev D seq=%" PRIu64 " state=%p image=%p fetch=%#x "
+             "next=%#x cursor=%#x lr=+%#x q=%016" PRIx64 ",%016" PRIx64
+             ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
+             ",%016" PRIx64 ",%016" PRIx64,
+             seq, reinterpret_cast<void *>(state),
+             reinterpret_cast<void *>(image), static_cast<unsigned>(fetch_pc),
+             next_pc, cursor, lr_offset, q[0], q[1], q[2], q[3], q[4], q[5],
+             q[6], q[7]);
+    }
+
     // The write watch only covers the window before the interpreter starts.
     if (g_image_watch_armed.load()) DisarmImageWatch("first dispatch");
 
@@ -2356,6 +2382,7 @@ void pairip_dispatch_trace_c(uint64_t *regs) {
     entry.opcode = static_cast<uint32_t>(regs[1]) & 0xffffu;
     entry.raw_word = raw_word;
     entry.next_pc = next_pc;
+    entry.seq = seq;
     std::fill(std::begin(entry.reserved), std::end(entry.reserved), 0);
     t_last_vm_fetch = entry.fetch_pc;
     t_last_vm_op = entry.opcode;
@@ -2521,10 +2548,11 @@ void DumpBuiltinRing() {
     LOGI("trace: builtin ring pos=%u dumping last %u", pos, count);
     for (uint32_t i = count; i > 0; --i) {
         const BuiltinRingEntry &entry = g_builtin_ring[(pos - i) % kBuiltinRingSize];
-        LOGI("trace: builtin[%u] id=%#x pc=%#x arg=%p out=%p img=%p len=%#x "
-             "lr=+%#x args=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
-             ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64,
-             pos - i, entry.id, entry.pc, reinterpret_cast<void *>(entry.arg),
+        LOGI("trace: builtin[%u] seq=%" PRIu64 " id=%#x pc=%#x arg=%p "
+             "out=%p img=%p len=%#x lr=+%#x args=%016" PRIx64 ",%016" PRIx64
+             ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64,
+             pos - i, entry.seq, entry.id, entry.pc,
+             reinterpret_cast<void *>(entry.arg),
              reinterpret_cast<void *>(entry.out),
              reinterpret_cast<void *>(entry.image), entry.length,
              entry.lr_offset, entry.arg_words[0], entry.arg_words[1],
@@ -2574,8 +2602,9 @@ void DumpVmRing() {
 
     for (uint32_t i = count; i > 0; --i) {
         const VmRingEntry &entry = g_vm_ring[(pos - i) % kVmRingSize];
-        LOGI("trace: vminsn[%u] fetch=%#x next=%#x cursor=%#x op=%#x raw=%#x",
-             pos - i, entry.fetch_pc, entry.next_pc, entry.cursor,
+        LOGI("trace: vminsn[%u] seq=%" PRIu64 " fetch=%#x next=%#x "
+             "cursor=%#x op=%#x raw=%#x",
+             pos - i, entry.seq, entry.fetch_pc, entry.next_pc, entry.cursor,
              entry.opcode, entry.raw_word);
     }
 }
@@ -2599,6 +2628,22 @@ void pairip_builtin_trace_c(uint64_t *regs) {
 
     const uintptr_t lr = reinterpret_cast<uintptr_t>(regs[31]);
     const uint32_t pc = static_cast<uint32_t>(lenslot[1] >> 32);
+    const uint64_t seq = g_trace_seq.fetch_add(1, std::memory_order_relaxed);
+    const uintptr_t base = g_pairip_base.load();
+    const uint32_t lr_offset =
+        lr >= base ? static_cast<uint32_t>(lr - base) : 0;
+    if ((id & 0xffffu) == 0x7eu && pc == 0x1f813u) {
+        uint64_t q[8] = {};
+        SafeReadMemory(ctx, q, sizeof(q));
+        LOGI("trace: seqev B seq=%" PRIu64 " arg=%p out=%p ctx=%p "
+             "img=%016" PRIx64 " id=%#x pc=%#x lr=+%#x q=%016" PRIx64
+             ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
+             ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64,
+             seq, reinterpret_cast<void *>(arg), reinterpret_cast<void *>(out),
+             reinterpret_cast<void *>(ctx), lenslot[0], id,
+             static_cast<unsigned>(pc), lr_offset, q[0], q[1], q[2], q[3],
+             q[4], q[5], q[6], q[7]);
+    }
 
     // Always keep the last entries; the text log below stops at 128 calls and
     // would otherwise hide the builtin that runs immediately before the crash.
@@ -2613,9 +2658,8 @@ void pairip_builtin_trace_c(uint64_t *regs) {
         entry.id = id;
         entry.pc = pc;
         entry.length = length;
-        entry.lr_offset = lr >= g_pairip_base.load()
-                              ? static_cast<uint32_t>(lr - g_pairip_base.load())
-                              : 0;
+        entry.lr_offset = lr_offset;
+        entry.seq = seq;
         for (size_t i = 0; i < 6; ++i) {
             entry.arg_words[i] = 0;
             SafeReadMemory(arg + i * 8, &entry.arg_words[i], sizeof(uint64_t));
