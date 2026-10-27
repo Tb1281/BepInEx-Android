@@ -453,10 +453,11 @@ RouterRingEntry g_router_first_ne = {};
 // Ring of the string-hash selector gate at +0x383f4/+0x38420. The block
 // interns a string, hashes it, then hashes an image range and compares
 // `FNV(image bytes) ^ image[w23]` with a 64-bit immediate. Its `csel` at
-// +0x38430 produces the selector (w5) that the crash's state ring reports as
-// `sel=0x31bb`. The gate-length hook stashes the 16-bit range length before
-// the loop consumes w26; the gate hook records the final hash, the expected
-// word, both candidates, and the string and image bytes.
+// +0x38430 writes w5, but the selector-gate run recorded zero hits: this
+// block is not on the crash path, and the crash state ring's `sel` is not a
+// dispatcher-selected state. The gate-length hook stashes the 16-bit range
+// length before the loop consumes w26; the gate hook records the final hash,
+// the expected word, both candidates, and the string and image bytes.
 constexpr size_t kGateRingSize = 64;
 struct GateRingEntry {
     uint64_t string_ptr;

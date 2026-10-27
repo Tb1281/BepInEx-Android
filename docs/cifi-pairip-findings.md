@@ -134,12 +134,18 @@ recorded zero hits (`hash ring pos=0`), confirming the block is skipped on the
 crash path. The earlier statement that `sel=0x31bb` is produced by the main
 state-router hash at `+0x32c20..+0x32c54` is **withdrawn**: both the
 `+0x32c20` router hook and the `+0x383f4`/`+0x38420` selector-gate hooks
-recorded zero hits. Statically, `sel=0x31bb` first appears at state
-`0x81398368`, entered from `0x7ae3f9a6`, and is then carried unchanged
-through `0x5ddd74f5`, `0x65faffff`, `0xd72aa61e`, `0x692efcd5`,
-`0x1e35ad97`, `0xeb7a0bec`, `0x629d5907` into `0x872a21c`. The live
-producer question is the `0x7ae3f9a6` state handler / the transition into
-`0x81398368`, not any of the zero-hit blocks.
+recorded zero hits. The state ring is now known to be a **global** ring: it
+interleaves dispatches from nested interpreter instances, so adjacent ring
+entries are not necessarily a transition. In particular, the run log's
+`0x7ae3f9a6` entry at index 39148 (`reader=0x1`) is the inner interpreter's
+termination return; the following `0x81398368` entry (`sel=0x31bb`) is the
+outer interpreter resuming with `w5` already holding the residue. State
+`0x7ae3f9a6` is therefore **not** the predecessor of `0x81398368`, and the
+earlier "entered from `0x7ae3f9a6`" wording is withdrawn. `sel=0x31bb` is
+first *observed* at `0x81398368` and is then carried unchanged through
+`0x5ddd74f5`, `0x65faffff`, `0xd72aa61e`, `0x692efcd5`, `0x1e35ad97`,
+`0xeb7a0bec`, `0x629d5907` into `0x872a21c`, but it is a caller register,
+not a dispatcher-selected state. See the static map below.
 
 ## Experiments and results
 
@@ -1432,7 +1438,58 @@ same crash. The pre-registered producer prediction is **FALSIFIED**.
   prior image.
 - Verdict: the `+0x38420` string-hash selector gate is not the producer of
   `sel=0x31bb`; the route is closed together with `+0x32c20`, `+0x3dc0c`,
-  and `+0x3dc50`. The next step is static decoding of handler `0x56c54`
-  (state `0x7ae3f9a6`) and the transition into `0x81398368`, where the
-  selector first appears. Do not install further probes at the closed
-  addresses.
+  and `+0x3dc50`. The follow-up static decode (below) shows that
+  `0x7ae3f9a6` is a termination state and that `sel` is not a state
+  selector. Do not install further probes at the closed addresses.
+
+## Static map (2026-10-28): the state ring is not a selector
+
+This section records the read-only disassembly pass that followed the
+selector-gate falsification. No device run was made; the evidence is
+`/tmp/pairip-analysis/libpairipcore_full.asm` (sha256 recorded in the
+walkthrough) plus the ring-field code in
+`launcher/app/src/main/cpp/pairipshield/shield.cpp`.
+
+- Ring fields: `pairip_state_trace_c` stores `state=regs[10]`,
+  `selected=regs[5]`, `reader=regs[9]`. The hook target is `+0x32c6c`, the
+  dispatcher entry used after a handler has chosen the next state.
+- Dispatcher body: `+0x31de4` is the interpreter/dispatcher called from
+  `+0x6adc0` (`bl`, return `+0x6adc4`); its epilogue is `+0x56c54`. At
+  `+0x32c6c` the dispatcher has already loaded `w10` with the next state and
+  has usually copied the carried value into `w9` (`mov w9, w29`). The
+  dispatcher does not assign `w5` at the hook; `w5` is whatever the previous
+  handler or the nested interpreter left in the register.
+- `+0x32c54` is one real assignment on this path:
+  `w5 = (w21 ^ csel) % w19`, an image index. The `0xe36e031a` handler
+  (`+0x32e1c..+0x32e34`) stores that `w5` into
+  `[[sp+0x538]+8]+0xc` (the reader object's `+0xc` field), sets `w9=1` and
+  `w10=0x7ae3f9a6`, then re-enters `+0x32c6c`. `+0x332b8` sets
+  `w5=-9` on a different state branch. The function contains many other
+  `w5` writes; the earlier "only at" wording is withdrawn. What matters is
+  that none of them is a dispatcher-selected state.
+- `0x7ae3f9a6` is terminal: `+0x532d4..+0x532e4` compares `w8` with the
+  state id and `b.eq +0x56c54`; `+0x56c54` loads `[sp+0x540]` and returns
+  `w0 = value & 1`. It does not choose a successor.
+- JNI entry: `+0x6a968..+0x6b3c4` (`executeVM`) never references `x5`/`w5`.
+  The state-ring `selected` value therefore cannot come from the JNI
+  argument contract; it is a residue of the interpreter's own call/return
+  path.
+- Nested interpreters: the state ring is global and interleaves dispatches
+  from nested interpreter instances. The run log's `state[39148]
+  id=0x7ae3f9a6 sel=0x22b39 reader=0x1` is the inner interpreter's
+  termination; `state[39149] id=0x81398368 sel=0x31bb reader=0xf9372668`
+  is the outer interpreter resuming. They are adjacent ring entries, not a
+  transition. This is why the old "first appears at `0x81398368`, entered
+  from `0x7ae3f9a6`" reading was wrong.
+- Consequence: `sel=0x31bb` is not a state selector and has no producer to
+  find. The `+0x32c20`, `+0x32c54`, `+0x3dc0c`, and `+0x3dc50` probes remain
+  closed. The open problem is still the missing writer of the reader-backed
+  string view at `image+0x3f874`/`image+0x1ba5c`, which is what the append
+  crash dereferences.
+- Reader builder for that view: `+0x3dc88` loads the descriptor from
+  `[sp+0x538]`, stores `w29` to `[sp+0x540]`, loads `x16` (reader object)
+  and `w9` (descriptor `+0x10`, observed `0xb0`) from the descriptor,
+  then reads the image base from `[x16]` and the image size from `[x16+8]`.
+  The append call at `+0x3e16c`/`+0x3e170` consumes the string view from
+  the image slots. The append record (`src=0x7ff9372630 n=46 ...
+  off=0x3e170`) is that call, not evidence about `w5`.

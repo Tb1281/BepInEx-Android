@@ -1460,3 +1460,48 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/selector-gate.log
 - Findings updated: yes, in this commit: the old claim that `+0x32c20`
   produces `sel=0x31bb` is corrected, and the selector-gate falsification is
   recorded.
+
+### 2026-10-28 — static decode: the state ring is not a selector (no run)
+
+- Trigger: selector-gate verdict (zero gate hits) and the review of
+  `pairip_state_trace_c`. No device launch; this is a read-only disassembly
+  pass.
+- Evidence: `/tmp/pairip-analysis/libpairipcore_full.asm`, 5,456,678 bytes,
+  sha256 `21647fd96fc093e400a6fce79a873f59e9fc0c34e25a994fb63bbb49603380d1`;
+  ring-field code in `launcher/app/src/main/cpp/pairipshield/shield.cpp`
+  (`state=regs[10]`, `selected=regs[5]`, `reader=regs[9]`, hook target
+  `+0x32c6c`).
+- Dispatcher: `+0x31de4` is the interpreter body called from `+0x6adc0`;
+  the epilogue is `+0x56c54`. At `+0x32c6c` `w10` is the next state and
+  `w9`/`w29` is the carried value. `w5` is not assigned by the dispatcher;
+  it is caller residue.
+- `+0x32c54` computes `w5 = (w21 ^ csel) % w19`, an image index. The
+  `0xe36e031a` handler (`+0x32e1c..+0x32e34`) stores that `w5` to
+  `[[sp+0x538]+8]+0xc`, sets `w9=1`, `w10=0x7ae3f9a6`, and re-enters the
+  dispatcher. `+0x332b8` sets `w5=-9` on a different branch. The "only at
+  `+0x32c54`/`+0x332b8`" shorthand in the checkpoint is too strong; those
+  are the two assignments relevant to this path, not the function's only
+  `w5` writes.
+- Termination: `0x7ae3f9a6` is compared at `+0x532d4..+0x532e4` and branches
+  to `+0x56c54`, which returns `[sp+0x540] & 1`. It has no successor.
+- JNI: `+0x6a968..+0x6b3c4` (`executeVM`) never references `x5`/`w5`, so
+  the ring's `selected` value is not part of the JNI contract.
+- Ring interleaving: the ring is global. In the selector-gate log,
+  `state[39148] id=0x7ae3f9a6 sel=0x22b39 reader=0x1` is the inner
+  interpreter's termination; `state[39149] id=0x81398368 sel=0x31bb
+  reader=0xf9372668` is the outer interpreter resuming. Adjacent entries are
+  not a transition. The earlier "0x81398368 entered from 0x7ae3f9a6" claim
+  is withdrawn.
+- Reader: `+0x3dc88` loads the descriptor at `[sp+0x538]`, stores `w29` to
+  `[sp+0x540]`, loads `x16` (reader object) and `w9` (descriptor `+0x10`,
+  observed `0xb0`), then reads the image base from `[x16]` and the size from
+  `[x16+8]`. The append helper call at `+0x3e16c`/`+0x3e170` consumes the
+  image-backed string view. The append record's non-canonical base
+  (`bbb9...`) is the missing writer, not a selector effect.
+- Verdict: `sel=0x31bb` has no producer to find; it is not a state selector.
+  The producer route is closed. The next experiment tests the only untested
+  identity combination, then moves to the reader writer if that is
+  falsified.
+- Findings updated: yes, in this commit: corrected the `0x81398368` entry
+  claim and appended the static map to
+  [`cifi-pairip-findings.md`](cifi-pairip-findings.md).
