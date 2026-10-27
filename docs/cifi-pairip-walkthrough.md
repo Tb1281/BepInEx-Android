@@ -735,4 +735,51 @@ sleep 25
 adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/apk-cd-map.log
 ```
 
-- Status: pre-registered; ready to install and run.
+- Status: run; verdict below.
+
+### apk-cd-map (2026-10-27 22:10)
+
+- Install: delta install sent a 49.00 MB patch; `lastUpdateTime=2026-10-27
+  22:10:17`, installed `base.apk` sha256
+  `e36de8a080d7cc131b205f2f22d73fccdbdbb8d426d0a7f23976aa6398334071`
+  (115,274,306 bytes), identical to the built APK.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 359` ms. Both packages
+  were force-stopped first and the log buffer was cleared.
+- Log: `tmp/cifi-apk/logs/verify/apk-cd-map.log`, 18,913 lines, sha256
+  `3d2fef203795afaf497188876cd5a446038e1e3afde0b584cb919f1882dfa962`.
+- Instrumentation check: the experiment line reports `variant=apk-cd-map`,
+  `preload=true`, `trace=true`, `dumpVmImage=true`, `apkCdMap=true`; every
+  other switch, including `syscallTrace` and `apkZeroMap`, is off.
+- Mapping: `apk-cd-map: base=0x7900000000 size=77824
+  hint=0x7900000000 fixed=1 offset=0x74f5000 eocd=0x750781c` from the game's
+  base APK, followed by the live maps line
+  `7900000000-7900013000 r--s 074f5000 fe:60 942208 ... base.apk`.
+- Window check: in `tmp/cifi-apk/logs/verify/apk-cd-map-maps.txt` (427,080
+  bytes, sha256
+  `c1342391216e23b325c23fd002174bf10361e013f796802bd1b6167d889c2c47`) the
+  duplicate line is line 32, starting at byte 3,596 and ending at byte 3,769.
+  The VM's reader consumes 146,432 bytes, so the line is inside the scanned
+  prefix. The split-APK CD line is at line 3808, byte 368,362, still outside
+  the prefix.
+- Crash: unchanged. `SIGSEGV` at 22:10:41.788 in
+  `__memmove_aarch64_nt+140`; frame `#04 pc 00000514
+  split_config.arm64_v8a.apk (+0)` is the frozen shadow-frame signature. The
+  reader slots at `vm[0x540]` are still `bbb9eb6daed20ed0` /
+  `015370f87525d57b`; the state ring ends `id=0x872a21c sel=0x31bb
+  reader=0xf93727d8`; the builtin ring ends `id=0x9a0c0031 pc=0x40a73`.
+- Image: `tmp/cifi-apk/logs/verify/apk-cd-map-image.bin`, 282,603 bytes,
+  sha256
+  `cc6c9669a819686e27580842693e1c737228f1ba5b8b367d9cbc2cedd3247dc1`.
+  The five globals are the baseline values `0x534a6211`, `0xe29e9c3b`,
+  `0x8a1aeb2d`, `0xbfe458cb`, `0x4d062af3`; the diff versus the pristine
+  asset is 368 bytes in 79 ranges; both ZIP slots are unchanged.
+- Verdict: **FALSIFIED** for the maps-window hypothesis. The real
+  `r--s 074f5000` line was present at byte 3,596, deep inside the scanned
+  prefix, and it changed neither the five globals nor the reader slots nor the
+  crash. The maps-window/content/identity branch is closed. A CD line inside
+  the window is not the gate, so the parser is not selecting the base APK by
+  that line.
+- Consequence: no further maps/procfs experiment is justified. The only live
+  target is the `0x31` operand block at bytecode pc `0x40a73` and the
+  preceding state's `next`/`fallback` decision. The `pairip_apk_cd_map`
+  switch is diagnostic only and must be removed before merge.

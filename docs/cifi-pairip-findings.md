@@ -154,6 +154,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | Offset-0 base-APK mapping (`pairip_apk_zero_map`) | Mapping installed at the planned address (`0x7900000000`, `fixed=1`) and appears in klB's maps dump (`r--p 00000000`), yet the crash, reader slots, FNV input, state tail, and builtin tail are unchanged. Falsified: the missing offset-0 mapping is not the gate. |
 | Process-name spoof (`pairip_process_name`) | Main-thread `prctl` succeeded and the VM's `/proc/self/status` read saw `mesCompany.CIFI` (argv0/`__progname` were rewritten too), yet the FNV input, five globals, reader slots, state/builtin tails, crash signature, and image diff are byte-identical to baseline. Falsified: process identity is not the gate. |
 | syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
+| Low CD mapping (`pairip_apk_cd_map`) | The base APK's real CD was mapped at `0x7900000000` (`MAP_SHARED`, offset `0x74f5000`), and its `r--s 074f5000` line appeared at byte 3,596, inside the VM's 146,432-byte maps scan. The five globals, reader slots, state/builtin tails, crash signature, and 368-byte/79-range image diff are unchanged. Falsified: a CD line inside the scanned window is not the gate. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -188,15 +189,16 @@ negatively: the VM's syscall wrapper never opens or reads either game APK
 before the `0x31` reader, so the ZIP-view literals are image/VM state rather
 than the residue of a skipped native read. It also showed that the builtin
 ring's `args=` words are shared dispatcher context, so the `0x31` operand
-block cannot be read from that ring. The live part of question 2 is now the
-`0x31` builtin at bytecode pc `0x40a73`: what operand block it executes, and
-whether it computes the slots itself or expects an earlier writer that the
-hosted path skips. The maps object feeding the five globals is read as a
-146,432-byte prefix; both real CD mappings start later in the maps file
-(316,554 and 366,461 bytes), but no experiment has yet placed a CD line inside
-the scanned window, so that is an untested lead, not a proven gate. The
-environment-input branch for maps content, uid/gid, process name and the
-offset-0 mapping remains closed; do not repeat those three experiments.
+block cannot be read from that ring. The `apk-cd-map` run answered the
+maps-window lead negatively: a real `r--s 074f5000` line at byte 3,596,
+inside the 146,432-byte prefix, changed nothing. Maps content, uid/gid,
+process name, the offset-0 mapping, and now CD-line position are all
+independently varied with no effect; that branch is closed and must not be
+repeated. The live part of question 2 is now only the `0x31` builtin at
+bytecode pc `0x40a73`: what operand block it executes, and whether it
+computes the slots itself or expects an earlier writer that the hosted path
+skips. It must be recovered statically from the interpreter/bytecode or with
+a dedicated probe, not from the builtin ring.
 
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
@@ -270,21 +272,24 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
    state's `next`/`fallback` decision instead.
 3. Falsified (apk-zero-map, 2026-10-27): the offset-0 game `base.apk`
    mapping is present and visible to the VM, but the reader slots and crash
-   are unchanged. The missing mapping is not the gate; move to the `0x31`
-   builtin and the `0x40a73` operand block.
-4. Ruled out by the fnv-input result: reproducing stock maps/status content
+   are unchanged. The missing mapping is not the gate.
+4. Falsified (apk-cd-map, 2026-10-27): a real `r--s 074f5000` line inside the
+   146,432-byte maps scan changes nothing either. The maps-window branch is
+   closed; do not run further maps/procfs experiments.
+5. Ruled out by the fnv-input result: reproducing stock maps/status content
    for the hash input.
-5. Decode the `0x31` builtin semantics and the `0x40a73` operand block. The
+6. Decode the `0x31` builtin semantics and the `0x40a73` operand block. The
    `syscall-tail` run proved the builtin ring's six `args=` words are shared
    dispatcher context (identical for all 32 entries), so the operand block
    must be recovered from the VM frame/bytecode or with a dedicated probe.
    Also decode the preceding state's `next`/`fallback` decision.
-6. Only after a real mechanism is proven: apply a gated fix, build, reinstall
+7. Only after a real mechanism is proven: apply a gated fix, build, reinstall
    with `android install`, run three cold launches, record results on #62-#64,
    then write the ADR for #60.
-7. Before merge: remove the debug experiment switches,
+8. Before merge: remove the debug experiment switches,
    `pairip_allow_nondebug_experiments`, the Frida gadget/DiagnosticApp/sleeps,
    and the stale `pairip_desc_trace`/`pairip_branch_trace` declarations.
+   Include `pairip_apk_cd_map` and the other mapping diagnostics.
 
 ## Pre-registered experiment (2026-10-27, state-router)
 
@@ -623,3 +628,31 @@ variable.
 - Scope: this makes the CD line visible; it does not prove the parser consumes
   the CD bytes or that stock's maps order matches. A negative closes the
   window lead; it does not reopen maps-content/identity experiments.
+
+## apk-cd-map result (2026-10-27 22:10)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen baseline plus `pairip_apk_cd_map=true` ran one cold launch to the
+same crash. The pre-registered maps-window hypothesis is **FALSIFIED**.
+
+- The base APK's real central directory was mapped at `0x7900000000`
+  (`MAP_SHARED`, file offset `0x74f5000`, length `0x13000`), and the VM's own
+  maps dump contains the line
+  `7900000000-7900013000 r--s 074f5000 fe:60 942208 ... base.apk` at byte
+  3,596 (line 32), inside the 146,432-byte prefix the VM scans.
+- Every observable is unchanged: the five globals are `0x534a6211`,
+  `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`, `0x4d062af3`; the reader slots are
+  `bbb9eb6daed20ed0` / `015370f87525d57b`; the state tail is
+  `id=0x872a21c sel=0x31bb`; the builtin tail is `id=0x9a0c0031 pc=0x40a73`;
+  the crash is `__memmove_aarch64_nt+140` with the
+  `split_config.arm64_v8a.apk +0x514` frame; and the image diff is 368 bytes
+  in 79 ranges with both ZIP slots unchanged.
+- Consequence: the `0x6d` maps parser does not locate the APK by an
+  `r--s 074f5000` line inside its read window, and the five globals do not
+  depend on that line. The maps/content/identity branch is fully closed:
+  maps content, uid/gid, process name, offset-0 mapping, and CD-line position
+  have each been changed independently without effect.
+- The live target is only the `0x31` operand block at bytecode pc `0x40a73`
+  and the preceding state's `next`/`fallback` decision. The
+  `pairip_apk_cd_map` switch is diagnostic only and must be removed before
+  merge.
