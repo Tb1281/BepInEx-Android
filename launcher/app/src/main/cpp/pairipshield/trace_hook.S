@@ -386,6 +386,138 @@ pairip_router_load_entry:
     .size pairip_router_load_entry, . - pairip_router_load_entry
 
 /*
+ * Debug-only shim for the string-hash selector gate length at
+ * libpairipcore.so+0x383f4.
+ *
+ * The hooked `ldr w9, [sp, #0x518]` runs only when the 16-bit range length in
+ * w26 is non-zero; the callback stashes that length in a thread-local before
+ * the loop at +0x38404 decrements it to zero. The tail branches through x11,
+ * which the next relocated instruction (+0x383f8, `mov x11, xzr`)
+ * overwrites, so no live register is clobbered. Same full-register contract
+ * as the other shims.
+ */
+
+    .text
+    .global pairip_gate_len_entry
+    .type pairip_gate_len_entry, %function
+    .p2align 4
+pairip_gate_len_entry:
+    sub     sp, sp, #0x110
+    stp     x0, x1, [sp, #0x00]
+    stp     x2, x3, [sp, #0x10]
+    stp     x4, x5, [sp, #0x20]
+    stp     x6, x7, [sp, #0x30]
+    stp     x8, x9, [sp, #0x40]
+    stp     x10, x11, [sp, #0x50]
+    stp     x12, x13, [sp, #0x60]
+    stp     x14, x15, [sp, #0x70]
+    stp     x16, x17, [sp, #0x80]
+    stp     x18, x19, [sp, #0x90]
+    stp     x20, x21, [sp, #0xa0]
+    stp     x22, x23, [sp, #0xb0]
+    stp     x24, x25, [sp, #0xc0]
+    stp     x26, x27, [sp, #0xd0]
+    stp     x28, x29, [sp, #0xe0]
+    mrs     x9, nzcv
+    str     x9, [sp, #0xf0]
+    str     x30, [sp, #0xf8]
+
+    mov     x0, sp
+    bl      pairip_gate_len_c
+
+    ldr     x9, [sp, #0xf0]
+    msr     nzcv, x9
+    ldp     x0, x1, [sp, #0x00]
+    ldp     x2, x3, [sp, #0x10]
+    ldp     x4, x5, [sp, #0x20]
+    ldp     x6, x7, [sp, #0x30]
+    ldp     x8, x9, [sp, #0x40]
+    ldp     x10, x11, [sp, #0x50]
+    ldp     x12, x13, [sp, #0x60]
+    ldp     x14, x15, [sp, #0x70]
+    ldp     x16, x17, [sp, #0x80]
+    ldp     x18, x19, [sp, #0x90]
+    ldp     x20, x21, [sp, #0xa0]
+    ldp     x22, x23, [sp, #0xb0]
+    ldp     x24, x25, [sp, #0xc0]
+    ldp     x26, x27, [sp, #0xd0]
+    ldp     x28, x29, [sp, #0xe0]
+    ldr     x30, [sp, #0xf8]
+    add     sp, sp, #0x110
+
+    adrp    x11, g_pairip_gate_len_original
+    ldr     x11, [x11, :lo12:g_pairip_gate_len_original]
+    br      x11
+
+    .size pairip_gate_len_entry, . - pairip_gate_len_entry
+
+/*
+ * Debug-only shim for the string-hash selector gate at
+ * libpairipcore.so+0x38420.
+ *
+ * The hooked `ldrsw x8, [x8, w23, uxtw]` loads the expected word that the
+ * block XORs with the accumulated hash. The callback records the interned
+ * string, the final hash, the expected word, both candidate selectors, and
+ * the hashed image range. The tail branches through x9, which the next
+ * instruction (+0x38424, `ldr w9, [sp, #0x540]`) overwrites. Same
+ * full-register contract as the other shims.
+ */
+
+    .text
+    .global pairip_gate_trace_entry
+    .type pairip_gate_trace_entry, %function
+    .p2align 4
+pairip_gate_trace_entry:
+    sub     sp, sp, #0x110
+    stp     x0, x1, [sp, #0x00]
+    stp     x2, x3, [sp, #0x10]
+    stp     x4, x5, [sp, #0x20]
+    stp     x6, x7, [sp, #0x30]
+    stp     x8, x9, [sp, #0x40]
+    stp     x10, x11, [sp, #0x50]
+    stp     x12, x13, [sp, #0x60]
+    stp     x14, x15, [sp, #0x70]
+    stp     x16, x17, [sp, #0x80]
+    stp     x18, x19, [sp, #0x90]
+    stp     x20, x21, [sp, #0xa0]
+    stp     x22, x23, [sp, #0xb0]
+    stp     x24, x25, [sp, #0xc0]
+    stp     x26, x27, [sp, #0xd0]
+    stp     x28, x29, [sp, #0xe0]
+    mrs     x9, nzcv
+    str     x9, [sp, #0xf0]
+    str     x30, [sp, #0xf8]
+
+    mov     x0, sp
+    bl      pairip_gate_trace_c
+
+    ldr     x9, [sp, #0xf0]
+    msr     nzcv, x9
+    ldp     x0, x1, [sp, #0x00]
+    ldp     x2, x3, [sp, #0x10]
+    ldp     x4, x5, [sp, #0x20]
+    ldp     x6, x7, [sp, #0x30]
+    ldp     x8, x9, [sp, #0x40]
+    ldp     x10, x11, [sp, #0x50]
+    ldp     x12, x13, [sp, #0x60]
+    ldp     x14, x15, [sp, #0x70]
+    ldp     x16, x17, [sp, #0x80]
+    ldp     x18, x19, [sp, #0x90]
+    ldp     x20, x21, [sp, #0xa0]
+    ldp     x22, x23, [sp, #0xb0]
+    ldp     x24, x25, [sp, #0xc0]
+    ldp     x26, x27, [sp, #0xd0]
+    ldp     x28, x29, [sp, #0xe0]
+    ldr     x30, [sp, #0xf8]
+    add     sp, sp, #0x110
+
+    adrp    x9, g_pairip_gate_original
+    ldr     x9, [x9, :lo12:g_pairip_gate_original]
+    br      x9
+
+    .size pairip_gate_trace_entry, . - pairip_gate_trace_entry
+
+/*
  * Debug-only shim for the FNV-1 input setup at libpairipcore.so+0x7fddc.
  *
  * The `add x11, x9, w11, uxtw` computes the byte range the handler hashes in

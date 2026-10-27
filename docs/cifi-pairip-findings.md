@@ -1349,3 +1349,38 @@ variable.
   consumed by the failing path. The stack-content route is closed: neither
   the fabricated text bytes nor their length gate the reader
   initialization.
+
+## Pre-registered experiment (2026-10-28, selector-gate)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+- Purpose: test whether the string-hash selector gate at
+  `libpairipcore.so+0x38420` is the producer of the crash's `sel=0x31bb`
+  state selector, and record the gate inputs.
+- Static basis: at `+0x38340` the block loads the string pointer `x19` from
+  `[x21+w8]`, calls `strlen`, computes FNV-1 into `x10`, and stores that hash
+  at `image[(w28^w29)%size]`. At `+0x383f4` it loads the image hash-range
+  offset into `w9`; at `+0x38400-0x3841c` it FNV-hashes `w26` bytes from
+  `image+w9` into `x12`. At `+0x38420` it loads the sign-extended word at
+  `image+w23`, at `+0x38428` XORs it with `x12`, at `+0x3842c` compares the
+  result with `x25`, and at `+0x38430` selects `w29` on equality else `w27`
+  into `w5`, then branches to `+0x32c5c` and the state dispatcher.
+- Change: debug-only observation hooks at `+0x383f4` (stash the range length
+  `w26`) and `+0x38420` (record the string, hashes, expected word, range,
+  candidates, and current VM fetch/op). The callback computes `eq`/`sel`;
+  the `csel` and branch are not hooked. No VM, image, spoof, or switch
+  change.
+- Prediction: both hooks install; at least one gate record is emitted before
+  the crash; the last record's `sel` equals the state-ring tail `sel=0x31bb`;
+  the interned string is non-empty and the hashed range is valid. The `eq`
+  value and string content decide the next step; no crash-signature change
+  is predicted.
+- Falsification: zero gate records, the last `sel` differs from `0x31bb`, or
+  a hook fails to install. Then this gate is not the producer of the crash
+  selector; close the route and move to the reader-slot writer.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `pairip_jni_trace=true`,
+  `stackSpoof=true`, `contextSeed=true`, debug launcher.
+- Run key: `variant=selector-gate`, code commit `HEAD` plus the hooks,
+  committed with this record; APK sha256 recorded after the build.
+- Status: pre-registered; ready to run.

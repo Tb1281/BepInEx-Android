@@ -92,6 +92,14 @@ extern "C" __attribute__((visibility("hidden"))) void pairip_router_load_entry()
 extern "C" __attribute__((visibility("hidden"))) void pairip_router_load_c(
     uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_router_load_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_gate_len_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_gate_len_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_gate_len_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_gate_trace_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_gate_trace_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_gate_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_fnv_trace_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_fnv_trace_c(
     uint64_t *regs);
@@ -442,6 +450,42 @@ std::atomic<uint32_t> g_router_ne_count{0};
 std::atomic<bool> g_router_first_ne_valid{false};
 RouterRingEntry g_router_first_ne = {};
 
+// Ring of the string-hash selector gate at +0x383f4/+0x38420. The block
+// interns a string, hashes it, then hashes an image range and compares
+// `FNV(image bytes) ^ image[w23]` with a 64-bit immediate. Its `csel` at
+// +0x38430 produces the selector (w5) that the crash's state ring reports as
+// `sel=0x31bb`. The gate-length hook stashes the 16-bit range length before
+// the loop consumes w26; the gate hook records the final hash, the expected
+// word, both candidates, and the string and image bytes.
+constexpr size_t kGateRingSize = 64;
+struct GateRingEntry {
+    uint64_t string_ptr;
+    uint64_t string_len;
+    uint64_t image;
+    uint64_t computed;
+    uint64_t expected;
+    uint64_t expected_word;
+    uint64_t xored;
+    uint32_t data_offset;
+    uint32_t data_length;
+    uint32_t expected_offset;
+    uint32_t candidate_eq;
+    uint32_t candidate_ne;
+    uint32_t equal;
+    uint32_t selected;
+    uint32_t fetch;
+    uint32_t op;
+    uint32_t reserved[3];
+    uint8_t string_bytes[48];
+    uint8_t data[32];
+};
+GateRingEntry g_gate_ring[kGateRingSize] = {};
+std::atomic<uint32_t> g_gate_ring_pos{0};
+std::atomic<uint32_t> g_gate_eq_count{0};
+std::atomic<uint32_t> g_gate_ne_count{0};
+std::atomic<bool> g_gate_first_ne_valid{false};
+GateRingEntry g_gate_first_ne = {};
+
 // Ring buffer of the last raw syscalls libpairipcore issued. klB reads the
 // ZIP central directory through the same wrapper (base+0x17430), so the
 // syscall stream identifies whether the repeating VM loop is polling a file,
@@ -692,6 +736,35 @@ bool InstallPairIpTrace() {
             &original);
         g_pairip_router_load_original = original;
         LOGI("trace: router-load hook rc=%d target=%p trampoline=%p", rc, target,
+             original);
+    }
+    // Capture the range length of the string-hash selector gate before the
+    // loop at +0x38404 consumes w26. The gate hook sits on the following
+    // `ldrsw` at +0x38420 and reads the stashed length; the length load is
+    // skipped when the range is empty, so the gate hook treats a missing
+    // stash as length zero.
+    if (g_pairip_gate_len_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x383f4);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_gate_len_entry),
+            &original);
+        g_pairip_gate_len_original = original;
+        LOGI("trace: gate-len hook rc=%d target=%p trampoline=%p", rc, target,
+             original);
+    }
+    // Log the selector gate itself. The shim runs before the expected-word
+    // load at +0x38420 and the callback reads that word directly; the csel at
+    // +0x38430 is not hooked. The tail branches through x9, which the next
+    // instruction (+0x38424) overwrites.
+    if (g_pairip_gate_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x38420);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_gate_trace_entry),
+            &original);
+        g_pairip_gate_original = original;
+        LOGI("trace: gate hook rc=%d target=%p trampoline=%p", rc, target,
              original);
     }
     // Capture the FNV-1 input of the 0xf656/0x1b hash phase. The hook sits on
@@ -2095,6 +2168,12 @@ extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_router_load_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_gate_len_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_gate_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_fnv_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
@@ -2524,6 +2603,57 @@ void DumpRouterRing() {
     }
 }
 
+// Dump the string-hash selector gate. The last entries show the interned
+// string, the computed and expected hashes, the expected word, the hashed
+// image range, the candidates, and the selector that the csel produced; the
+// first-`ne` sample survives a full ring.
+void DumpGateRing() {
+    const uint32_t pos = g_gate_ring_pos.load(std::memory_order_relaxed);
+    const uint32_t available = pos < kGateRingSize ? pos : kGateRingSize;
+    const uint32_t count = available < 32 ? available : 32;
+    LOGI("trace: gate ring pos=%u eq=%u ne=%u dumping last %u", pos,
+         g_gate_eq_count.load(std::memory_order_relaxed),
+         g_gate_ne_count.load(std::memory_order_relaxed), count);
+    for (uint32_t i = count; i > 0; --i) {
+        const GateRingEntry &entry = g_gate_ring[(pos - i) % kGateRingSize];
+        char text[sizeof(entry.string_bytes) + 1] = {};
+        for (size_t j = 0; j < sizeof(entry.string_bytes); ++j) {
+            text[j] = entry.string_bytes[j] >= 0x20 &&
+                              entry.string_bytes[j] <= 0x7e
+                          ? static_cast<char>(entry.string_bytes[j])
+                          : '.';
+        }
+        char hex[sizeof(entry.data) * 2 + 1] = {};
+        for (size_t j = 0; j < sizeof(entry.data); ++j) {
+            std::snprintf(hex + j * 2, 3, "%02x", entry.data[j]);
+        }
+        LOGI("trace: gate[%u] %s fetch=%#x op=%#x img=%p off=%#x len=%u "
+             "expoff=%#x word=%016" PRIx64 " computed=%016" PRIx64
+             " xor=%016" PRIx64 " expected=%016" PRIx64 " eqc=%#x nec=%#x "
+             "sel=%#x str=%p/%zu text=%s data=%s",
+             pos - i, entry.equal ? "ok" : "FAIL", entry.fetch, entry.op,
+             reinterpret_cast<void *>(entry.image), entry.data_offset,
+             entry.data_length, entry.expected_offset, entry.expected_word,
+             entry.computed, entry.xored, entry.expected, entry.candidate_eq,
+             entry.candidate_ne, entry.selected,
+             reinterpret_cast<void *>(entry.string_ptr),
+             static_cast<size_t>(entry.string_len), text, hex);
+    }
+    if (g_gate_first_ne_valid.load(std::memory_order_relaxed)) {
+        const GateRingEntry &entry = g_gate_first_ne;
+        LOGI("trace: gate-first-ne fetch=%#x op=%#x img=%p off=%#x len=%u "
+             "expoff=%#x word=%016" PRIx64 " computed=%016" PRIx64
+             " xor=%016" PRIx64 " expected=%016" PRIx64 " eqc=%#x nec=%#x "
+             "sel=%#x str=%p/%zu",
+             entry.fetch, entry.op, reinterpret_cast<void *>(entry.image),
+             entry.data_offset, entry.data_length, entry.expected_offset,
+             entry.expected_word, entry.computed, entry.xored, entry.expected,
+             entry.candidate_eq, entry.candidate_ne, entry.selected,
+             reinterpret_cast<void *>(entry.string_ptr),
+             static_cast<size_t>(entry.string_len));
+    }
+}
+
 // Dump the most recent state ids seen by the builtin state dispatcher. The
 // last ids show which state path the failing builtin took; a fallback state
 // appears as a different id than the pass path would have selected.
@@ -2569,6 +2699,7 @@ void DumpVmRing() {
     DumpBuiltinRing();
     DumpHashRing();
     DumpRouterRing();
+    DumpGateRing();
     DumpStateRing();
     const uint32_t pos = g_vm_ring_pos.load(std::memory_order_relaxed);
     const uint32_t available = pos < kVmRingSize ? pos : kVmRingSize;
@@ -2845,6 +2976,106 @@ void pairip_router_load_c(uint64_t *regs) {
          entry.equal ? "ok" : "FAIL", entry.table, entry.index, entry.entry,
          entry.computed, entry.expected, entry.mask, entry.candidate_eq,
          entry.candidate_ne, entry.mix, entry.modulus, entry.selected);
+}
+
+// String-hash selector gate tracing.
+//
+// The handler interns the string at x19, hashes it with FNV-1, and stores the
+// hash in the image. It then hashes `len` bytes at image+off, XORs the result
+// with the sign-extended word at image+w23, and compares that with x25. The
+// two candidate selectors are w29 (equal) and w27 (not equal). The length
+// hook stashes w26 before the loop consumes it; the gate hook records the
+// final state and computes the csel exactly as +0x3842c/+0x38430 do.
+thread_local uint32_t t_gate_length = 0;
+thread_local bool t_gate_length_valid = false;
+
+extern "C" __attribute__((visibility("hidden")))
+void pairip_gate_len_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+    t_gate_length = static_cast<uint32_t>(regs[26]);
+    t_gate_length_valid = true;
+}
+
+extern "C" __attribute__((visibility("hidden")))
+void pairip_gate_trace_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+    GateRingEntry entry{};
+    entry.image = regs[8];
+    entry.computed = regs[12];
+    entry.expected = regs[25];
+    entry.expected_offset = static_cast<uint32_t>(regs[23]);
+    entry.candidate_eq = static_cast<uint32_t>(regs[29]);
+    entry.candidate_ne = static_cast<uint32_t>(regs[27]);
+    entry.string_ptr = regs[19];
+    entry.string_len = regs[0];
+    entry.data_length = t_gate_length_valid ? t_gate_length : 0;
+    t_gate_length_valid = false;
+    if (entry.data_length != 0 && regs[9] >= entry.image) {
+        entry.data_offset = static_cast<uint32_t>(regs[9] - entry.image);
+    }
+    entry.fetch = t_last_vm_fetch;
+    entry.op = t_last_vm_op;
+
+    int32_t word = 0;
+    if (entry.image != 0 &&
+        SafeReadMemory(static_cast<uintptr_t>(entry.image) +
+                           entry.expected_offset,
+                       &word, sizeof(word))) {
+        entry.expected_word =
+            static_cast<uint64_t>(static_cast<int64_t>(word));
+    }
+    entry.xored = entry.computed ^ entry.expected_word;
+    entry.equal = entry.xored == entry.expected ? 1u : 0u;
+    entry.selected = entry.equal ? entry.candidate_eq : entry.candidate_ne;
+
+    if (entry.string_ptr != 0 && entry.string_len != 0) {
+        const size_t copy = entry.string_len < sizeof(entry.string_bytes)
+                                ? static_cast<size_t>(entry.string_len)
+                                : sizeof(entry.string_bytes);
+        SafeReadMemory(static_cast<uintptr_t>(entry.string_ptr),
+                       entry.string_bytes, copy);
+    }
+    if (entry.data_length != 0 && entry.image != 0) {
+        const size_t copy = entry.data_length < sizeof(entry.data)
+                                ? entry.data_length
+                                : sizeof(entry.data);
+        SafeReadMemory(static_cast<uintptr_t>(entry.image) +
+                           entry.data_offset,
+                       entry.data, copy);
+    }
+
+    if (entry.equal) {
+        g_gate_eq_count.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_gate_ne_count.fetch_add(1, std::memory_order_relaxed);
+        if (!g_gate_first_ne_valid.load(std::memory_order_relaxed)) {
+            g_gate_first_ne = entry;
+            g_gate_first_ne_valid.store(true, std::memory_order_relaxed);
+        }
+    }
+    const uint32_t index =
+        g_gate_ring_pos.fetch_add(1, std::memory_order_relaxed);
+    g_gate_ring[index % kGateRingSize] = entry;
+
+    static std::atomic<int> log_count{0};
+    if (log_count.fetch_add(1) >= 16) return;
+    char text[sizeof(entry.string_bytes) + 1] = {};
+    for (size_t i = 0; i < sizeof(entry.string_bytes); ++i) {
+        text[i] = entry.string_bytes[i] >= 0x20 && entry.string_bytes[i] <= 0x7e
+                      ? static_cast<char>(entry.string_bytes[i])
+                      : '.';
+    }
+    LOGI("gate: %s fetch=%#x op=%#x img=%p off=%#x len=%u expoff=%#x "
+         "word=%016" PRIx64 " computed=%016" PRIx64 " xor=%016" PRIx64
+         " expected=%016" PRIx64 " eqc=%#x nec=%#x sel=%#x str=%p/%zu "
+         "text=%s",
+         entry.equal ? "ok" : "FAIL", entry.fetch, entry.op,
+         reinterpret_cast<void *>(entry.image), entry.data_offset,
+         entry.data_length, entry.expected_offset, entry.expected_word,
+         entry.computed, entry.xored, entry.expected, entry.candidate_eq,
+         entry.candidate_ne, entry.selected,
+         reinterpret_cast<void *>(entry.string_ptr),
+         static_cast<size_t>(entry.string_len), text);
 }
 
 // Debug-only capture of the FNV-1 input used by the klB 0x1b handler.

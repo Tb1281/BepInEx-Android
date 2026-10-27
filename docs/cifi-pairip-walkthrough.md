@@ -1352,3 +1352,65 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stack-len-plus-one.log
   one-character spoof change was reverted after the run; the tree returns
   to the pre-experiment code state.
 - Findings updated: yes, in this commit.
+
+## Planned run: selector-gate
+
+- Idempotency check: searched this walkthrough for
+  `variant=selector-gate`; no prior entry. The two adjacent probes
+  (`+0x32c20` router, `+0x3dc0c/+0x3dc50` hash) are different blocks and have
+  verdicts; this run does not repeat either.
+- Purpose: test the static claim that the string-hash selector gate at
+  `libpairipcore.so+0x38420` produces the `sel=0x31bb` state selector seen at
+  the crash, and capture the gate inputs (interned string, computed hash,
+  expected word at `image+w23`, expected hash, candidates, hashed image
+  range) to decide the next experiment.
+- Change: add two debug-only observation hooks, both gated by
+  `pairip_trace`, with no VM, image, spoof, or switch changes.
+  `+0x383f4` (`ldr w9, [sp, #0x518]`) stashes the 16-bit hash-range length
+  `w26` before the loop at `+0x38404` consumes it. `+0x38420`
+  (`ldrsw x8, [x8, w23, uxtw]`) records `x19`/`strlen(x19)`, the string
+  bytes, `x12` (FNV), the sign-extended word at `image+w23`, `x25`, the XOR
+  of the two, `w29`/`w27` (equal/not-equal candidates), the hashed range
+  (`x9 - image`, length), and the current VM `fetch`/`op`. The callback
+  computes `eq` and `sel` exactly as `+0x3842c`/`+0x38430`; neither the
+  `csel` nor the branch is hooked. Both shims preserve all registers, NZCV,
+  and SP; the tail branches use dead scratch registers (`x11` at `+0x383f4`,
+  `x9` at `+0x38420`).
+- Ruled-out check: this is not a repeat of the `+0x32c20` router probe (which
+  hooks the dispatcher return path, not the `+0x383f4` block) or the
+  `+0x3dc0c` hash probe (a skipped block). It is observation-only, not a
+  spoof or input change.
+- Prediction: the hooks install (`rc=0`, non-null trampolines), at least one
+  gate record is emitted before the crash, and the **last** gate record's
+  `sel` equals the state-ring tail `sel=0x31bb`. The record has a non-empty
+  interned string and a valid `len`/`off` image range. The recorded `eq` and
+  string content are the new information; no crash-signature change is
+  predicted.
+- Falsification: zero gate records before the crash, the last gate record's
+  `sel` differs from `0x31bb`, or either hook fails to install. Then the
+  `+0x38420` gate is not the producer of the crash selector and the route is
+  closed; move to the reader-slot writer without further gate probes.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, `pairip_jni_trace=true`,
+  `stackSpoof=true`, `contextSeed=true`, debug launcher.
+- Run key: `variant=selector-gate`, code commit `HEAD` plus the two hook
+  shims and callbacks, committed with this record; APK sha256 recorded after
+  the build; package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_jni_trace true --es pairip_variant selector-gate
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/selector-gate.log
+```
+
+- Status: pre-registered; ready to run.
