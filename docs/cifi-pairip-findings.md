@@ -656,3 +656,43 @@ same crash. The pre-registered maps-window hypothesis is **FALSIFIED**.
   and the preceding state's `next`/`fallback` decision. The
   `pairip_apk_cd_map` switch is diagnostic only and must be removed before
   merge.
+
+## Pre-registered experiment (2026-10-27, jni-trace)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The `0x31` operand block and the preceding `0x7e` flag are now the only live
+targets. The `0x7e` handler loads `x20` from `[state+0x20]` and folds
+`IsSameObject(x20, NULL) == 0` into the flag it stores at `0x263cd`/`0x2904f`.
+The hosted run writes `1` at both stores, i.e. `x20` is a non-null Java
+object. This run uses the existing debug-only JNI tracer, which patches the
+JNIEnv table in place and logs every call whose immediate caller is inside
+`libpairipcore.so`, including `ExceptionOccurred`, `ExceptionClear`, `Throw`,
+`ThrowNew`, and the throwable text of `Call*` results. The tracer is installed
+after the startup program (YTw) and before `libmain`/klB, so the klB window is
+covered. It does not hook `IsSameObject`; the `Exception*` hooks are the direct
+probe for whether `x20` is a pending exception.
+
+- Hypothesis: the non-null `x20` folded into the `0x7e` flag is a
+  Java/environment-derived object (most likely a pending exception) created
+  by a klB JNI call, and the tracer will identify the class, method, and
+  throwable text that produced it.
+- Prediction: immediately before the `vminsn[1579] fetch=0x1f811 op=0x7e` /
+  `builtin[11234] id=0x9a0c0031 pc=0x40a73` tail, the log contains a
+  `PairIpJni` record from `libpairipcore.so` with either
+  `ExceptionOccurred -> 0x...` (non-zero), `ExceptionClear: <class>:
+  <message>`, or `Call* ... -> <pending exception>` plus throwable text. The
+  class/message names the hosted-side failure. The crash, the
+  `bbb9…`/`0153…` reader slots, the five globals, and the state/builtin tails
+  remain byte-identical to the frozen baseline.
+- Falsification: no non-null `ExceptionOccurred` and no pending-exception
+  result from `libpairipcore` before the crash, or no `PairIpJni` records at
+  all despite `installed=true`; then `x20` is not an exception (or the trace
+  cannot see its origin) and the JNI-exception lead is negative. A changed
+  crash signature, reader slots, five globals, or tails makes the run
+  inconclusive because the tracer perturbed the path.
+- Scope: the tracer sees JNI calls and results, not the VM's internal store
+  to `[state+0x20]`. A non-null exception is evidence that the hosted VM
+  observed a Java failure; it does not prove stock sees a null `x20`, so a
+  positive still needs the class/message to be a hosted-only condition.
+- Diagnostic only: `pairip_jni_trace` must be removed before merge.

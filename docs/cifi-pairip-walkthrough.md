@@ -783,3 +783,58 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/apk-cd-map.log
   target is the `0x31` operand block at bytecode pc `0x40a73` and the
   preceding state's `next`/`fallback` decision. The `pairip_apk_cd_map`
   switch is diagnostic only and must be removed before merge.
+
+## Planned run: jni-trace
+
+- Purpose: identify the Java object that the `0x7e` handler reads from
+  `[state+0x20]`. The handler stores `IsSameObject(x20, NULL) == 0` into
+  `image+0x263cd` and `image+0x2904f`; both stores are `1` in every hosted
+  run, so `x20` is a non-null Java object at both checks. The `0x31` builtin
+  at `pc=0x40a73` then writes the five globals, and the reader pair diverges.
+- Hypothesis: `x20` is a pending exception (or another Java-side object)
+  produced by a klB JNI call in the hosted environment; the tracer will name
+  the class/method/throwable and identify the hosted-only failure.
+- Change from the frozen baseline: add `pairip_jni_trace=true` and the inert
+  label `pairip_variant=jni-trace`. The tracer is data-only: it patches the
+  process-wide JNIEnv table in place and forwards every call to the saved
+  original. No game APK is modified, repacked, or re-signed.
+- Prediction: before the `vminsn[1579] fetch=0x1f811 op=0x7e` /
+  `builtin[11234] id=0x9a0c0031 pc=0x40a73` tail, the log contains a
+  `PairIpJni` record from `libpairipcore.so` with a non-null
+  `ExceptionOccurred -> 0x...`, an `ExceptionClear: <class>: <message>`, or a
+  `Call* ... -> <pending exception>` with throwable text. The five globals,
+  reader slots, crash signature, and state/builtin tails stay at the frozen
+  values.
+- Falsification: no non-null `ExceptionOccurred` and no pending-exception
+  result before the crash, or no `PairIpJni` records despite
+  `installed=true`. Then `x20` is not an exception visible to the tracer and
+  this lead is negative. A changed crash, reader slots, five globals, or
+  tails makes the run inconclusive.
+- Scope: the tracer does not hook `IsSameObject`, `NewLocalRef`, or
+  `DeleteLocalRef`; it sees calls/results/exceptions, not the VM's store to
+  `[state+0x20]`. A positive names the hosted Java failure but does not prove
+  stock's `x20` is null.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Run key: `variant=jni-trace`, launcher source tree `505a125` (last launcher
+  change `e5cd358`), APK sha256
+  `e36de8a080d7cc131b205f2f22d73fccdbdbb8d426d0a7f23976aa6398334071`
+  (115,274,306 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_jni_trace true --es pairip_variant jni-trace
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/jni-trace.log
+```
+
+- Status: pre-registered; ready to run.
