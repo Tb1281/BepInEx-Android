@@ -1002,4 +1002,4 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/jni-x20.log
 - Verdict: the pre-registered prediction is **FALSIFIED** and the run is
   valid. `[state+0x20]` is null at every observed check; there is no Java
   object to name. The null branch is taken and the crash still follows.
-- Findings updated: yes, commit `4e1091d`.
+- Findings updated: yes, commit `165b279`.
