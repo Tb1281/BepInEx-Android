@@ -375,9 +375,16 @@ pairip_fnv_trace_entry:
     ldr     x30, [sp, #0xf8]
     add     sp, sp, #0x110
 
-    adrp    x16, g_pairip_fnv_original
-    ldr     x16, [x16, :lo12:g_pairip_fnv_original]
-    br      x16
+    /*
+     * x16 and x17 are live here: they are loaded at +0x7fdbc/+0x7fdc0 and
+     * consumed at +0x7fe18. The usual x16 tail scratch would corrupt the
+     * hash comparison. x15 is dead: the loop at +0x7fde0 overwrites it with
+     * the sign-extended input byte before any use, and the w26==0 path never
+     * reaches this hook.
+     */
+    adrp    x15, g_pairip_fnv_original
+    ldr     x15, [x15, :lo12:g_pairip_fnv_original]
+    br      x15
 
     .size pairip_fnv_trace_entry, . - pairip_fnv_trace_entry
 

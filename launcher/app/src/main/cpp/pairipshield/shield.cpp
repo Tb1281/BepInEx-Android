@@ -2531,7 +2531,7 @@ void pairip_fnv_trace_c(uint64_t *regs) {
     g_fnv_counter_last = counter;
     if (counter < g_fnv_counter_min) g_fnv_counter_min = counter;
     if (counter > g_fnv_counter_max) g_fnv_counter_max = counter;
-    if (!readable || counter > 0x100) {
+    if (!readable || counter > 0x1000) {
         ++g_fnv_bad_counter;
         static std::atomic<int> diag_log{0};
         if (diag_log.fetch_add(1) < 8) {
@@ -2580,7 +2580,9 @@ void pairip_fnv_trace_c(uint64_t *regs) {
         ++g_fnv_input_len;
     }
 
-    if (counter <= 1) DumpFnvInput(image);
+    // The observed 0xf656 loop totals 419 bytes. Dump at the phase end
+    // (counter <= 1) or when that total is reached, whichever comes first.
+    if (counter <= 1 || g_fnv_input_len >= 419) DumpFnvInput(image);
 }
 
 void pairip_append_trace_c(uint64_t *regs) {
