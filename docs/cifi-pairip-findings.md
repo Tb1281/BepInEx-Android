@@ -157,6 +157,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | Low CD mapping (`pairip_apk_cd_map`) | The base APK's real CD was mapped at `0x7900000000` (`MAP_SHARED`, offset `0x74f5000`), and its `r--s 074f5000` line appeared at byte 3,596, inside the VM's 146,432-byte maps scan. The five globals, reader slots, state/builtin tails, crash signature, and 368-byte/79-range image diff are unchanged. Falsified: a CD line inside the scanned window is not the gate. |
 | JNI call trace (`pairip_jni_trace`) | 3,571 records; no non-null `ExceptionOccurred`, no `ExceptionClear`, no `Throw`/`ThrowNew`, and no pending-exception result before the crash. The only exception-like object is the VM's own `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) used for its `getStackTrace` stack walk; the launcher's spoof hook returns the fabricated 24-frame chain, then the VM calls `Debug.isDebuggerConnected`/`waitingForDebugger` (both false) and reaches the same reader crash. Falsified: `x20` is not a pending exception. |
 | JNI `IsSameObject` probe (`pairip_jni_trace` + `IsSameObject`) | 1,053 records; every one of the 529 calls at `+0x702e4` is `0x0 0x0 -> 1`, with no non-null argument and no class name. `[state+0x20]` is null at every observed `0x6ff60` check, so the clear/delete branch is never taken and the `cset eq` flag is 0. Crash, five globals, reader slots, tails, and image diff are unchanged. Falsified: there is no Java object in `x20` to name. |
+| Shared sequence counter (`seq-7e`) | `seqev B seq=12787` (`id=0x40b0007e pc=0x1f813 ctx=0x7ff9372b88 img=b400007b1224d010`) precedes `seqev D seq=12788` (`state=0x7ff9372bd0`, `fetch=0x1f811 next=0x1f813 op=0x7e`, same image) by 1; the second launch repeats it as 12797/12798. PROVEN: the `0x1f813` builtin is the fetch/prep step before the dispatcher entry, `0x6ff60` is the handler for the final `0x7e`, and the nested `0x31` at `pc=0x40a73` (`seq=12824`) runs after the dispatcher entry, inside the handler. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -301,11 +302,17 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
    `pairip_allow_nondebug_experiments`, the Frida gadget/DiagnosticApp/sleeps,
    and the stale `pairip_desc_trace`/`pairip_branch_trace` declarations.
    Include `pairip_apk_cd_map` and the other mapping diagnostics.
-9. jni-x20 (2026-10-27): `[state+0x20]` is null at all 529 observed checks,
-   so the JNI-object route is closed. Order the final `0x1f811` dispatcher
-   entry (`0x6ff60`) against the `0x1f813` builtin entry (`+0x31de4`) with a
-   shared sequence counter, then identify which code reads
-   `image+0x3f874`/`image+0x1ba5c` and what should have written them.
+9. Done (seq-7e, 2026-10-27): the final dispatcher entry `0x1f811` is
+   preceded by 1 by the `0x1f813` builtin from `+0x31de4`, so that builtin is
+   the fetch/prep step and `0x6ff60` is the handler. The nested `0x31` at
+   `pc=0x40a73` runs after the dispatcher entry, inside the handler, and
+   writes the five globals.
+10. Trace `0x6ff60` forward from the nested `0x31` return to the
+    `+0x834dc`/`+0x834f0` setter and the string builder at `0x3e12c`.
+    Identify which branch reaches the setter, what creates `x20`, and why a
+    hosted run never executes it. Then identify the writer or patch that
+    should populate `image+0x3f874`/`image+0x1ba5c`, or prove that a bare
+    launch takes a non-null path that avoids both slots.
 
 ## Pre-registered experiment (2026-10-27, state-router)
 
@@ -900,3 +907,71 @@ qwords of the hook context. No game APK is modified, repacked, or re-signed.
   `variant=seq-7e`, code commit `9003ed9`, APK sha256
   `32dc845833094484cf3c05bab82bfebc4038d8cd575a4b4e39b1561425b984fa`
   (115,274,306 bytes, 488 entries; `libpairipshield.so` is 479,264 bytes).
+
+## seq-7e result (2026-10-27 23:48)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The frozen baseline plus the shared `g_trace_seq` counter ran one cold launch
+command: `Status: ok`, `LaunchState: COLD`, `TotalTime: 320` ms. The APK
+sha256 is
+`32dc845833094484cf3c05bab82bfebc4038d8cd575a4b4e39b1561425b984fa`
+(115,274,306 bytes, 488 entries, `libpairipshield.so` 479,264 bytes); the
+installed game APK was not touched. The log is
+`tmp/cifi-apk/logs/verify/seq-7e.log` (22,972 lines, sha256
+`64e3c2c6978d02995994fbb32e75adf1e21ca04f0a8fe763b257b463e5145433`).
+
+The pre-registered prediction is **CONFIRMED**, with one harness caveat: the
+log contains two launches, pid 1277 at 23:47:05 and pid 1664 at 23:47:24.
+The OS replayed the activity after the first crash, so one `am start -W`
+produced two cold launches. Each launch contains exactly one `seqev B` and
+one `seqev D`, and both launches show the same ordering and the same pointer
+relationship, so the verdict is robust. This duplication is a harness
+deviation, not a behavioural difference.
+
+- Launch 1: `seqev B seq=12787 arg=0x7ff9372ba8 out=0x7ff9372ba4
+  ctx=0x7ff9372b88 img=b400007b1224d010 id=0x40b0007e pc=0x1f813
+  lr=+0x6adc4`, then `seqev D seq=12788 state=0x7ff9372bd0
+  image=0xb400007b1224d010 fetch=0x1f811 next=0x1f813 cursor=0xb0
+  lr=+0x6aa68`. Gap 1.
+- Launch 2: `seqev B seq=12797` and `seqev D seq=12798`, same fields and the
+  same image pointer.
+- The dispatcher state equals the builtin context plus `0x48`
+  (`0x7ff9372b88 + 0x48 = 0x7ff9372bd0`), and `vminsn[1579] seq=12798
+  fetch=0x1f811 next=0x1f813 cursor=0xb0 op=0x7e` is the same event as
+  `seqev D`. The builtin `0x1f813` entry is therefore the fetch/prep step
+  (`+0x31de4` called from `0x6adc0`) for the instruction that the dispatcher
+  then runs at `0x1f811`; `0x6ff60` is its handler.
+
+The nested `0x31` event is not part of that preparation. In launch 2 the
+builtin ring shows `builtin[11244] seq=12824 id=0x9a0c0031 pc=0x40a73`, 26
+entries after the `0x40b0007e` prep event and after the dispatcher entry
+`seq=12798`. It runs inside `0x6ff60` and writes the five globals.
+
+Invariants are unchanged. The crash is still signal 11 in
+`__memmove_aarch64_nt+140` with the `split_config.arm64_v8a.apk +0x514`
+frame; `vm[0x540]` still holds `bbb9eb6daed20ed0` / `015370f87525d57b`; the
+state tail is `id=0x872a21c sel=0x31bb`; the builtin tail is
+`id=0x9a0c0031 pc=0x40a73`; the five globals are `0x534a6211`, `0xe29e9c3b`,
+`0x8a1aeb2d`, `0xbfe458cb`, `0x4d062af3`; and the reader slots are
+`bbb9eb6daed20ed0` / `015370f87525d57b`. The crash image is
+`/tmp/opencode/seq-7e-image.bin` (sha256
+`4b992f2adcda9e4d0a6b36dd48d9aad26a7fea8755c4b7d9d4b0cdc50d7f84b6`); the
+diff vs `jni-x20` is 34 ranges / 76 bytes, and vs the pristine asset 79
+ranges / 368 bytes. The five globals and both reader slots are byte-identical
+in all three images. Ring positions in launch 2 are state 130,579, builtin
+11,245, VM 1,580, and image write 2,209.
+
+Consequence: the `pc=0x1f813` correlation was real, so the handler mapping
+needs no re-derivation and the `0x1f813` builtin cannot be the writer of the
+reader slots. The missing writer is now a forward problem inside `0x6ff60`
+(after the nested `0x31` return) and its callees. The `+0x834dc`/`+0x834f0`
+setter remains unvisited because `[state+0x20]` is null, so the handler
+falls back to the image-backed string view at `image+0x3f874` /
+`image+0x1ba5c`. The next step is static: follow `0x6ff60` from the nested
+`0x31` return to the string builder at `0x3e12c`, and identify the branch
+condition and the value that would make the setter run (or make the null
+branch avoid the two slots).
+
+The `g_trace_seq`, `seq=` ring fields, and `seqev` records are diagnostic
+only and must be removed with the trace hooks before merge.

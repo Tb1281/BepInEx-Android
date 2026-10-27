@@ -1054,3 +1054,50 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/seq-7e.log
 ```
 
 - Status: pre-registered; ready to run.
+
+### seq-7e (2026-10-27 23:48)
+
+- Run key: `variant=seq-7e`, code commit `9003ed9`, APK sha256
+  `32dc845833094484cf3c05bab82bfebc4038d8cd575a4b4e39b1561425b984fa`
+  (115,274,306 bytes, 488 entries; `libpairipshield.so` 479,264 bytes).
+- Idempotency check: the walkthrough contained only the pre-registration for
+  this run key; no verdict existed.
+- Install: `android install` sent a 904.94 KB delta patch; the game APK was
+  not modified, repacked, or re-signed.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 320` ms. Both
+  packages were force-stopped first and the log buffer was cleared.
+- Harness caveat: the log contains two launches, pid 1277 at 23:47:05 and
+  pid 1664 at 23:47:24. The OS replayed the activity after the first crash,
+  so one command produced two cold launches. Each launch has exactly one
+  `seqev B` and one `seqev D` with the same ordering, so the verdict holds.
+- Log: `tmp/cifi-apk/logs/verify/seq-7e.log`, 22,972 lines, sha256
+  `64e3c2c6978d02995994fbb32e75adf1e21ca04f0a8fe763b257b463e5145433`.
+- Instrumentation: line 561 reports `variant=seq-7e`, `preload=true`,
+  `trace=true`, `dumpVmImage=true`; every other experiment switch is off.
+- Ordering, launch 1: `seqev B seq=12787` with `id=0x40b0007e pc=0x1f813
+  ctx=0x7ff9372b88 img=b400007b1224d010 lr=+0x6adc4`, then `seqev D
+  seq=12788` with `state=0x7ff9372bd0`, `fetch=0x1f811 next=0x1f813
+  cursor=0xb0 op=0x7e`, same image. Gap 1.
+- Ordering, launch 2: `seqev B seq=12797` and `seqev D seq=12798`, same
+  fields and image pointer. `vminsn[1579] seq=12798 fetch=0x1f811
+  next=0x1f813 op=0x7e` is the same event as `seqev D`.
+- Interpretation: the `0x1f813` builtin is the fetch/prep step
+  (`+0x31de4` from `0x6adc0`) that precedes the dispatcher entry at
+  `0x1f811`; `0x6ff60` is the handler for the final `0x7e`. The dispatcher
+  state is the builtin context plus `0x48`.
+- Nested event: `builtin[11244] seq=12824 id=0x9a0c0031 pc=0x40a73` runs
+  after the dispatcher entry, inside `0x6ff60`, and writes the five globals.
+- Crash: unchanged; signal 11 in `__memmove_aarch64_nt+140`, caller frame
+  `split_config.arm64_v8a.apk +0x514`. `vm[0x540]` still holds
+  `bbb9eb6daed20ed0` / `015370f87525d57b`.
+- Rings, launch 2: `state pos=130579` (`state[130578] id=0x872a21c
+  sel=0x31bb`), `builtin pos=11245`, `vm pos=1580`, `image write pos=2209`;
+  `hash ring pos=0` and `router ring pos=0`.
+- Image: `/tmp/opencode/seq-7e-image.bin`, sha256
+  `4b992f2adcda9e4d0a6b36dd48d9aad26a7fea8755c4b7d9d4b0cdc50d7f84b6`.
+  Diff vs `jni-x20-image.bin` is 34 ranges / 76 bytes; vs the pristine asset
+  79 / 368. The five globals and both reader slots are byte-identical.
+- Verdict: the pre-registered prediction is **CONFIRMED**. The `0x1f813`
+  builtin precedes the `0x1f811` dispatcher entry by 1, both share the image,
+  and the handler mapping to `0x6ff60` stands.
+- Findings updated: yes, in this commit.
