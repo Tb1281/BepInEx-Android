@@ -1003,3 +1003,54 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/jni-x20.log
   valid. `[state+0x20]` is null at every observed check; there is no Java
   object to name. The null branch is taken and the crash still follows.
 - Findings updated: yes, commit `165b279`.
+
+## Planned run: seq-7e
+
+- Purpose: order the final dispatcher entry at `fetch=0x1f811 op=0x7e`
+  (jump-table target `0x6ff60`) against the builtin entry
+  `id=0x40b0007e pc=0x1f813` from the only direct `bl +0x31de4` at
+  `0x6adc0`. The `jni-x20` rings have no common sequence, so their relative
+  order is unknown.
+- Change from the frozen baseline: a shared atomic `g_trace_seq` increments
+  in both klB-filtered hooks and is stored in `VmRingEntry`/`BuiltinRingEntry`
+  and printed as `seq=` on the existing ring lines. Two targeted `seqev D` /
+  `seqev B` lines log the exact final events with the context pointer, image,
+  fetch/next pc, cursor, link-register offset, and eight context qwords. No
+  game APK is modified; the probe is diagnostic only and must be removed with
+  the trace hooks before merge.
+- Prediction: both `seqev` lines appear exactly once, share the same image
+  pointer, and their sequence gap is at most 64. `seq(B) > seq(D)` means the
+  builtin is nested after the dispatcher entry; `seq(B) < seq(D)` means it is
+  the fetch/prep step before the dispatcher. Either way the final
+  instruction is the same `0x7e` at `0x1f811` and `0x6ff60` is its handler.
+- Falsification: either line is absent or duplicated, the image pointers
+  differ, or the sequence gap exceeds 64. Then the builtin `pc=0x1f813`
+  correlation is coincidental and the handler mapping must be re-derived.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Run key: `variant=seq-7e`, code commit `9003ed9`, APK sha256
+  `32dc845833094484cf3c05bab82bfebc4038d8cd575a4b4e39b1561425b984fa`
+  (115,274,306 bytes, 488 entries), package `com.bepinex.android.debug` on
+  SM-S931N (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Build note: the ignored Frida gadget (`libaudiopolicy.so`) and its 120-byte
+  `libaudiopolicy.config.so` were moved out of `jniLibs` for this build and
+  restored afterwards. The APK has 488 entries and differs from the installed
+  baseline only in `lib/arm64-v8a/libpairipshield.so` (479,264 vs 477,744
+  bytes).
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant seq-7e
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/seq-7e.log
+```
+
+- Status: pre-registered; ready to run.

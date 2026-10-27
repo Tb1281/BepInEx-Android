@@ -858,3 +858,45 @@ event runs before or inside the `0x6ff60` handler.
 
 `pairip_jni_trace` and the `IsSameObject` hook are diagnostic only and must
 be removed before merge.
+
+## Pre-registered experiment (2026-10-27, seq-7e)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The `jni-x20` run closed the `x20` object question but left the final
+instruction unordered: the dispatcher hook sees `fetch=0x1f811 op=0x7e`,
+whose jump-table entry is `0x6ff60`, while the builtin hook sees
+`id=0x40b0007e pc=0x1f813` from the only direct `bl +0x31de4` at `0x6adc0`.
+The two rings are dumped independently and carry no common timestamp or
+sequence, so their relative order cannot be recovered from the `jni-x20` log.
+This run adds one shared, monotonically increasing entry counter
+(`g_trace_seq`) to both klB-filtered hooks and stores it in both rings. Two
+targeted `seqev` records log the exact events with the state/context
+pointers, image, fetch/next pc, cursor, link-register offset, and eight
+qwords of the hook context. No game APK is modified, repacked, or re-signed.
+
+- Hypothesis: the dispatcher entry at `0x1f811` and the builtin entry at
+  `0x1f813` belong to the same final `0x7e` instruction, with `0x6ff60` as
+  its handler and `+0x31de4` either the preceding fetch/prep step or a nested
+  callee.
+- Prediction: `seqev D` and `seqev B` each appear exactly once in the final
+  window, both name the same image pointer, and `|seq(B) - seq(D)| <= 64`.
+  If `seq(B) > seq(D)`, the builtin call is nested after the dispatcher
+  entry, inside `0x6ff60` or its callees; if `seq(B) < seq(D)`, the builtin
+  call is the fetch/prep step that precedes the dispatcher. Either way the
+  final instruction is the same `0x7e` at `0x1f811`.
+- Falsification: either `seqev` record is absent, either appears more than
+  once, the two image pointers differ, or the sequence gap exceeds 64. Then
+  the `pc=0x1f813` correlation is coincidental, the builtin event is not part
+  of the final instruction, and the `0x6ff60` handler mapping must be
+  re-derived.
+- Invariants: the five globals, reader slots, crash signature, state/builtin
+  tails, and every compared image byte stay at the frozen values. The only
+  new output is the `seq=` field on the existing ring lines and the two
+  `seqev` lines; the counter is diagnostic only and must be removed with the
+  trace hooks before merge.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher. Run key:
+  `variant=seq-7e`, code commit `9003ed9`, APK sha256
+  `32dc845833094484cf3c05bab82bfebc4038d8cd575a4b4e39b1561425b984fa`
+  (115,274,306 bytes, 488 entries; `libpairipshield.so` is 479,264 bytes).
