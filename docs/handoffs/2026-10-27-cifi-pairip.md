@@ -42,10 +42,11 @@ maps/status/path-derived (the globals differ in stock). See
 
 - Repo: `Tb1281/BepInEx-Android`
 - Branch: `test/feat-cifi`, tracked as `origin/test/feat-cifi`
-- Code checkpoint: the WIP commit containing this update (on top of
-  `dff372c`). It commits the debug instrumentation that was previously
+- Code checkpoint: `028caa2` (on top of `dff372c`; `.gitignore` split into
+  `a2707ca`). It commits the debug instrumentation that was previously
   unstaged: builtin/state/hash rings, `skipKlb`/`readerGuard`, and the
-  five-global analysis notes.
+  five-global analysis notes. Later doc-only commits do not change the code
+  state.
 - The local branch previously pointed its upstream at
   `origin/feat/cifi-pairip-hosting`; it is now `origin/test/feat-cifi`.
 - The branch contains debug-only WIP instrumentation. It is not merged to
