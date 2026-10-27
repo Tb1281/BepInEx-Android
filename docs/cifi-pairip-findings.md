@@ -168,6 +168,7 @@ not a dispatcher-selected state. See the static map below.
 | Offset-0 base-APK mapping (`pairip_apk_zero_map`) | Mapping installed at the planned address (`0x7900000000`, `fixed=1`) and appears in klB's maps dump (`r--p 00000000`), yet the crash, reader slots, FNV input, state tail, and builtin tail are unchanged. Falsified: the missing offset-0 mapping is not the gate. |
 | Process-name spoof (`pairip_process_name`) | Main-thread `prctl` succeeded and the VM's `/proc/self/status` read saw `mesCompany.CIFI` (argv0/`__progname` were rewritten too), yet the FNV input, five globals, reader slots, state/builtin tails, crash signature, and image diff are byte-identical to baseline. Falsified: process identity is not the gate. |
 | Identity conjunction (`pairip_process_name` + `pairip_proc_sanitize` + `pairip_apk_zero_map`) | All three facts were active: status showed `Name:\tmesCompany.CIFI` and game uid, the sanitized maps had zero `bepinex` lines (59 in the raw copy), and the game base APK was at offset 0 on line 32. Reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, state tail, crash signature, and image invariants were unchanged. Falsified: the stock identity conjunction is not the gate. |
+| Stock-bound context (`pairip_stock_bound` with `lateHooks`) | PairIP's own `InitContextProvider` ran (`ContextImpl.createAppContext` hidden-API grant from `com/pairip/InitContextProvider`) and built the app context from the game LoadedApk, instead of the seeded package context. Final state `0x872a21c sel=0x31bb`, reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, builtin tail, crash signature, and both ZIP slots were unchanged; the 45-byte image diff vs identity is entirely inside the known 368-byte variable set. Falsified: the context object type is not the gate. |
 | syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
 | Low CD mapping (`pairip_apk_cd_map`) | The base APK's real CD was mapped at `0x7900000000` (`MAP_SHARED`, offset `0x74f5000`), and its `r--s 074f5000` line appeared at byte 3,596, inside the VM's 146,432-byte maps scan. The five globals, reader slots, state/builtin tails, crash signature, and 368-byte/79-range image diff are unchanged. Falsified: a CD line inside the scanned window is not the gate. |
 | JNI call trace (`pairip_jni_trace`) | 3,571 records; no non-null `ExceptionOccurred`, no `ExceptionClear`, no `Throw`/`ThrowNew`, and no pending-exception result before the crash. The only exception-like object is the VM's own `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) used for its `getStackTrace` stack walk; the launcher's spoof hook returns the fabricated 24-frame chain, then the VM calls `Debug.isDebuggerConnected`/`waitingForDebugger` (both false) and reaches the same reader crash. Falsified: `x20` is not a pending exception. |
@@ -1564,3 +1565,49 @@ launch. The pre-registered prediction is **FALSIFIED**.
   to the next single fork: `contextSeed=false` (stock starts with a null
   `VMRunner.context`) or a reader-source probe at `+0x3dc88`. Do not repeat
   identity/maps experiments.
+
+## stock-bound-context result (2026-10-28 02:01)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen diagnostic baseline plus `pairip_stock_bound=true` ran one cold
+launch. The pre-registered prediction is **FALSIFIED**.
+
+- Build/install: no build; APK sha256
+  `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+  Install skipped because the installed APK's `lastUpdateTime` is after the
+  build and no launcher code changed since. The game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 213` ms, one launch
+  only (pid 18971). Log
+  `tmp/cifi-apk/logs/verify/stock-bound-context.log`, 9,945 lines, sha256
+  `5fd8a8af638dcacd3fd90767bb9da4c1858933d89545024136f2a5bc8d0b82de`.
+- Context: PairIP's `InitContextProvider` actually ran. The log shows the
+  `ContextImpl.createAppContext` and `ActivityThread.mInstrumentation`
+  hidden-API grants from `com/pairip/InitContextProvider`, then
+  `restored mBoundApplication.info` and `stock-bound factory started`. This
+  is the stock first-invoke path: null `VMRunner.context`, app context built
+  from the game LoadedApk.
+- Invariants: final state `id=0x872a21c sel=0x31bb reader=0xf93727d8`;
+  reader slots `bbb9eb6daed20ed0` / `015370f87525d57b`; append
+  `src=0x7ff93727a0 n=46 ... off=0x3e170
+  fields=0000007a908d4ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` = `00000000f93727d8`/`0000007ff9372869`;
+  `vm[0x7c0]` ends in `0x31bb`; builtin tail `0x9a0c0031`/`0x40a73`.
+- Crash: unchanged, signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `split_config.arm64_v8a.apk (+0)`. Image
+  `stock-bound-context-image.bin`, sha256
+  `ba9fb2b936980ee138acb4e1057b32683cef40073ab7489dd08e3ced1f9e27c5`;
+  it differs from the identity-conjunction image in 45 bytes, all inside the
+  known 368-byte variable set, with zero new-only offsets. The five globals
+  and both ZIP slots are byte-identical.
+- Verdict: the stock-faithful `InitContextProvider` context does not change
+  the reader path. The context object type is not the gate. The remaining
+  unmeasured part of the stock boot is the game `Application` itself:
+  `attachBaseContext` sets `VMRunner.context` to the Application, then runs
+  `SignatureCheck.verifyIntegrity` and `LicenseClient.checkLicense`. The
+  next single fork is `pairip_game_application=true` with the current
+  reader-slot/image instrumentation. The 2026-10-27 handoff says that
+  lifecycle was tried, but it has no run key or log in this repository and
+  did not measure the reader slots, so that claim is UNVERIFIABLE as a
+  falsification; the new run must state the current invariants. If it is
+  unchanged, close the Application branch and move to the reader-source
+  probe at `+0x3dc88`. Do not repeat identity/maps/context-only experiments.

@@ -1697,3 +1697,47 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stock-bound-context.log
 ```
 
 - Status: pre-registered; ready to run.
+
+### 2026-10-28 02:01 — stock-bound-context: FALSIFIED (the context object type is not the gate)
+
+- Key: `variant=stock-bound-context`, code commit `d303d6b`, APK sha256
+  `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+  Install skipped: `lastUpdateTime=2026-10-28 01:41:10` is after the
+  01:40:42 build of the same sha256, and no launcher code changed since.
+  The game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 213` ms, one cold
+  launch (pid 18971). Both packages were force-stopped and logcat cleared
+  first. Log `tmp/cifi-apk/logs/verify/stock-bound-context.log`, 9,945 lines,
+  sha256 `5fd8a8af638dcacd3fd90767bb9da4c1858933d89545024136f2a5bc8d0b82de`.
+- Variant line: `variant=stock-bound-context ... contextSeed=true
+  stockBound=true naturalFactory=false lateHooks=true preload=true trace=true
+  dumpVmImage=true`; every other experiment switch is false.
+- Context evidence: the log shows `PairIP experiment: stock-bound late-hooks
+  path` at 02:01:07.874, followed by the framework's hidden-API grants for
+  `ContextImpl.createAppContext(ActivityThread,LoadedApk)` and
+  `ActivityThread.mInstrumentation`, both emitted from
+  `com/pairip/InitContextProvider` at 02:01:07.876. This proves PairIP's own
+  `InitContextProvider` ran and built the app context from the game
+  LoadedApk, not the seeded package context. `restored mBoundApplication.info`
+  and `stock-bound factory started` follow at 02:01:07.954.
+- Probe: the final state is `state[131111] id=0x872a21c sel=0x31bb
+  reader=0xf93727d8`; the append record is
+  `src=0x7ff93727a0 n=46 ... off=0x3e170
+  fields=0000007a908d4ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` is `00000000f93727d8`/`0000007ff9372869`;
+  `vm[0x7c0]` ends in `00000000000031bb`; builtin[11289] is
+  `id=0x9a0c0031 pc=0x40a73`.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `split_config.arm64_v8a.apk (+0)`, at 02:01:08.986; the process exited by
+  signal 11 at 02:01:09.009.
+- Crash image: `tmp/cifi-apk/logs/verify/stock-bound-context-image.bin`,
+  sha256 `ba9fb2b936980ee138acb4e1057b32683cef40073ab7489dd08e3ced1f9e27c5`.
+  It differs from the identity-conjunction image in 45 bytes, and **all 45
+  offsets are inside the known 368-byte variable set**; there are zero
+  new-only offsets. The five globals and both ZIP slots are byte-identical
+  to the identity-conjunction image.
+- Verdict: the pre-registered prediction is **FALSIFIED**. The stock-bound
+  `InitContextProvider` context is active, yet the final reader state,
+  slots, append, tails, crash, and image invariants are unchanged. The
+  context object type is not the gate; close the context branch.
+- Findings updated: yes, in this commit.
