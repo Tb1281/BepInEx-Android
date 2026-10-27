@@ -890,3 +890,69 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/jni-trace.log
   frames the launcher replaces. Whether `[state+0x20]` holds that exception,
   the `StackTraceElement[]`, or a different object is still open; the next
   diagnostic must read the object at the `IsSameObject` call.
+
+## Planned run: jni-x20
+
+- Purpose: name the non-null Java object that the `0x7e` handler reads from
+  `[state+0x20]`. The handler calls `IsSameObject(x20, NULL)` at
+  `libpairipcore+0x702e0` (return address `+0x702e4`) and stores the result at
+  `+0x70448`/`+0x7044c`; when `x20` is non-null it also clears the slot and
+  deletes the local reference. Every hosted run reaches this check with the
+  flag at `1`. The `jni-trace` run falsified the pending-exception mechanism
+  but could not see the argument. This run adds a debug-only `IsSameObject`
+  hook to the existing JNI tracer and logs the raw object, the null argument,
+  the result, and the class name only for the `+0x702e4` call site.
+- Hypothesis: the slot holds one of the Java objects that the VM creates or
+  receives in the preceding window. The trace makes the VM's own
+  `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) and its
+  `getStackTrace` result the leading candidates; the `Debug` class, a
+  `StackTraceElement`, a `String`, or a `Long` are the alternatives.
+- Change from the frozen baseline: the JNI tracer now also patches
+  `JNINativeInterface.IsSameObject` (36 slots instead of 35) and logs
+  `jni: IsSameObject <obj1> <obj2> -> <result> class=<class> caller=+0x702e4`
+  when the caller is that handler. No game APK is modified, repacked, or
+  re-signed; the probe is diagnostic only and must be removed before merge.
+- Prediction: the tracer reports `jni: patched 36 slots`, and before the
+  crash at least one `IsSameObject` record with `caller=+0x702e4` has
+  `obj2=0x0`, `-> 0`, and a concrete `class=...`. The five globals, reader
+  slots, crash signature, state/builtin tails, and every compared image byte
+  remain at the frozen values; the image diff vs the prior crash image stays
+  ASLR/heap/counter-only.
+- Falsification: no `IsSameObject` record with `caller=+0x702e4` before the
+  crash, or the non-null object cannot be named (`class=(pending)` or
+  `class=object`). Then the probe is invalid or the slot is not a Java object
+  the tracer can name, and this route to identifying `x20` is closed. A
+  changed crash signature, reader slots, five globals, or tails makes the run
+  inconclusive because the probe perturbed the path.
+- Scope: naming the class identifies the source object but does not prove
+  that stock's slot is null or different. A `java.lang.Exception` result
+  would redirect the investigation to the stack-spoof/exception-slot path; it
+  would not by itself explain the hosted-only gate.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Run key: `variant=jni-x20`, code commit `62427ce`, APK sha256
+  `0cf2353393eeb6a2aaed311d5b19e0311c08e9d76dba521def91463298661b92`
+  (115,274,306 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Build note: the ignored Frida gadget (`libaudiopolicy.so`) and its
+  120-byte `libaudiopolicy.config.so` were moved out of `jniLibs` for this
+  build and restored afterwards. The APK has the same 488 entries as the
+  installed baseline; the only differing entry is
+  `lib/arm64-v8a/libpairipshield.so` (477,744 bytes vs 477,056).
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_jni_trace true --es pairip_variant jni-x20
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/jni-x20.log
+```
+
+- Status: pre-registered; ready to run.

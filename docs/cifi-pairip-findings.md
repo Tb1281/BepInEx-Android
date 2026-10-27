@@ -748,3 +748,40 @@ hook `IsSameObject` and log the raw object/class (and, if safe, the class
 name) at the handler's call site.
 
 `pairip_jni_trace` is diagnostic only and must be removed before merge.
+
+## Pre-registered experiment (2026-10-27, jni-x20)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The `jni-trace` run closed the pending-exception mechanism but left the
+actual argument at `[state+0x20]` unnamed. The `0x7e` handler calls
+`IsSameObject(x20, NULL)` at `libpairipcore+0x702e0` (return address
+`+0x702e4`), and the result feeds the flag at `+0x7044c`. The handler also
+clears the slot and deletes the local reference when `x20` is non-null. This
+run adds a debug-only `IsSameObject` patch to the existing JNI tracer and logs
+the raw object, the second argument, the result, and the class name only at
+the `+0x702e4` call site. The class lookup is deliberately limited to that
+site so unrelated VM comparisons do not acquire avoidable JNI traffic.
+
+- Hypothesis: the slot holds one of the Java objects the VM creates or
+  receives in the preceding window. The leading candidates are the VM's own
+  `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) and its
+  `getStackTrace` result (`[Ljava.lang.StackTraceElement;`); the `Debug`
+  class, a `StackTraceElement`, a `String`, or a `Long` are alternatives.
+- Prediction: the tracer reports `jni: patched 36 slots`, and before the
+  crash at least one `IsSameObject` record with `caller=+0x702e4` has
+  `obj2=0x0`, `-> 0`, and a concrete `class=...`. The crash, reader slots,
+  five globals, state/builtin tails, and image diff remain at the frozen
+  values; the diff vs the prior crash image stays ASLR/heap/counter-only.
+- Falsification: no `IsSameObject` record with `caller=+0x702e4` before the
+  crash, or the non-null object cannot be named (`class=(pending)` or
+  `class=object`). Then the probe is invalid or the slot is not a Java object
+  the tracer can name, and this route to identifying `x20` is closed. A
+  changed crash signature, reader slots, five globals, or tails makes the run
+  inconclusive.
+- Scope: naming the class identifies the source object but does not prove
+  that stock's slot is null or different. A `java.lang.Exception` result
+  would redirect the investigation to the stack-spoof/exception-slot path; it
+  would not by itself explain the hosted-only gate.
+- Diagnostic only: the new `IsSameObject` logging must be removed with
+  `pairip_jni_trace` before merge.
