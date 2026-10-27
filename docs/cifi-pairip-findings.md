@@ -453,3 +453,47 @@ feeds the five globals. Stock computes the same five globals, so the hosted
 difference must be the branch or state before the `0x31` reader. Do not
 repeat maps/status/name experiments; decode the `0x31` operand block and the
 preceding state's `next`/`fallback` decision instead.
+
+## Builtin id provenance (static follow-up, 2026-10-27 19:20)
+
+No device run in this step. The goal was to resolve the `[sp+0x44]` /
+`0x9a0c0031` conflict left by the process-name run.
+
+- `+0x6adb4` is the only call site to `+0x31de4` in the trace: `ldr w1,
+  [sp, #0x44]`, `add x0, sp, #0x78`, `add x2, sp, #0x74`, `bl +0x31de4`;
+  the return address is `+0x6adc4`. All 128 text-logged calls and all 32
+  ring entries report `lr=+0x6adc4` and target `+0x31de4`. The trace does
+  not hook `+0x5ef50`, so it cannot say whether the `+0x6add8` path ran.
+- `+0x31de4` never uses the high 16 bits of `w1`: the entry masks are
+  `and w8, w1, #0xffff` at `+0x31e04` and `tst w1, #0xfffc` at `+0x31eb0`.
+  The original `x1` is not spilled, so the high half is gone once `w1` is
+  reused. The high half is not used for dispatch. Every one of the 128
+  logged ids has `id & 0xffff` in `0x04..0xb5`, and the high halves form a
+  small set of block tags (`0x0`, `0x34e1`, `0x52d8`, `0x40b0`, `0x40c`,
+  `0x1124`, `0x9a0c`). `0x9a0c0031` therefore means opcode `0x31`; the
+  `0x9a0c` tag is inert at the builtin entry.
+- Frame provenance: the builtin argument block is `0x6a968.sp + 0x78`.
+  The VM dump places that block at dump offset `0x6e0`, so
+  `0x6a968.sp = arg - 0x78` and `[0x6a968.sp + 0x44]` is at dump offset
+  `0x6ac` (`dump_sp + 0x6ac`). The crash dump's `0x680` row holds the
+  64-bit value `0x0000007aa3e30db4` at `+0x6a8`; its high half is `0x7a`,
+  so the 32-bit slot at `+0x6ac` is `0x7a` at crash time. The entry value
+  was `0x9a0c0031`, so the slot is rewritten after entry while the reader
+  is being built. The crash-time value is not the value passed at entry.
+- The only static store to `[sp+0x44]` in `+0x6a968` is `+0x6ad70`,
+  `((w9 ^ 0x7f45) % 0xba)`, which produces `0..0xb9`. That is consistent
+  with the low 16 bits of every observed id but not with the tag. The tag
+  is written by the interpreter/runtime path, not by `+0x6ad70`; the exact
+  site is still unidentified, but it is lower priority because `+0x31de4`
+  ignores it.
+
+This closes the "full 32-bit builtin id" question for the reader path: the
+effective dispatch key is the low half, and it is the selector range the
+state machine computes. It does not settle the five globals. The FNV input
+is static, but the final values are written by the `0x7e` handler at fetch
+`0x1f811`; no stock-side capture exists. "Stock computes the same five
+globals" remains an inference, not a direct stock observation. If stock's
+globals differ, the reader pair differs; if they are the same, stock must
+patch the selected image slots or take a different branch. The next
+diagnostic should discriminate those cases rather than continue chasing the
+tag.
