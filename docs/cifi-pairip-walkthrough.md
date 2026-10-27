@@ -494,3 +494,53 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
 ```
 
 - Status: pre-registered; ready to run.
+
+### 2026-10-27 18:26 — process-name-spoof: FALSIFIED (process identity is not the gate)
+
+- Key: `variant=process-name-spoof`, code commit `defa262`, APK sha256
+  `9aa20aa3e3481fb3e1cde83729df34bb17b145d9ef5a1ce2eb411970c576b892`
+  (115,104,390 bytes), installed hash matches,
+  `lastUpdateTime=2026-10-27 17:53:23`, package
+  `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
+  `ro.debuggable=0`).
+- Command: `OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25
+  tmp/cifi-apk/run_variant.sh process-name-spoof --ez pairip_preload true
+  --ez pairip_trace true --ez pairip_dump_vm true --ez pairip_process_name
+  true`.
+- Window: 2026-10-27T18:26:05+09:00 to 18:26:47+09:00 (42 s).
+- Spoof: `process name spoofed: comm=mesCompany.CIFI` at 18:26:08.941,
+  before `libpairipcore.so` was loaded (18:26:10.071) and before the first
+  `0x7e` batch. `prctl(PR_SET_NAME)` succeeded on the main thread
+  (pid=tid 6446). AOSP `AndroidRuntime::setArgv0` writes the name into the
+  argv0 block and calls `setprogname` on that block, so the rewritten buffer
+  is also `/proc/self/cmdline`; `/proc/self/status` `Name:` is the main-thread
+  comm. The VM's `0x7e` handler opens `/proc/self/status`, so it saw
+  `Name:\tmesCompany.CIFI` rather than `roid.debug:game`.
+- Probe: the FNV input is unchanged (419 calls, `off=0x24f47`, byte `0x99`,
+  checksum `ba6cb68e62faac68`), and the five globals reach the same values as
+  every hosted run (`0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`,
+  `0x4d062af3`). The state ring ends `id=0x872a21c sel=0x31bb
+  reader=0xf93727d8`; the builtin ring ends `id=0x9a0c0031 pc=0x40a73`.
+- Crash: `__memmove_aarch64_nt+140` at 18:26:11.179; frame #04 is
+  `split_config.arm64_v8a.apk +0x514`, the frozen shadow-frame signature.
+  The reader slots are still `bbb9eb6daed20ed0` / `015370f87525d57b`.
+- Image: `tmp/cifi-apk/vmrun/klB-image-at-crash-pns.bin` (282,603 bytes,
+  sha256 `a4db6ad23e750685d31c33c308ac34ae9b16b98544fdb16636ae92165e391158`)
+  has 368 changed bytes in 79 ranges versus the pristine asset, exactly the
+  baseline count. It differs from the zero-map crash image by 50 bytes in 29
+  ranges (ASLR pointers plus the known `image+0xae3` counter), and both ZIP
+  slots are unchanged. The pre-execution `klB-image.bin` is byte-identical to
+  the pristine asset (sha256 `112b6e59…`), as in every prior run.
+- Maps dump: `tmp/cifi-apk/vmrun/klB-maps-process-name-spoof.txt`, sha256
+  `a807ebc4e502032db8a1f4f1ea1bc8851e335783731f288982c68ab811e65dd9`.
+  Log sha256
+  `f4916b3246da0545514f1988abfa212b2957af9fe3d0a4d091d02e11268ec45d`.
+- Verdict: the process name changed and was visible to the VM, but every
+  pre-crash VM value and the crash are byte-identical to baseline. The process
+  identity is not the hosted gate. Together with `proc-sanitize` and
+  `apk-zero-map`, this closes the environment-input branch: maps content,
+  uid/gid, process name and the offset-0 APK mapping do not feed the five
+  globals. Stock computes the same five globals, so the difference must be the
+  branch/state before the `0x31` reader, not the hash input. Do not repeat
+  maps/status/name experiments; the next fork is the `0x31` operand block and
+  the preceding state's `next`/`fallback` decision.

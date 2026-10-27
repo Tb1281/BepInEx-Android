@@ -152,6 +152,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | hash-gate probe (`+0x3dc0c`, `+0x3dc50`) | Both hooks `rc=0`, zero hits (`hash ring pos=0`); state `0x872a21c` reaches the reader via `+0x34d74 b.eq +0x3dc88`; the `+0x3dc08` hash block is a different handler's tail. Baseline crash unchanged. The block is not the hosted gate. |
 | state-router retry (`+0x32c20`) | Hook `rc=0`, zero hits (`router ring pos=0`, `eq=0`, `ne=0`); state `0x872a21c` branches directly to the reader at `+0x34d74 b.eq +0x3dc88`; the `0x31` builtin runs at `pc=0x40a73` immediately before the baseline crash. The router hash block is not on the reader path. |
 | Offset-0 base-APK mapping (`pairip_apk_zero_map`) | Mapping installed at the planned address (`0x7900000000`, `fixed=1`) and appears in klB's maps dump (`r--p 00000000`), yet the crash, reader slots, FNV input, state tail, and builtin tail are unchanged. Falsified: the missing offset-0 mapping is not the gate. |
+| Process-name spoof (`pairip_process_name`) | Main-thread `prctl` succeeded and the VM's `/proc/self/status` read saw `mesCompany.CIFI` (argv0/`__progname` were rewritten too), yet the FNV input, five globals, reader slots, state/builtin tails, crash signature, and image diff are byte-identical to baseline. Falsified: process identity is not the gate. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -179,9 +180,14 @@ negatively too: `+0x32c20` never executes, and the dispatcher sends state
 `0x872a21c` straight to the reader at `+0x34d74 b.eq +0x3dc88`. The
 `apk-zero-map` run answered the mapping hypothesis negatively: the offset-0
 game APK mapping is present and visible to the VM, but the same two slots are
-read. The live part of question 2 is now the `0x31` builtin at bytecode pc
+read. The `process-name-spoof` run answered the identity hypothesis
+negatively: the VM saw the stock task name and cmdline, yet the same two slots
+are read. The live part of question 2 is now the `0x31` builtin at bytecode pc
 `0x40a73`: what operand block it executes, and whether it computes the slots
-itself or expects an earlier writer that the hosted path skips.
+itself or expects an earlier writer that the hosted path skips. The
+environment-input branch is closed: maps content, uid/gid, process name and
+the offset-0 mapping are all independently changed and none affects the five
+globals or the crash. Do not repeat those three experiments.
 
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
@@ -408,3 +414,42 @@ environmental tell not yet exercised.
 - Diagnostic only: the spoof must not ship; if it changes the path, the
   production fix has to reproduce the stock launch shape, not rename the
   hosted process.
+
+### Result (2026-10-27 18:26, `defa262`)
+
+The run is **FALSIFIED**. `prctl(PR_SET_NAME)` succeeded on the main
+thread and the log recorded `process name spoofed: comm=mesCompany.CIFI` at
+18:26:08.941, before `libpairipcore.so` loaded at 18:26:10.071. AOSP
+`AndroidRuntime::setArgv0` writes the name into the argv0 block and calls
+`setprogname` on the same block, so `/proc/self/cmdline` and
+`/proc/self/status` `Name:` both changed; the VM's `0x7e` handler opens
+`/proc/self/status`, so it saw the game name rather than the launcher name.
+No status sample was re-dumped because `pairip_syscall_trace` was off, but
+the identity change is guaranteed by the successful `prctl` on the main
+thread and the kernel's comm semantics.
+
+Nothing downstream changed. The FNV input is still 419 calls of byte `0x99`
+at `image+0x24f47` (checksum `ba6cb68e62faac68`), the five globals still
+reach `0x534a6211` / `0xe29e9c3b` / `0x8a1aeb2d` / `0xbfe458cb` /
+`0x4d062af3`, and the state and builtin rings still end at
+`id=0x872a21c sel=0x31bb` and `id=0x9a0c0031 pc=0x40a73`. The crash is the
+same `__memmove_aarch64_nt+140` with the same reader slots
+`bbb9eb6daed20ed0` / `015370f87525d57b`.
+
+Artifacts: log `tmp/cifi-apk/logs/verify/process-name-spoof.log` (sha256
+`f4916b3246da0545514f1988abfa212b2957af9fe3d0a4d091d02e11268ec45d`),
+crash image `tmp/cifi-apk/vmrun/klB-image-at-crash-pns.bin` (sha256
+`a4db6ad23e750685d31c33c308ac34ae9b16b98544fdb16636ae92165e391158`,
+368 changed bytes in 79 ranges versus the pristine asset), and maps dump
+`tmp/cifi-apk/vmrun/klB-maps-process-name-spoof.txt` (sha256
+`a807ebc4e502032db8a1f4f1ea1bc8851e335783731f288982c68ab811e65dd9`).
+The crash image differs from the zero-map image by 50 bytes in 29 ranges,
+ASLR pointers plus the known `image+0xae3` counter. The process name had no
+behavioral effect.
+
+This closes the environment-input branch. Maps content, uid/gid, process
+name and the offset-0 APK mapping are all independently changed and none
+feeds the five globals. Stock computes the same five globals, so the hosted
+difference must be the branch or state before the `0x31` reader. Do not
+repeat maps/status/name experiments; decode the `0x31` operand block and the
+preceding state's `next`/`fallback` decision instead.
