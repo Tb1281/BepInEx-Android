@@ -170,6 +170,7 @@ not a dispatcher-selected state. See the static map below.
 | Identity conjunction (`pairip_process_name` + `pairip_proc_sanitize` + `pairip_apk_zero_map`) | All three facts were active: status showed `Name:\tmesCompany.CIFI` and game uid, the sanitized maps had zero `bepinex` lines (59 in the raw copy), and the game base APK was at offset 0 on line 32. Reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, state tail, crash signature, and image invariants were unchanged. Falsified: the stock identity conjunction is not the gate. |
 | Stock-bound context (`pairip_stock_bound` with `lateHooks`) | PairIP's own `InitContextProvider` ran (`ContextImpl.createAppContext` hidden-API grant from `com/pairip/InitContextProvider`) and built the app context from the game LoadedApk, instead of the seeded package context. Final state `0x872a21c sel=0x31bb`, reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, builtin tail, crash signature, and both ZIP slots were unchanged; the 45-byte image diff vs identity is entirely inside the known 368-byte variable set. Falsified: the context object type is not the gate. |
 | Game Application (`pairip_game_application`) | `LoadedApk.makeApplication` created `com.pairip.application.Application`; `VMRunner.context` was set to it, `SignatureCheck` passed, and `LicenseClient` attempted its check. The licensing bind was rejected because the real Binder UID is the launcher's (10616), not the game's (10610). Final state `0x872a21c sel=0x31bb`, reader slots (`bbb9...`/`0153...`), append fields, `vm[0x540]`, builtin tail, crash signature, and both ZIP slots were unchanged; the 48-byte/29-range image diff vs identity is inside the known 368-byte variable set with zero new-only offsets. Falsified: the Application lifecycle is not the gate. The license bind failure remains an unmeasured hosted-only condition. |
+| License-state consumption (`pairip_game_application` + `pairip_jni_trace`) | 4,676 JNI records covering klB through the reader crash: zero `LicenseClient`/`LicenseCheckState` names, zero `GetStaticFieldID`/`GetStaticObjectField`/`GetStaticBooleanField`/`GetFieldID` records, and the same six `FindClass` names (`Object`, `File`, `Long`, `Exception`, `StackTraceElement`, `Debug`). The only Application-object use is the Play Integrity `LOG_TELEMETRY` `sendBroadcast`; there is no license query. Reader slots, append, state tail, builtin tail, and crash are unchanged. Ruled out: klB does not consume license state; the hosted-only bind failure is not an input to the crashing VM. |
 | syscall-tail (`pairip_syscall_trace`) | 181 raw syscalls, all file paths procfs; no game-APK `openat`/`read` before the `0x31` reader. The maps scan is 143 full 1 KB reads (146,432 bytes) and stops before both real CD mappings. All 32 builtin-ring entries carry the same `args=` words, so the ring exposes shared dispatcher context, not per-builtin operands. PROVEN for the no-native-file-read hypothesis. |
 | Low CD mapping (`pairip_apk_cd_map`) | The base APK's real CD was mapped at `0x7900000000` (`MAP_SHARED`, offset `0x74f5000`), and its `r--s 074f5000` line appeared at byte 3,596, inside the VM's 146,432-byte maps scan. The five globals, reader slots, state/builtin tails, crash signature, and 368-byte/79-range image diff are unchanged. Falsified: a CD line inside the scanned window is not the gate. |
 | JNI call trace (`pairip_jni_trace`) | 3,571 records; no non-null `ExceptionOccurred`, no `ExceptionClear`, no `Throw`/`ThrowNew`, and no pending-exception result before the crash. The only exception-like object is the VM's own `java.lang.Exception` (`NewObjectA` at 33.887 and 34.076) used for its `getStackTrace` stack walk; the launcher's spoof hook returns the fabricated 24-frame chain, then the VM calls `Debug.isDebuggerConnected`/`waitingForDebugger` (both false) and reaches the same reader crash. Falsified: `x20` is not a pending exception. |
@@ -230,6 +231,16 @@ written `image+0x3f874`/`image+0x1ba5c`, or what should have made the handler
 avoid reading them. It also leaves the `0x1f811` dispatcher entry and the
 `0x1f813` builtin entry unordered; that ordering is the next empirical
 question.
+
+The `license-consumption-trace` run closed the hosted-only license fork:
+klB makes no `LicenseClient` or static-field JNI calls, so the bind rejection
+cannot influence the reader path. It also confirmed that the Application
+lifecycle is not the gate. The remaining live question is the source of the
+`0x31` reader operands: at `+0x34d74` the dispatcher branches to the reader at
+`+0x3dc88`, which loads `w8`/`w9` from image slots and builds the
+`{vtable=0x93ce8,cursor=0,data,size}` reader. The next probe must identify
+which operand block or earlier handler should have supplied those slots, or
+why the hosted path reaches the reader with the pristine values.
 
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
@@ -1663,3 +1674,59 @@ cold launch. The pre-registered prediction is **FALSIFIED**.
   device run, inspect whether klB reads the `LicenseClient` result or
   `licenseCheckState`; if it does not, the next probe is the reader source at
   `+0x3dc88`. Do not repeat identity/maps/context/application experiments.
+
+## license-consumption-trace result (2026-10-28 02:11)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen diagnostic baseline plus `pairip_game_application=true` and
+`pairip_jni_trace=true` ran one cold launch. The pre-registered
+falsification (any `LicenseClient` access) did **not** occur, so the
+license-state fork is closed.
+
+- Build/install: no build; APK sha256
+  `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+  Install skipped because the installed APK's `lastUpdateTime` is after the
+  build and no launcher code changed since. The game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 214` ms, one launch
+  only (pid 22000). Log
+  `tmp/cifi-apk/logs/verify/license-consumption-trace.log`, 17,025 lines,
+  sha256 `1ad2601dcbed28af371ad904faebcdaec33c371f6b3026c7fe2774df1b3114b0`.
+- Trace coverage: `PairIP JNI trace: installed=true` at 02:11:35.535, before
+  the first JNI record at 02:11:35.653 and the crash at 02:11:36.440. The
+  4,676 records include the newer `IsSameObject` (1,053) and
+  `GetStringUTFChars` (48) probes.
+- License result: zero records name `LicenseClient`,
+  `LicenseCheckState`, or `licenseCheckState`; zero `GetStaticFieldID`,
+  `GetStaticObjectField`, `GetStaticBooleanField`, and `GetFieldID` records;
+  the `FindClass` set is still only `Object`, `File`, `Long`, `Exception`,
+  `StackTraceElement`, and `Debug`. The single Application-object use is
+  `CallVoidMethod com.pairip.application.Application.?` with the
+  `com.google.android.gms.play.integrity.autoprotect.LOG_TELEMETRY` Intent,
+  i.e. a telemetry broadcast, not a license query.
+- Static basis: only
+  `com.pairip.application.Application.attachBaseContext` references
+  `LicenseClient`; `VMRunner`, `StartupLauncher`, and `SignatureCheck` do
+  not. The Application static initializer calls `StartupLauncher.launch()`
+  before `attachBaseContext` starts the license check, so the startup
+  program cannot consume a license result that does not exist yet.
+- Invariants: reader slots `bbb9eb6daed20ed0` / `015370f87525d57b`; append
+  `src=0x7ff9372630 n=46 ... off=0x3e170
+  fields=0000007a8c7f8ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` = `00000000f9372668`/`0000007ff93726f9`;
+  `vm[0x7c0]` ends in `0x31bb`; final state `id=0x872a21c sel=0x31bb
+  reader=0xf9372668`; builtin tail `0x9a0c0031`/`0x40a73`.
+- Crash: unchanged, signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `split_config.arm64_v8a.apk (+0)`, at 02:11:36.440; process exit by signal
+  11 at 02:11:36.457.
+- Image caveat: `license-consumption-trace-image.bin`, sha256
+  `112b6e592c18c9877b90b8f0df2c2d4dd037bf0742bacbd914a03eed242011fa`,
+  differs from the game-application dump in 368 bytes/79 ranges, the whole
+  known variable set. `copy-hook` dumps at `ExecuteProgram` entry, so tracing
+  shifts the snapshot to a different initialization phase. The dump is not a
+  crash-time image; final-state invariants are the comparison basis.
+- Verdict: klB does not read `LicenseClient` state. The hosted-only bind
+  failure is unrelated to the reader path and must not be bypassed. Move to
+  the reader-source probe at `+0x3dc88`: identify what should supply the
+  reader's `w8`/`w9` pair, or why the `0x31` handler runs against the
+  pristine slots. Do not repeat identity/maps/context/application/license
+  experiments.

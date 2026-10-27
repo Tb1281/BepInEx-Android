@@ -1943,3 +1943,67 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/license-consumption-trace
 ```
 
 - Status: pre-registered; ready to run.
+
+### 2026-10-28 02:11 — license-consumption-trace: no LicenseClient access, fork closed
+
+- Key: `variant=license-consumption-trace`, code commit `0e9051b`, APK
+  sha256 `f4f71ba28ce60a06c82da4e0353ed30a74dfde1635c30ba7dceab232bc1c1c17`.
+  Install skipped: the installed APK's `lastUpdateTime=2026-10-28 01:41:10`
+  is after the 01:40:42 build of the same sha256, and no launcher code
+  changed since. The game APK was not modified.
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 214` ms, one cold
+  launch (pid 22000). Both packages were force-stopped and logcat cleared
+  first. Log
+  `tmp/cifi-apk/logs/verify/license-consumption-trace.log`, 17,025 lines,
+  sha256 `1ad2601dcbed28af371ad904faebcdaec33c371f6b3026c7fe2774df1b3114b0`.
+- Variant line: `variant=license-consumption-trace ... contextSeed=true
+  stockBound=false naturalFactory=false lateHooks=true preload=true
+  trace=true jniTrace=true gameApplication=true
+  gameApplicationAsProcess=false dumpVmImage=true`; every other experiment
+  switch is false.
+- Lifecycle: `VMRunner: Finished executing YTw4BW9dg3brGdIP` at 02:11:35.435,
+  `SignatureCheck: Signature check ok`, `game Application
+  com.pairip.application.Application package=com.OctocubeGamesCompany.CIFI
+  uid=10610 myUid=10616`, and the same `LicenseClient` bind rejection with
+  `Retry #1` at 02:11:35.437-438.
+- Trace coverage: `PairIP JNI trace: installed=true` at 02:11:35.535, before
+  the first `PairIpJni: jni:` record at 02:11:35.653. The log contains 4,676
+  JNI records through 02:11:36.427; the crash is at 02:11:36.440. The count
+  is higher than the older `jni-trace` run because the newer probes add
+  `IsSameObject` (1,053 records) and `GetStringUTFChars` (48 records).
+- License probe: **zero** records name `LicenseClient`,
+  `LicenseCheckState`, or `licenseCheckState`, and there are **zero**
+  `GetStaticFieldID`, `GetStaticObjectField`, `GetStaticBooleanField`, and
+  `GetFieldID` records. The entire `FindClass` set is still
+  `java/lang/Object`, `java/io/File`, `java/lang/Long`,
+  `java/lang/Exception`, `java/lang/StackTraceElement`, and
+  `android/os/Debug`. The only Application-object use is
+  `CallVoidMethod com.pairip.application.Application.? args=[] arg0=Intent {
+  act=com.google.android.gms.play.integrity.autoprotect.LOG_TELEMETRY ... }`
+  at 02:11:36.426, i.e. the Play Integrity telemetry broadcast, not a
+  license query.
+- Probe: reader slots are still `bbb9eb6daed20ed0` / `015370f87525d57b`;
+  append `src=0x7ff9372630 n=46 ... off=0x3e170
+  fields=0000007a8c7f8ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0`; `vm[0x540]` is `00000000f9372668`/`0000007ff93726f9`;
+  `vm[0x7c0]` ends in `00000000000031bb`; final state
+  `state[41958] id=0x872a21c sel=0x31bb reader=0xf9372668`; builtin tail
+  `0x9a0c0031 pc=0x40a73`.
+- Crash: unchanged. Signal 11 in `__memmove_aarch64_nt+140`, frame #04
+  `split_config.arm64_v8a.apk (+0)`, at 02:11:36.440; the process exited by
+  signal 11 at 02:11:36.457.
+- Image caveat: `tmp/cifi-apk/logs/verify/license-consumption-trace-image.bin`,
+  sha256 `112b6e592c18c9877b90b8f0df2c2d4dd037bf0742bacbd914a03eed242011fa`.
+  It differs from the game-application dump in 368 bytes across 79 ranges,
+  i.e. the whole known variable set. `copy-hook` dumps at `ExecuteProgram`
+  entry, so under JNI tracing the snapshot lands at a different
+  initialization phase; the dump is not a crash-time image and is not used
+  for this verdict. The final-state invariants above are the comparison
+  basis.
+- Verdict: the pre-registered falsification (any LicenseClient access) did
+  **not** occur. klB does not consume `LicenseClient`/`licenseCheckState`;
+  the hosted-only licensing bind failure is not an input to the crashing VM.
+  The license fork is closed. This confirms the negative on the traced path;
+  the tracing-off `game-application` run already showed the same final
+  invariants.
+- Findings updated: yes, in this commit.
