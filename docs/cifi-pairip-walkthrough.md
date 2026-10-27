@@ -2210,5 +2210,73 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/stock-libmain-reader-slot
 - Run key: `variant=stock-libmain-reader-slots`, code commit `9be04e4`,
   package `com.bepinex.android.debug` on SM-S931N (Android 17/API 37, `user`,
   `ro.debuggable=0`). APK sha256 to be recorded at install.
-- Status: pre-registered; blocked until a device is attached (`adb devices`
-  empty on 2026-10-28). Do not install or launch while the device is absent.
+- Status: completed at 2026-10-28 08:27; verdict appended below. Device
+  R3CY10S8TPH (SM-S931N) was attached before the run.
+
+### 2026-10-28 08:27 — stock-libmain-reader-slots: the game's own libmain still feeds the pristine slots (CONFIRMED)
+
+- Key: `variant=stock-libmain-reader-slots`, code commit `9be04e4`, APK
+  sha256 `5be5c199376dc5f4d0849a6bd88593429e78d1a2a00a86734b76acf18a124428`.
+- Install: skipped. The installed `base.apk` already hashes to the same
+  sha256 (`adb shell sha256sum` on the installed path), `versionCode=1`,
+  `lastUpdateTime=2026-10-28 02:23:47`. The game APK was not modified
+  (`versionCode=3022`, `versionName=0.7.3.64`,
+  `lastUpdateTime=2026-10-22 16:35:02`).
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 226` ms,
+  `WaitTime: 230` ms; one cold launch (pid 32473). Both packages were
+  force-stopped, `pidof` was empty for both, and logcat was cleared first.
+- Log: `tmp/cifi-apk/logs/verify/stock-libmain-reader-slots.log`, 14,661
+  lines, sha256
+  `60a30e02e291e0a420993664a7a6354dc1065ea26f4b10c885be0bcb1c31b333`.
+- Variant line: `variant=stock-libmain-reader-slots noHooks=false
+  noShield=false gadget=false hiddenApi=true stackSpoof=true
+  contextSeed=true stockBound=false naturalFactory=false skipFactory=false
+  lateHooks=true bare=false preload=true preloadDelayMs=33000
+  stockLibmain=true ... delayMs=0 trace=true ... dumpVmImage=true`; every
+  other experiment switch is false. `hiddenApi=true` is also present in the
+  reader-source baseline, so it is not the changed variable.
+- Branch: `PairIP preload: stock
+  libmain=/data/app/.../split_config.arm64_v8a.apk!/lib/arm64-v8a/libmain.so
+  dir=.../lib/arm64` at 08:27:10.912; `trace: reader-source hook rc=0
+  target=0x7a8b59f034 trampoline=0x7e1b4ef2c0` at 08:27:10.913.
+- Probe (single line, 08:27:11.691):
+
+```text
+reader-source: ctx=0x7ff9372088 image=0xb400007b1224d010 off_data=0x3f874 off_size=0x1ba5c data=bbb9eb6daed20ed0 size=015370f87525d57b data_ok=1 size_ok=1 ctxw=b400007b1224d010,00040aab00044feb,0000000000000000,00022b395129b68c ctx_ok=1 desc=0x7ff93720a8 descw=0000007a8b5f4680,0000007ff9372088,0065547b000000b0,b400007bb465c2d0 desc_ok=1 index=0xf9371cd8 entry_ok=0 entry=00000000,00000000,00000000,00000000 fetch=0x1f811 fetch_ok=1 fetch_bytes=e1daf3c012020400 lr=0x690 off=0
+```
+
+- Append record: `src=0x7ff9371ca0 n=46 dst=0x7ff9371d08
+  lr=0x7a8b59f170 off=0x3e170
+  fields=0000007a8b5f4ce8,0000000000000000,bbb9eb6daed20ed0,015370f87525d57b
+  mapped=0 x16=0x7ff9372088 ...`.
+- State/builtin tail: `state[127417] id=0x872a21c sel=0x31bb
+  reader=0xf9371cd8`; the last builtin is
+  `builtin[10977] seq=12560 id=0x9a0c0031 pc=0x40a73` (32 dumped, 512 state
+  lines dumped). `vm[0x7c0]` ends in `0x31bb`.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` (`#03`) at
+  08:27:11.702, frame `#04` `split_config.arm64_v8a.apk (+0)`; process
+  32473 exited by signal 11 at 08:27:11.730.
+- Image: `klB-image-at-crash.bin` pulled with
+  `adb exec-out run-as com.bepinex.android.debug cat ...`, 282,603 bytes,
+  sha256
+  `50648e90916e9fd48d3ea89332c798422d5bd2854a4fa395b681f6fb58aa9919`.
+  It is byte-identical to the pristine asset at `0x3f874`, `0x1ba5c`,
+  `0x19b5e`, `0x40a73`, `0x1f811`, and `0x24f47`; vs the asset it differs in
+  368 bytes across 79 ranges (the known variable set). Vs
+  `stack-len-plus-one-image.bin` it differs in 76 bytes across 34 ranges,
+  with one new-only byte at `0x14a9e`.
+- Pre-registration defect: `PairIP preload: stock libmain completed` is not
+  printed. The line is emitted after `NativeLoader.load(...)` returns, and the
+  crash happens inside that call, so it cannot appear on a crashing run. The
+  branch is proven by the `stock libmain=...` line, the hook line, and the
+  reader/klB trace. This is a labeling defect in the pre-registration, not a
+  failed control.
+- Verdict: hypothesis CONFIRMED. The game's own `libmain`, loaded from the
+  split APK without Fusion, still reaches `+0x3e034` with
+  `w8=0x3f874`/`w9=0x1ba5c`, the pristine words
+  `bbb9eb6daed20ed0`/`015370f87525d57b`, and the identical
+  `__memmove_aarch64_nt+140` crash. The launcher-libmain/Fusion/DT_INIT chain
+  is ruled out as the hosted-only discriminator. This also re-establishes the
+  2026-10-27 line-166 claim with a surviving log: the `stock-libmain` chain
+  produces the same reader offsets and the same crash.
+- Findings updated: yes, in this commit.

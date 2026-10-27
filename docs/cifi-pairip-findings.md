@@ -242,6 +242,17 @@ lifecycle is not the gate. The remaining live question is the source of the
 which operand block or earlier handler should have supplied those slots, or
 why the hosted path reaches the reader with the pristine values.
 
+The `stock-libmain-reader-slots` run (2026-10-28 08:27) closed the loader
+fork: the game's own `libmain`, loaded from the split APK without Fusion,
+still produces `w8=0x3f874`/`w9=0x1ba5c`, the pristine words
+`bbb9eb6daed20ed0`/`015370f87525d57b`, and the identical
+`__memmove_aarch64_nt+140` crash. The remaining hosted-only difference is
+therefore earlier than `libmain`: the branch/state that reaches pc `0x40a73`
+must differ from a bare launch, or the CD view it expects is absent. Because
+the image is byte-identical at the reader slots and the fake-CD runs advance
+past the crash, the next probe is the `0x31` operand block and the preceding
+state's `next`/`fallback`, not another loader or environment input.
+
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
 Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
@@ -376,14 +387,22 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
     there is no upstream writer, tag, or selector to follow. The five globals
     are stable across every hosted run, so they are not the missing
     discriminator.
-17. Next (stock-libmain reader-slot control): re-capture the reader slots
-    with `pairip_stock_libmain=true` and the reader-source probe. The
-    walkthrough's 2026-10-27 line-166 claim that the bare/`stock-libmain`
-    globals are identical has no surviving log or run key and is
-    UNVERIFIABLE, so this is the one remaining loader-side control that can
-    confirm or remove the launcher-libmain variable. Pre-registered in the
-    walkthrough as `stock-libmain-reader-slots`; blocked until a device is
-    attached.
+17. Done (stock-libmain-reader-slots, 2026-10-28): the game's own `libmain`
+    from the split APK, loaded without Fusion, still reaches `+0x3e034`
+    with `w8=0x3f874`/`w9=0x1ba5c`, the pristine words
+    `bbb9eb6daed20ed0`/`015370f87525d57b`, and the identical
+    `__memmove_aarch64_nt+140` crash. The launcher-libmain/DT_INIT variable
+    is ruled out, and the walkthrough's line-166 claim now has a surviving
+    log. Do not repeat this control.
+18. Next: determine why klB reaches the `0x31` builtin at pc `0x40a73` at
+    all on the hosted path. The image is byte-identical at the reader slots
+    and the reader is a ZIP/CD view (the fake-CD runs advance past the
+    crash), so the missing input is the branch/state that should either
+    supply the CD view or skip the `0x31` call. Decode the `0x31` operand
+    block and the preceding state's `next`/`fallback` decision, then derive
+    one probe that distinguishes "reached `0x31`" from "skipped `0x31`".
+    Do not repeat the loader, license, application, map, identity, or
+    stack-text experiments.
 
 ## Pre-registered experiment (2026-10-27, state-router)
 
@@ -1826,11 +1845,12 @@ priority order:
 
 ## Tagged-offset table closed statically (2026-10-28)
 
-No device run: no handset was attached (`adb devices` empty, no phone on
-`lsusb`). This section is a static decode of `libpairipcore.so` from
-`/tmp/pairip-analysis/libpairipcore_full.asm`; it closes the four questions
-in the `vm[0x740]` lead above. Matching the precedent of the earlier static
-map sections, it adds no walkthrough entry.
+No device run at the time of this decode: no handset was attached (`adb
+devices` empty, no phone on `lsusb`). The device was attached later the same
+day for the stock-libmain control below. This section is a static decode of
+`libpairipcore.so` from `/tmp/pairip-analysis/libpairipcore_full.asm`; it
+closes the four questions in the `vm[0x740]` lead above. Matching the
+precedent of the earlier static map sections, it adds no walkthrough entry.
 
 - Writer: the table is written by the reader builder itself, not by an earlier
   relocation pass. `+0x3e000`, `+0x3e008`, and `+0x3e010` store `d0` (the
@@ -1868,8 +1888,9 @@ map sections, it adds no walkthrough entry.
   downstream of the builder and carries no selector state. The remaining
   question is not who writes the table but which load chain lets the `0x31`
   handler run against the unrelocated image slots: the hosted path does, and
-  a bare launch does not. That is pre-registered as the
-  `stock-libmain-reader-slots` control in the walkthrough.
+  a bare launch does not. That was pre-registered as the
+  `stock-libmain-reader-slots` control and has since been run; the verdict is
+  below.
 
 ## Pre-registered next experiment (2026-10-28, stock-libmain-reader-slots)
 
@@ -1893,5 +1914,60 @@ re-establishes it with the reader-source probe.
 - One change from the frozen diagnostic baseline: `pairip_stock_libmain=true`.
   `preload`, `trace`, and `dumpVmImage` stay true; `stackSpoof` and
   `contextSeed` stay at their defaults; `lateHooks` is forced by `preload`.
-- Status: pre-registered; blocked until a device is attached (`adb devices`
-  empty on 2026-10-28). No install or launch was attempted.
+- Status: completed at 2026-10-28 08:27; verdict appended below. The
+  installed APK was already the reader-source build, so no install was done.
+
+## stock-libmain-reader-slots result (2026-10-28 08:27)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The frozen diagnostic baseline plus `pairip_stock_libmain=true` ran one cold
+launch. The pre-registered hypothesis is **CONFIRMED**.
+
+- Build/install: no build; install skipped because the installed `base.apk`
+  already hashes to
+  `5be5c199376dc5f4d0849a6bd88593429e78d1a2a00a86734b76acf18a124428`
+  (`versionCode=1`, `lastUpdateTime=2026-10-28 02:23:47`). The game APK was
+  not modified (`versionCode=3022`, `versionName=0.7.3.64`,
+  `lastUpdateTime=2026-10-22 16:35:02`).
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 226` ms; one cold
+  launch (pid 32473). Both packages were force-stopped, `pidof` was empty
+  for both, and logcat was cleared first. Log
+  `tmp/cifi-apk/logs/verify/stock-libmain-reader-slots.log`, 14,661 lines,
+  sha256
+  `60a30e02e291e0a420993664a7a6354dc1065ea26f4b10c885be0bcb1c31b333`.
+- Variant line: `stockLibmain=true`, `preload=true`, `trace=true`,
+  `dumpVmImage=true`, `stackSpoof=true`, `contextSeed=true`,
+  `lateHooks=true`, `delayMs=0`; every other experiment switch false.
+  `hiddenApi=true` is also in the reader-source baseline.
+- Branch: `PairIP preload: stock
+  libmain=.../split_config.arm64_v8a.apk!/lib/arm64-v8a/libmain.so` at
+  08:27:10.912; `trace: reader-source hook rc=0 target=0x7a8b59f034
+  trampoline=0x7e1b4ef2c0` at 08:27:10.913.
+- Reader: `ctx=0x7ff9372088 image=0xb400007b1224d010 off_data=0x3f874
+  off_size=0x1ba5c data=bbb9eb6daed20ed0 size=015370f87525d57b`;
+  descriptor index `0xb0`. The append record at `off=0x3e170` carries the
+  same two words. Final state `state[127417] id=0x872a21c sel=0x31bb
+  reader=0xf9371cd8`; builtin tail `0x9a0c0031 pc=0x40a73`.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` at 08:27:11.702,
+  frame `#04` `split_config.arm64_v8a.apk (+0)`; process exit by signal 11
+  at 08:27:11.730.
+- Image: `klB-image-at-crash.bin`, 282,603 bytes, sha256
+  `50648e90916e9fd48d3ea89332c798422d5bd2854a4fa395b681f6fb58aa9919`.
+  Byte-identical to the pristine asset at `0x3f874`, `0x1ba5c`, `0x19b5e`,
+  `0x40a73`, `0x1f811`, and `0x24f47`; 368 bytes across 79 ranges differ
+  (the known variable set). Vs `stack-len-plus-one-image.bin`: 76 bytes
+  across 34 ranges, one new-only byte at `0x14a9e`.
+- Pre-registration defect: `PairIP preload: stock libmain completed` is not
+  printed because the crash occurs inside `NativeLoader.load(...)` before the
+  call returns. The branch is proven by the `stock libmain=...` line, the
+  hook line, and the reader/klB trace. This is a labeling defect, not a
+  failed control.
+- Verdict: the game's own `libmain`, loaded from the split APK without
+  Fusion, still reaches `+0x3e034` with the same offsets, the pristine
+  words, and the identical crash. The launcher-libmain/Fusion/DT_INIT chain
+  is ruled out as the hosted-only discriminator. The 2026-10-27 line-166
+  `stock-libmain` claim is now CONFIRMED with a surviving log.
+- Next: the remaining fork is the branch/state that reaches pc `0x40a73`,
+  or the CD view the reader expects. See the Open questions and Next steps
+  items 17-18. Do not repeat the loader, license, application, map,
+  identity, or stack-text experiments.
