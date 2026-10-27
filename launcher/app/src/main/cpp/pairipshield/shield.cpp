@@ -80,6 +80,12 @@ extern "C" __attribute__((visibility("hidden"))) void pairip_state_trace_entry()
 extern "C" __attribute__((visibility("hidden"))) void pairip_state_trace_c(
     uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_state_original;
+extern "C" __attribute__((visibility("hidden"))) void
+pairip_reader_source_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_reader_source_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *
+g_pairip_reader_source_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_hash_input_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_hash_input_c(
     uint64_t *regs);
@@ -790,6 +796,20 @@ bool InstallPairIpTrace() {
         g_pairip_state_original = original;
         LOGI("trace: state hook rc=%d target=%p trampoline=%p", rc, target,
              original);
+    }
+    // Record the two image offsets and words that become the reader view's
+    // data/size. The hook sits on the first image-word load at +0x3e034;
+    // x10 already holds the VM image base and w8/w9 are the offsets. The
+    // callback does not modify the saved registers.
+    if (g_pairip_reader_source_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x3e034);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_reader_source_entry),
+            &original);
+        g_pairip_reader_source_original = original;
+        LOGI("trace: reader-source hook rc=%d target=%p trampoline=%p", rc,
+             target, original);
     }
 
     g_trace_enabled.store(true);
@@ -2181,6 +2201,9 @@ extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_state_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_reader_source_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_syscall_original = nullptr;
 
 constexpr uint32_t kInvalidSyscallSlot = 0xffffffffu;
@@ -2818,6 +2841,90 @@ void pairip_state_trace_c(uint64_t *regs) {
     entry.selected = static_cast<uint32_t>(regs[5]);
     entry.reader = static_cast<uint32_t>(regs[9]);
     entry.reserved = 0;
+}
+
+// Debug-only reader-source observation. The hook at +0x3e034 runs on the
+// first of the two image-word loads that become the reader's data/size.
+// x10 is the VM image base, w8/w9 are the two image offsets, and x16 is the
+// interpreter state. The descriptor at [sp+0x538] is the object the reader
+// builder used; [sp+0x540] holds w29. Nothing is written to the saved
+// register file, so the relocated load and the rest of the handler see the
+// unmodified state.
+extern "C" __attribute__((visibility("hidden")))
+void pairip_reader_source_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+
+    const uintptr_t image = static_cast<uintptr_t>(regs[10]);
+    const uint32_t off_data = static_cast<uint32_t>(regs[8]);
+    const uint32_t off_size = static_cast<uint32_t>(regs[9]);
+    const uintptr_t ctx = static_cast<uintptr_t>(regs[16]);
+    const uint32_t fetch = t_last_vm_fetch;
+
+    uint64_t data = 0;
+    uint64_t size = 0;
+    const bool data_ok =
+        image != 0 && SafeReadMemory(image + off_data, &data, sizeof(data));
+    const bool size_ok =
+        image != 0 && SafeReadMemory(image + off_size, &size, sizeof(size));
+
+    // The ZIP reader is the only caller at pc 0x40a73 with this pair. Also
+    // keep a line if either known ciphertext word appears, so a different
+    // offset/word pair is still visible.
+    const bool interesting =
+        fetch == 0x40a73u || off_data == 0x3f874u || off_size == 0x1ba5cu ||
+        (data_ok && data == 0xbbb9eb6daed20ed0ULL) ||
+        (size_ok && size == 0x015370f87525d57bULL);
+    if (!interesting) return;
+
+    static std::atomic<int> log_count{0};
+    if (log_count.load() >= 8) return;
+    if (log_count.fetch_add(1) >= 8) return;
+
+    uint64_t ctx_words[4] = {};
+    const bool ctx_ok = ctx != 0 && SafeReadMemory(ctx, ctx_words,
+                                                   sizeof(ctx_words));
+
+    const uintptr_t caller_sp = reinterpret_cast<uintptr_t>(regs) + 0x110;
+    uint64_t desc = 0;
+    uint32_t desc_index = 0;
+    SafeReadMemory(caller_sp + 0x538, &desc, sizeof(desc));
+    SafeReadMemory(caller_sp + 0x540, &desc_index, sizeof(desc_index));
+    uint64_t desc_words[4] = {};
+    const bool desc_ok =
+        desc != 0 && SafeReadMemory(desc, desc_words, sizeof(desc_words));
+
+    // The descriptor index is also the image offset the decoder reads first.
+    // Capture that entry and the bytes at the current fetch so a runtime
+    // patch is visible in the log.
+    uint32_t entry_words[4] = {};
+    const bool entry_ok =
+        image != 0 && SafeReadMemory(image + desc_index, entry_words,
+                                     sizeof(entry_words));
+    uint8_t fetch_bytes[8] = {};
+    const bool fetch_ok =
+        image != 0 && SafeReadMemory(image + fetch, fetch_bytes,
+                                     sizeof(fetch_bytes));
+
+    LOGI("reader-source: ctx=%p image=%p off_data=%#x off_size=%#x "
+         "data=%016" PRIx64 " size=%016" PRIx64 " data_ok=%d size_ok=%d "
+         "ctxw=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
+         " ctx_ok=%d desc=%p descw=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
+         ",%016" PRIx64 " desc_ok=%d index=%#x entry_ok=%d "
+         "entry=%08x,%08x,%08x,%08x fetch=%#x fetch_ok=%d "
+         "fetch_bytes=%02x%02x%02x%02x%02x%02x%02x%02x "
+         "lr=%p off=%#zx",
+         reinterpret_cast<void *>(ctx), reinterpret_cast<void *>(image),
+         off_data, off_size, data, size, data_ok ? 1 : 0, size_ok ? 1 : 0,
+         ctx_words[0], ctx_words[1], ctx_words[2], ctx_words[3],
+         ctx_ok ? 1 : 0, reinterpret_cast<void *>(desc), desc_words[0],
+         desc_words[1], desc_words[2], desc_words[3], desc_ok ? 1 : 0,
+         desc_index, entry_ok ? 1 : 0, entry_words[0], entry_words[1],
+         entry_words[2], entry_words[3], fetch, fetch_ok ? 1 : 0,
+         fetch_bytes[0], fetch_bytes[1], fetch_bytes[2], fetch_bytes[3],
+         fetch_bytes[4], fetch_bytes[5], fetch_bytes[6], fetch_bytes[7],
+         reinterpret_cast<void *>(regs[31]),
+         regs[31] >= g_pairip_base.load() ? regs[31] - g_pairip_base.load()
+                                          : 0);
 }
 
 // Debug-only state-transition hash tracing.
