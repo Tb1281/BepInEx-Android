@@ -92,10 +92,6 @@ extern "C" __attribute__((visibility("hidden"))) void pairip_router_load_entry()
 extern "C" __attribute__((visibility("hidden"))) void pairip_router_load_c(
     uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_router_load_original;
-extern "C" __attribute__((visibility("hidden"))) void pairip_router_check_entry();
-extern "C" __attribute__((visibility("hidden"))) void pairip_router_check_c(
-    uint64_t *regs);
-extern "C" __attribute__((visibility("hidden"))) void *g_pairip_router_check_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_fnv_trace_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_fnv_trace_c(
     uint64_t *regs);
@@ -422,6 +418,7 @@ struct RouterRingEntry {
     uint64_t entry;
     uint64_t computed;
     uint64_t expected;
+    uint64_t mask;
     uint32_t index;
     uint32_t equal;
     uint32_t candidate_eq;
@@ -657,12 +654,13 @@ bool InstallPairIpTrace() {
         LOGI("trace: hash-check hook rc=%d target=%p trampoline=%p", rc, target,
              original);
     }
-    // Log the main state-router hash at +0x32c20..+0x32c54. The load at
-    // +0x32c2c and the csel at +0x32c48 are non-branch sites. The load shim
-    // tails through x10 (dead after the quotient at +0x32c24); the csel shim
-    // tails through x9 (dead after +0x32c40).
+    // Log the main state-router hash at +0x32c20. The trampoline entry is a
+    // non-branch site; the shim tails through x9 (dead because `eor w9, w21,
+    // w23` writes it). The callback records the table base, mask, expected
+    // word, and candidates, then computes the comparison offline from the
+    // table word, so the csel at +0x32c48 is not hooked.
     if (g_pairip_router_load_original == nullptr) {
-        auto *target = reinterpret_cast<void *>(base + 0x32c2c);
+        auto *target = reinterpret_cast<void *>(base + 0x32c20);
         void *original = nullptr;
         const int rc = DobbyHook(
             target, reinterpret_cast<void *>(&pairip_router_load_entry),
@@ -670,16 +668,6 @@ bool InstallPairIpTrace() {
         g_pairip_router_load_original = original;
         LOGI("trace: router-load hook rc=%d target=%p trampoline=%p", rc, target,
              original);
-    }
-    if (g_pairip_router_check_original == nullptr) {
-        auto *target = reinterpret_cast<void *>(base + 0x32c48);
-        void *original = nullptr;
-        const int rc = DobbyHook(
-            target, reinterpret_cast<void *>(&pairip_router_check_entry),
-            &original);
-        g_pairip_router_check_original = original;
-        LOGI("trace: router-check hook rc=%d target=%p trampoline=%p", rc,
-             target, original);
     }
     // Capture the FNV-1 input of the 0xf656/0x1b hash phase. The hook sits on
     // the `add x11, x9, w11, uxtw` before the loop at +0x7fde0; x11 is the
@@ -1933,9 +1921,6 @@ extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_router_load_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
-void *g_pairip_router_check_original = nullptr;
-
-extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_fnv_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
@@ -2327,29 +2312,21 @@ void DumpRouterRing() {
     for (uint32_t i = count; i > 0; --i) {
         const RouterRingEntry &entry =
             g_router_ring[(pos - i) % kRouterRingSize];
-        uint32_t raw = 0;
-        SafeReadMemory(static_cast<uintptr_t>(entry.table +
-                                              entry.index * 4ULL),
-                       &raw, sizeof(raw));
-        LOGI("trace: router[%u] %s table=%#" PRIx64 " idx=%#x entry=%#x"
+        LOGI("trace: router[%u] %s table=%#" PRIx64 " idx=%#x entry=%#" PRIx64
              " computed=%#" PRIx64 " expected=%#" PRIx64 " eq=%#x ne=%#x"
              " mix=%#x mod=%#x sel=%#x",
              pos - i, entry.equal ? "ok" : "FAIL", entry.table, entry.index,
-             raw, entry.computed, entry.expected, entry.candidate_eq,
+             entry.entry, entry.computed, entry.expected, entry.candidate_eq,
              entry.candidate_ne, entry.mix, entry.modulus, entry.selected);
     }
     if (g_router_first_ne_valid.load(std::memory_order_relaxed)) {
         const RouterRingEntry &entry = g_router_first_ne;
-        uint32_t raw = 0;
-        SafeReadMemory(static_cast<uintptr_t>(entry.table +
-                                              entry.index * 4ULL),
-                       &raw, sizeof(raw));
-        LOGI("trace: router-first-ne table=%#" PRIx64 " idx=%#x entry=%#x"
+        LOGI("trace: router-first-ne table=%#" PRIx64 " idx=%#x entry=%#" PRIx64
              " computed=%#" PRIx64 " expected=%#" PRIx64 " eq=%#x ne=%#x"
              " mix=%#x mod=%#x sel=%#x",
-             entry.table, entry.index, raw, entry.computed, entry.expected,
-             entry.candidate_eq, entry.candidate_ne, entry.mix, entry.modulus,
-             entry.selected);
+             entry.table, entry.index, entry.entry, entry.computed,
+             entry.expected, entry.candidate_eq, entry.candidate_ne, entry.mix,
+             entry.modulus, entry.selected);
     }
 }
 
@@ -2593,41 +2570,42 @@ void pairip_hash_check_c(uint64_t *regs) {
 
 // Main state-router hash tracing.
 //
-// The handler return path at +0x32c20 computes the next selector (w5). The
-// load at +0x32c2c indexes the table at x8 with w9; the csel at +0x32c48
-// picks w24 when the computed x8 equals w22 (0x0cd47edb) and w25 otherwise.
-// The shims run before those instructions, so the load callback records only
-// the table base and index (the raw word is read at dump time), and the check
-// callback records the comparison, candidates, and resulting selector.
-thread_local bool t_router_have_load = false;
-thread_local uint64_t t_router_table = 0;
-thread_local uint32_t t_router_index = 0;
-
+// The handler return trampoline at +0x32c20 computes the next selector (w5).
+// The shim runs before `eor w9, w21, w23` and records the caller's table base
+// (x8), mask (x12), expected word (x22), candidates (w24/w25), mix (w21), and
+// modulus (w19). The table word is read directly here (the VM executes the
+// same load at +0x32c2c), and the comparison and selected selector are
+// computed exactly as the native block does, so the csel is not hooked.
 extern "C" __attribute__((visibility("hidden")))
 void pairip_router_load_c(uint64_t *regs) {
     if (regs == nullptr || !g_trace_enabled.load()) return;
-    t_router_table = regs[8];
-    t_router_index = static_cast<uint32_t>(regs[9]);
-    t_router_have_load = true;
-}
-
-extern "C" __attribute__((visibility("hidden")))
-void pairip_router_check_c(uint64_t *regs) {
-    if (regs == nullptr || !g_trace_enabled.load()) return;
     RouterRingEntry entry{};
-    if (t_router_have_load) {
-        entry.table = t_router_table;
-        entry.index = t_router_index;
-        t_router_have_load = false;
-    }
-    entry.computed = regs[8];
-    entry.expected = static_cast<uint32_t>(regs[22]);
+    entry.table = regs[8];
+    entry.mask = regs[12];
+    entry.expected = regs[22];
     entry.candidate_eq = static_cast<uint32_t>(regs[24]);
     entry.candidate_ne = static_cast<uint32_t>(regs[25]);
     entry.mix = static_cast<uint32_t>(regs[21]);
     entry.modulus = static_cast<uint32_t>(regs[19]);
-    const uint32_t nzcv = static_cast<uint32_t>(regs[30]);
-    entry.equal = (nzcv >> 30) & 1u;
+    const uint32_t mixed =
+        static_cast<uint32_t>(regs[21] ^ regs[23]);
+    entry.index = entry.modulus != 0 ? mixed % entry.modulus : mixed;
+
+    uint32_t raw = 0;
+    if (entry.table != 0) {
+        SafeReadMemory(static_cast<uintptr_t>(entry.table +
+                                              entry.index * 4ULL),
+                       &raw, sizeof(raw));
+    }
+    entry.entry = static_cast<uint64_t>(
+        static_cast<int64_t>(static_cast<int32_t>(raw)));
+    const uint64_t mask = entry.mask;
+    const uint64_t word = entry.entry;
+    uint64_t tmp = ~(mask & word);
+    tmp = word + tmp;
+    const uint64_t combined = word | ~mask;
+    entry.computed = tmp - combined;
+    entry.equal = entry.computed == entry.expected ? 1u : 0u;
     const uint32_t picked =
         entry.equal ? entry.candidate_eq : entry.candidate_ne;
     entry.selected = entry.modulus != 0
@@ -2650,11 +2628,12 @@ void pairip_router_check_c(uint64_t *regs) {
 
     static std::atomic<int> log_count{0};
     if (log_count.fetch_add(1) >= 8) return;
-    LOGI("router: %s table=%#" PRIx64 " idx=%#x computed=%#" PRIx64
-         " expected=%#" PRIx64 " eq=%#x ne=%#x mix=%#x mod=%#x sel=%#x",
-         entry.equal ? "ok" : "FAIL", entry.table, entry.index, entry.computed,
-         entry.expected, entry.candidate_eq, entry.candidate_ne, entry.mix,
-         entry.modulus, entry.selected);
+    LOGI("router: %s table=%#" PRIx64 " idx=%#x entry=%#" PRIx64
+         " computed=%#" PRIx64 " expected=%#" PRIx64 " mask=%#" PRIx64
+         " eq=%#x ne=%#x mix=%#x mod=%#x sel=%#x",
+         entry.equal ? "ok" : "FAIL", entry.table, entry.index, entry.entry,
+         entry.computed, entry.expected, entry.mask, entry.candidate_eq,
+         entry.candidate_ne, entry.mix, entry.modulus, entry.selected);
 }
 
 // Debug-only capture of the FNV-1 input used by the klB 0x1b handler.
