@@ -151,6 +151,7 @@ hash at `+0x32c20..+0x32c54`, not by the `+0x3dc08` block.
 | fnv-input probe (`+0x7fddc`) | 419 calls, `len=1`, all at `image+0x24f47`, byte `0x99`, checksum `ba6cb68e62faac68`; pristine asset and crash image match at that offset; baseline crash unchanged. The input is static image data. |
 | hash-gate probe (`+0x3dc0c`, `+0x3dc50`) | Both hooks `rc=0`, zero hits (`hash ring pos=0`); state `0x872a21c` reaches the reader via `+0x34d74 b.eq +0x3dc88`; the `+0x3dc08` hash block is a different handler's tail. Baseline crash unchanged. The block is not the hosted gate. |
 | state-router retry (`+0x32c20`) | Hook `rc=0`, zero hits (`router ring pos=0`, `eq=0`, `ne=0`); state `0x872a21c` branches directly to the reader at `+0x34d74 b.eq +0x3dc88`; the `0x31` builtin runs at `pc=0x40a73` immediately before the baseline crash. The router hash block is not on the reader path. |
+| Offset-0 base-APK mapping (`pairip_apk_zero_map`) | Mapping installed at the planned address (`0x7900000000`, `fixed=1`) and appears in klB's maps dump (`r--p 00000000`), yet the crash, reader slots, FNV input, state tail, and builtin tail are unchanged. Falsified: the missing offset-0 mapping is not the gate. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -175,9 +176,12 @@ The `hash-gate` run answered the "name-hash before the reader" branch
 negatively: the `+0x3dc08` block is skipped, so it cannot be the hosted-only
 gate. The `state-router-retry` run answered the main state-router hash
 negatively too: `+0x32c20` never executes, and the dispatcher sends state
-`0x872a21c` straight to the reader at `+0x34d74 b.eq +0x3dc88`. The live part
-of question 2 is now the `0x31` builtin at bytecode pc `0x40a73`: what operand
-block it executes and which state re-dispatches to `0x872a21c`.
+`0x872a21c` straight to the reader at `+0x34d74 b.eq +0x3dc88`. The
+`apk-zero-map` run answered the mapping hypothesis negatively: the offset-0
+game APK mapping is present and visible to the VM, but the same two slots are
+read. The live part of question 2 is now the `0x31` builtin at bytecode pc
+`0x40a73`: what operand block it executes, and whether it computes the slots
+itself or expects an earlier writer that the hosted path skips.
 
 ## Pre-registered experiment (2026-10-27, fnv-input)
 
@@ -249,10 +253,10 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
    `+0x32c20` is ruled out (the dispatcher sends `0x872a21c` directly to the
    reader at `+0x34d74`); decode the `0x31` state selection and the preceding
    state's `next`/`fallback` decision instead.
-3. Live diagnostic (apk-zero-map): the hosted process has no offset-0 mapping
-   of the game's `base.apk`, only `r--s` mappings at file offsets `0x74ba000`
-   and `0x74f5000`. Map the whole base APK at offset 0 before `libmain` and
-   test whether PairIP's mapping resolver then initializes the reader slots.
+3. Falsified (apk-zero-map, 2026-10-27): the offset-0 game `base.apk`
+   mapping is present and visible to the VM, but the reader slots and crash
+   are unchanged. The missing mapping is not the gate; move to the `0x31`
+   builtin and the `0x40a73` operand block.
 4. Ruled out by the fnv-input result: reproducing stock maps/status content
    for the hash input.
 5. Decode the `0x31` builtin semantics and the `0x40a73` operand block.
@@ -348,3 +352,29 @@ change the slots before the reader runs.
 - Diagnostic only: the offset-0 mapping must not ship. If it changes the
   path, the next step is to find the production-shaped trigger (the platform
   loader/AssetManager mapping stock gets), not to keep an mmap experiment.
+
+### Result (2026-10-27 17:59, `4cd16ed`)
+
+The run is **FALSIFIED**. The mapping installed exactly as planned:
+`apk-zero-map: base=0x7900000000 size=122714162 hint=0x7900000000 fixed=1
+fallback_errno=0`. The VM's own maps dump contains
+`7900000000-7907508000 r--p 00000000 fe:60 942208 .../base.apk` at line 32,
+before the two `r--s` game mappings, so PairIP's maps reader could see it.
+
+Nothing downstream changed. The FNV input is still 419 calls of byte `0x99`
+at `image+0x24f47` (checksum `ba6cb68e62faac68`), the hash and router rings are
+still empty, the state ring still ends at `id=0x872a21c sel=0x31bb
+reader=0xf93727d8`, and the builtin ring still ends at `id=0x9a0c0031
+pc=0x40a73`. The crash is the same `__memmove_aarch64_nt+140` (`+0x8d514`)
+with the same reader slots `bbb9eb6daed20ed0` / `015370f87525d57b`.
+
+Artifacts: log `tmp/cifi-apk/logs/verify/apk-zero-map.log` (sha256
+`81ebb14cb2d2dbff2375048c66a5012e162db3c28d13a40c682eaf30eecdd014`),
+crash image `tmp/cifi-apk/vmrun/klB-image-zero-map.bin` (sha256
+`92958cc0804ac7be0a9e53f62446f506e1dcc3d26dbf2360b728eca9b266b513`,
+368 changed bytes in 79 ranges), and maps dump
+`tmp/cifi-apk/vmrun/klB-maps-zero-map.txt` (sha256
+`515c939aa55bce3b53cea8b87eccf7babc898620ca622cffc850c933c8b942f9`).
+The crash image differs from the retry image by only 50 bytes in 29 ranges,
+all ASLR pointers plus the known `image+0xae3` counter. The offset-0 mapping
+had no behavioral effect.

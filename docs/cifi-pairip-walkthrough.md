@@ -367,3 +367,80 @@ OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
   directly to `+0x3dc88` (`b.eq 0x3dc88`), so state `0x872a21c` builds the
   reader without the router hash. The router is not the hosted gate. The
   retry is a clean falsification, not an invalid probe.
+
+## Planned run: apk-zero-map
+
+- Purpose: test whether the missing offset-0 mapping of the game base APK is
+  what prevents PairIP's central-directory resolver from initializing klB's
+  reader slots.
+- Hypothesis: the hosted process must expose an offset-0 game `base.apk`
+  mapping for the resolver to write the selected reader pointer/size slots
+  (`image+0x3f874` / `image+0x1ba5c`) or to skip the `0x31` reader call.
+- Change from the frozen baseline: add `pairip_apk_zero_map=true`. The launcher
+  maps the whole installed base APK `PROT_READ`, `MAP_PRIVATE`, offset 0, at
+  hint `0x7900000000` with `MAP_FIXED_NOREPLACE`; on failure it retries with a
+  null hint. The native log prints the range and its `/proc/self/maps` line.
+- Prediction: the mapping line is present before `libmain.so` runs, and either
+  the reader slots differ from `0x3f874` / `0x1ba5c` or the
+  `__memmove_aarch64_nt+140` crash disappears. The five shadow globals may
+  remain byte-identical because their FNV input is static; that alone does not
+  falsify the mapping gate.
+- Falsification: the mapping is present and the crash still reads the same two
+  slots with the same signature and the same state ring tail
+  (`id=0x872a21c sel=0x31bb`, `builtin id=0x9a0c0031 pc=0x40a73`). Then the
+  offset-0 mapping is not the gate.
+- Frozen baseline: `variant=default`, `pairip_preload=true`,
+  `pairip_trace=true`, `pairip_dump_vm=true`, debug launcher.
+- Run key: `variant=apk-zero-map`, code commit `4cd16ed`, APK sha256
+  `9aa20aa3e3481fb3e1cde83729df34bb17b145d9ef5a1ce2eb411970c576b892`
+  (115,104,390 bytes), package `com.bepinex.android.debug` on SM-S931N
+  (Android 17/API 37, `user`, `ro.debuggable=0`).
+- Command:
+
+```bash
+OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25 \
+  tmp/cifi-apk/run_variant.sh apk-zero-map \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_apk_zero_map true
+```
+
+- Status: pre-registered; ready to install and run.
+
+### 2026-10-27 17:59 — apk-zero-map: FALSIFIED (offset-0 mapping is not the gate)
+
+- Key: `variant=apk-zero-map`, code commit `4cd16ed`, APK sha256
+  `9aa20aa3e3481fb3e1cde83729df34bb17b145d9ef5a1ce2eb411970c576b892`
+  (115,104,390 bytes), installed hash matches, `lastUpdateTime=2026-10-27
+  17:53:23`, package `com.bepinex.android.debug` on SM-S931N (Android 17/API
+  37, `user`, `ro.debuggable=0`).
+- Command: `OUTDIR=tmp/cifi-apk/logs/verify WAIT_S=25
+  tmp/cifi-apk/run_variant.sh apk-zero-map --ez pairip_preload true
+  --ez pairip_trace true --ez pairip_dump_vm true --ez pairip_apk_zero_map
+  true`.
+- Window: 2026-10-27T17:59:25+09:00 to 17:59:55+09:00 (30 s).
+- Mapping: `apk-zero-map: base=0x7900000000 size=122714162
+  hint=0x7900000000 fixed=1 fallback_errno=0`. The VM's maps dump contains
+  `7900000000-7907508000 r--p 00000000 fe:60 942208 .../base.apk` at line 32,
+  so the game APK is now mapped at offset 0 below the existing `r--s`
+  mappings.
+- Probe: the FNV input is unchanged (419 calls, `off=0x24f47`, byte `0x99`,
+  checksum `ba6cb68e62faac68`). The hash and router rings remain at `pos=0`.
+  The state ring ends `id=0x872a21c sel=0x31bb reader=0xf93727d8`; the builtin
+  ring ends `id=0x9a0c0031 pc=0x40a73`.
+- Crash: `__memmove_aarch64_nt+140` (`libsigchain #03`), caller
+  `split_config.arm64_v8a.apk +0x514`, at 17:59:32.431. The reader slots are
+  still `bbb9eb6daed20ed0` / `015370f87525d57b`; the process dies by signal 11
+  at 17:59:32.468.
+- Image: `tmp/cifi-apk/vmrun/klB-image-zero-map.bin` (crash time,
+  282,603 bytes, sha256
+  `92958cc0804ac7be0a9e53f62446f506e1dcc3d26dbf2360b728eca9b266b513`)
+  has 368 changed bytes in 79 ranges. It differs from the retry image by only
+  50 bytes in 29 ranges (ASLR pointers plus the known `image+0xae3` counter).
+  Maps dump: `tmp/cifi-apk/vmrun/klB-maps-zero-map.txt`, sha256
+  `515c939aa55bce3b53cea8b87eccf7babc898620ca622cffc850c933c8b942f9`.
+  Log sha256 `81ebb14cb2d2dbff2375048c66a5012e162db3c28d13a40c682eaf30eecdd014`.
+- Verdict: the mapping was present and visible to the VM, but the crash and
+  every pre-crash state are unchanged. The missing offset-0 game `base.apk`
+  mapping is not the hosted gate. The next fork is the `0x31` builtin at
+  `pc=0x40a73`: instrument its operand block, or prove stock takes an earlier
+  branch before the reader.
