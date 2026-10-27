@@ -882,6 +882,32 @@ class BootstrapActivity : Activity() {
             BepInExLog.i("PairIP preload: attach window closed; loading libmain")
         }
 
+        if (PairIpExperiment.skipKlb) {
+            // Debug-only: neutralize libunity's DT_INIT klB program. The hook
+            // must be installed after YTw (a code hook before it trips PairIP's
+            // decoy path) and before libmain loads libunity.
+            val installed = try {
+                PairIpShield.installSkipKlbProgram()
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP klB skip: install threw", t)
+                false
+            }
+            BepInExLog.i("PairIP klB skip: installed=$installed")
+        }
+
+        if (PairIpExperiment.readerGuard) {
+            // Debug-only: let klB's unmapped 46-byte ZIP probe fail through
+            // the reader's normal empty-string path. Installed in the same
+            // window as the klB skip: after YTw, before libunity's DT_INIT.
+            val installed = try {
+                PairIpShield.installReaderGuard()
+            } catch (t: Throwable) {
+                BepInExLog.e("PairIP reader guard: install threw", t)
+                false
+            }
+            BepInExLog.i("PairIP reader guard: installed=$installed")
+        }
+
         if (PairIpExperiment.syscallTrace) {
             // Debug-only: klB reads the ZIP through PairIP's own raw syscall
             // wrapper. Record the tail of that stream and dump it when the

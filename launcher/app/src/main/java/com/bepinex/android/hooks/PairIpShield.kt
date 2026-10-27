@@ -187,6 +187,29 @@ object PairIpShield {
     }
 
     /**
+     * Debug-only: neutralize the `klB1wZSojiVvDvCN` PairIP startup program.
+     * The hook is installed before `libmain.so` runs libunity's DT_INIT.
+     *
+     * @return true when the `ExecuteProgram` hook is installed.
+     */
+    fun installSkipKlbProgram(): Boolean {
+        ensureLoaded()
+        return nativeInstallSkipKlb()
+    }
+
+    /**
+     * Debug-only: turn klB's unmapped 46-byte ZIP probe into the reader's
+     * normal zero-length/overflow result. Installed after YTw and before
+     * libmain lets libunity's DT_INIT run klB.
+     *
+     * @return true when the reader helper hook is installed.
+     */
+    fun installReaderGuard(): Boolean {
+        ensureLoaded()
+        return nativeInstallReaderGuard()
+    }
+
+    /**
      * Debug-only: rewrites this process's argv0 and task name to [name]. The
      * old argv0 buffer is reused when it is long enough, so the kernel's
      * `/proc/self/cmdline` and `/proc/self/status` `Name` look like the target
@@ -213,6 +236,8 @@ object PairIpShield {
     private external fun nativeInstallProcSanitizer(): Boolean
     private external fun nativeInstallFakeCentralDirectory(apkPath: String): String?
     private external fun nativeInstallVmDump(directory: String): String?
+    private external fun nativeInstallSkipKlb(): Boolean
+    private external fun nativeInstallReaderGuard(): Boolean
     private external fun nativeSpoofProcessName(name: String): String?
 
     private external fun nativeLoadIntoClassLoader(

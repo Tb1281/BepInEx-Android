@@ -49,6 +49,8 @@ object PairIpExperiment {
     const val EXTRA_PROC_SANITIZE = "pairip_proc_sanitize"
     const val EXTRA_SYSCALL_TRACE = "pairip_syscall_trace"
     const val EXTRA_DUMP_ARTIFACTS = "pairip_dump_artifacts"
+    const val EXTRA_SKIP_KLB = "pairip_skip_klb"
+    const val EXTRA_READER_GUARD = "pairip_reader_guard"
     const val EXTRA_ALLOW_NONDEBUG = "pairip_allow_nondebug_experiments"
 
     /**
@@ -293,6 +295,27 @@ object PairIpExperiment {
     @Volatile
     var dumpArtifacts: Boolean = false
 
+    /**
+     * Debug-only: make `libpairipcore.so`'s `ExecuteProgram` return without
+     * running `klB1wZSojiVvDvCN`. The klB VM reads a ZIP view from two image
+     * literals that a hosted launch leaves as ciphertext, so it normally
+     * dereferences a garbage pointer before Unity starts. Skipping just this
+     * program tests whether PairIP's native startup check is required for
+     * Unity to boot or can be neutralized. Gated by package elsewhere; never
+     * enabled by production launcher code.
+     */
+    @Volatile
+    var skipKlb: Boolean = false
+
+    /**
+     * Debug-only: make the shared reader helper treat klB's unmapped 46-byte
+     * ZIP probe as a zero-length view. The reader then returns an empty
+     * string instead of dereferencing image ciphertext; nothing is patched
+     * and no image slot is pre-seeded.
+     */
+    @Volatile
+    var readerGuard: Boolean = false
+
     fun configure(context: Context, intent: Intent) {
         val debuggable =
             context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
@@ -346,6 +369,8 @@ object PairIpExperiment {
         procSanitize = extras.getBoolean(EXTRA_PROC_SANITIZE, procSanitize)
         syscallTrace = extras.getBoolean(EXTRA_SYSCALL_TRACE, syscallTrace)
         dumpArtifacts = extras.getBoolean(EXTRA_DUMP_ARTIFACTS, dumpArtifacts)
+        skipKlb = extras.getBoolean(EXTRA_SKIP_KLB, skipKlb)
+        readerGuard = extras.getBoolean(EXTRA_READER_GUARD, readerGuard)
     }
 
     fun describe(): String = buildString {
@@ -381,5 +406,7 @@ object PairIpExperiment {
         append(" procSanitize=").append(procSanitize)
         append(" syscallTrace=").append(syscallTrace)
         append(" dumpArtifacts=").append(dumpArtifacts)
+        append(" skipKlb=").append(skipKlb)
+        append(" readerGuard=").append(readerGuard)
     }
 }

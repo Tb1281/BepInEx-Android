@@ -53,6 +53,64 @@ The cross-device continuation snapshot is
 - Captured VM state at the failing read: image base
   `0xb400007b1224d010`, size `0x44feb`, VM pc field `0x40aab`.
 
+## Reader slot derivation (continuation, 2026-10-27)
+
+The failed reader is built by the native block `+0x3dc88..+0x3e030`, not by
+the ZIP parser at `+0x3e170`. `+0x3e030` loads two words from the writable
+image and fills the stream object at `sp+0x550`:
+
+```
+x8 = image[w8]   // data
+x9 = image[w9]   // size
+reader = { vtable=0x93ce8, cursor=0, data=x8, size=x9 }
+```
+
+`w8` and `w9` come from two inputs:
+
+1. The first five entries of the decoded table at `image+0xb0`. The same
+   `(value ^ ~len) % len` cipher used for strings decodes them to `0x2129a`,
+   `0x377ff`, `0x1f422`, `0x1da6f`, `0x38edd`; the block reads the five u32
+   globals stored at those offsets.
+2. The instruction words at the current bytecode pc (the failing call is at
+   bytecode pc `0x40a73`).
+
+Those five globals are rewritten at fixed bytecode sites before the reader is
+built:
+
+| Bytecode fetch | Op | Shape |
+| --- | --- | --- |
+| `0x333eb` | `0x7e` | one combined update of all five |
+| `0x395ad` | `0x6d` | one combined update of all five |
+| `0xf656` | `0x1b` | per-byte loop; counter `0x266f2` runs `0x46` -> 0 |
+| `0x158e1` | `0x92` | 16-iteration block loop (`0x2ee6`) |
+| `0x1831` | `0x92` | 16-iteration block loop (`0x33358`) |
+| `0x1f811` | `0x7e` | in progress at the crash; produces the final values |
+
+The `0x1b`/`0x92` shape is a five-word hash state over a 70-byte input (two
+64-byte blocks after padding), i.e. SHA-1/RIPEMD-160-shaped. The input source
+is not identified yet. That is the fork:
+
+- If the input is static image data, a stock launch computes the same five
+  globals. Stock must then initialize/relocate the selected slots or take a
+  different branch before the `0x31` call.
+- If the input is maps/status/path-derived, the globals and `w8`/`w9` differ
+  in stock, and that difference is the gate.
+
+The crash image reads `0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`,
+`0x4d062af3` at `0x1da6f`, `0x1f422`, `0x2129a`, `0x377ff`, `0x38edd`.
+The post-copy prologue seeds them with `0xddf5ddaf`, `0xbe61b175`,
+`0xa5c5514d`, `0xd6db4e18`, `0x9b708920` (write ring `by=-1`).
+
+Emulating `+0x3dc88..+0x3e030` over the image reproduces the runtime result:
+
+| Image | `w8` | `w9` |
+| --- | --- | --- |
+| pristine asset | `0x31c1b` | `0x3b302` |
+| runtime image at crash | `0x3f874` | `0x1ba5c` |
+
+The pristine pair also points at non-pointer asset bytes, so the shipped `klB`
+cannot satisfy the reader without a runtime write or a different branch.
+
 ## Experiments and results
 
 | Experiment | Result |
@@ -63,7 +121,9 @@ The cross-device continuation snapshot is
 | VM-pc-tagged class trace | Entry #9: `caller=+0x7295c`, `vm=0xf0df/0x30`, `idx=0x19ded`, `len=12928`. |
 | Procfs trace | klB reads `/proc/self/maps` in 1 KB chunks through `0x23800` (141-142 reads), then `/proc/self/status`, `readlink` of the maps fd, six `clock_gettime`, then the failing read. |
 | Served maps snapshot | Contains launcher-only `.so` paths (`libcoreclr.so`, `libfusion.so`, `libmscordacore.so`, ...); game libraries appear as split-APK mappings. |
-| `memcmp` needle trace | Hook installed; the comparison operands that identify the maps needle have not been captured yet. |
+| `memcmp` needle trace | Closed: the captured comparisons are the shield logger's own tag checks, not a klB maps needle. |
+| Five-global emulation | Reproduces `0x3f874`/`0x1ba5c` from the crash image and `0x31c1b`/`0x3b302` from the pristine asset. |
+| Cross-run global comparison | The five globals reach byte-identical values in three hosted runs while ASLR pointers differ. |
 | Image-watch (read-only first page) | Instrumentation added; result not yet recorded. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
@@ -72,19 +132,18 @@ path valid and it must not become the fix.
 
 ## Open questions
 
-1. How does a stock launch make `image+0x3f874` and `image+0x1ba5c` valid?
-   Candidate explanations are a runtime image relocation/decryption step that
-   the hosted path skips, or a PairIP environment gate that selects a different
-   image.
-2. Does the reader expect a full APK or a stream positioned at one central
+1. What 70-byte input does the five-word hash consume at `0xf656`? Is it
+   static image data, or maps/status/path bytes? The answer decides whether
+   stock computes the same `w8`/`w9`.
+2. If the input is static, why does stock not hit the invalid slots: does it
+   write/relocate the selected slots, or does the state router take an earlier
+   branch and never issue the `0x31` call?
+3. Does the reader expect a full APK or a stream positioned at one central
    directory entry? The base and split fake-CD runs both advance past the
    crash, so the current evidence only proves the magic and length
    interpretation.
-3. Is class-trace #9 (`0xf0df/0x30`) a fake-CD artifact or a genuine decoy path
+4. Is class-trace #9 (`0xf0df/0x30`) a fake-CD artifact or a genuine decoy path
    that stock also takes?
-4. Which maps line does klB search for? Logging the `memcmp` operands and the
-   caller should answer this; the served map deliberately hides launcher-only
-   libraries.
 
 ## Reproduction
 
@@ -110,12 +169,18 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
 
 ## Next steps
 
-1. Log the `memcmp` caller and return address to identify the maps needle and
-   the `.so` check.
-2. Determine whether the two ZIP slots are meant to be relocated at load time,
-   and whether that step is skipped only in the hosted process.
-3. Decide whether class-trace #9 is on the stock path; keep fake-CD labelled as
-   diagnostic either way.
-4. Only after a real mechanism is proven: apply the fix, build, reinstall with
-   `android install`, run three cold launches, and record the results on
-   #62-#64 before writing the ADR for #60.
+1. Decode the `0x1b`/`0x92` handlers (byte source and block schedule) and log
+   the 70-byte input at `0xf656`. Decide static vs maps/status/path-derived.
+2. If static: prove a stock launch computes the same five globals, then find
+   the earlier branch stock takes. Decode the `0x31` state selection and the
+   preceding state's `next`/`fallback` decision.
+3. If environment-fed: reproduce stock's maps/status content and ordering.
+   Running `libunity`'s `DT_INIT` before the Fusion/.NET preload is a
+   diagnostic worth trying.
+4. Decode the `0x31` builtin semantics and the `0x40a73` operand block.
+5. Only after a real mechanism is proven: apply a gated fix, build, reinstall
+   with `android install`, run three cold launches, record results on #62-#64,
+   then write the ADR for #60.
+6. Before merge: remove the debug experiment switches,
+   `pairip_allow_nondebug_experiments`, the Frida gadget/DiagnosticApp/sleeps,
+   and the stale `pairip_desc_trace`/`pairip_branch_trace` declarations.

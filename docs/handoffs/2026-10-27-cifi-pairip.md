@@ -2,12 +2,21 @@
 
 Snapshot of the hosted-launch investigation for CIFI
 (`com.OctocubeGamesCompany.CIFI`), written so a fresh agent on another device
-can continue from a clean checkout. The crash is still unresolved; the work is
-at the "identify the gate" stage, not the "apply the fix" stage.
+can continue from a clean checkout. The crash is still unresolved; the work has
+narrowed from "which image slot is wrong" to "what feeds the five-word hash
+state that selects the slots", not the "apply the fix" stage.
 
 This handoff is a point-in-time summary. The living record is
 [`docs/cifi-pairip-findings.md`](../cifi-pairip-findings.md); update that file
 as facts change instead of editing this snapshot.
+
+Continuation update (later 2026-10-27): the five u32 image globals that feed
+the reader-slot computation are now identified, their update sites are mapped,
+and an offline emulator reproduces both the crash pair and the pristine pair.
+The open fork is whether the 70-byte input to that hash is static (stock
+computes the same globals and must take a different branch) or
+maps/status/path-derived (the globals differ in stock). See
+"What changed in this round" below.
 
 ## Mission and constraints
 
@@ -32,11 +41,13 @@ as facts change instead of editing this snapshot.
 ## Where the work is
 
 - Repo: `Tb1281/BepInEx-Android`
-- Branch: `test/feat-cifi`, pushed to `origin/test/feat-cifi`
-- Code checkpoint: `71f534e` (`wip(pairip): checkpoint klB image-watch and
-  maps-scan probes`)
-- Findings doc: `8bf5ec1`, wording fix `3277036`
-- This handoff adds documentation only; it does not change code.
+- Branch: `test/feat-cifi`, tracked as `origin/test/feat-cifi`
+- Code checkpoint: the WIP commit containing this update (on top of
+  `dff372c`). It commits the debug instrumentation that was previously
+  unstaged: builtin/state/hash rings, `skipKlb`/`readerGuard`, and the
+  five-global analysis notes.
+- The local branch previously pointed its upstream at
+  `origin/feat/cifi-pairip-hosting`; it is now `origin/test/feat-cifi`.
 - The branch contains debug-only WIP instrumentation. It is not merged to
   `main`.
 - The temporary `pairip_allow_nondebug_experiments` bypass is still committed
@@ -129,14 +140,31 @@ written at runtime. Whole-image write attribution found 368 changed bytes in
   at `+0x31e00` contains inlined FNV-1 loops compared against VM-context
   values; still a candidate, not yet tied to the CD gate.
 
-## What changed in this round
+## What changed in this round (continuation)
 
-- The reader is a `{vtable, cursor, data, size}` stream object
-  (`vtable 0x93ce8`, method `+0x8d460` at slot `+0x10`), built at `+0x3e030`.
-  It loads the data word from `image+0x3f874` and the size word from
-  `image+0x1ba5c`. `+0x3e170` then parses a ZIP central directory entry
-  (`PK\x01\x02`). Entry length is the sum of the u16 fields at `+0x1c`,
-  `+0x1e`, and `+0x20`.
+- The reader object is a `{vtable, cursor, data, size}` stream (`vtable
+  0x93ce8`, method `+0x8d460` at slot `+0x10`). `+0x3e030` fills it with
+  `data = image[w8]` and `size = image[w9]`; `+0x3e170` then parses a ZIP
+  central-directory entry (`PK\x01\x02`). Entry length is the sum of the u16
+  fields at `+0x1c`, `+0x1e`, and `+0x20`.
+- `w8`/`w9` are computed by `+0x3dc88..+0x3e030` from the five u32 image
+  globals at `0x2129a`, `0x377ff`, `0x1f422`, `0x1da6f`, `0x38edd` (the
+  offsets are the first five decoded entries of the table at `image+0xb0`)
+  plus the instruction words at the current bytecode pc.
+- Emulating that block over the pristine asset gives
+  `w8/w9 = 0x31c1b/0x3b302`; over the runtime image at the crash it gives
+  `0x3f874/0x1ba5c`, reproducing the crash exactly. The pristine pair also
+  points at non-pointer asset bytes.
+- The five globals are rewritten at `0x333eb/0x7e`, `0x395ad/0x6d`,
+  `0xf656/0x1b` (70-byte per-byte loop), `0x158e1/0x92` and `0x1831/0x92`
+  (two 16-word block loops), and again in the in-progress `0x1f811/0x7e` at
+  the crash. The shape is a five-word hash (SHA-1/RIPEMD-160-like).
+- The crash image's globals are `0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`,
+  `0xbfe458cb`, `0x4d062af3`; the post-copy prologue seeds them with
+  `0xddf5ddaf`, `0xbe61b175`, `0xa5c5514d`, `0xd6db4e18`, `0x9b708920`.
+- Three hosted runs reached byte-identical global values while ASLR pointers
+  differed, so the chain does not hash raw map addresses. That does not prove
+  stock computes the same values: the hash input is still unidentified.
 - Fake-CD diagnostics: mapping the base APK central directory (`0x1281c`) or
   the arm64 split directory (`0x30a`) removes the SIGSEGV in both cases, then
   the run dies in a CheckJNI `FindClass` SIGABRT. The VM-pc-tagged class trace
@@ -147,15 +175,11 @@ written at runtime. Whole-image write attribution found 368 changed bytes in
   `clock_gettime`, then the failing ZIP read. The served maps contain
   launcher-only `.so` paths and show game libraries as split-APK mappings
   (`extractNativeLibs=false`).
-- New debug-only instrumentation in `71f534e`: VM write attribution, an
-  image-watch SIGSEGV probe, maps `memcmp` needle tracing, `ExecuteProgram`
-  argument logging, and a fake-CD path override.
 - The installed base APK (`122,714,162` bytes, sha256
   `390fbd7ff3823c69bc3c4ff2f191f6fa787d0e8b33539a4c189c4cecfab9dc5f`) and
   arm64 split (`107,115,296` bytes, sha256
   `6b9a27886f5c2b7257fcb3ee8d59e27df788a6b097f35d787e0af4bfe037dc02`) match
-  the copies used for static analysis. The game uses `extractNativeLibs=false`,
-  so its libraries are mapped from the split APK.
+  the copies used for static analysis.
 
 ## Ruled out
 
@@ -173,47 +197,39 @@ written at runtime. Whole-image write attribution found 368 changed bytes in
   shows both APKs are opened and fstat'd).
 - The 420 Longs as the gate (telemetry only).
 - A runtime writer for the two ZIP slots (whole-image attribution found none).
+- The maps-scan `memcmp` needle (the captured comparisons are the shield
+  logger's own tag checks).
+- Launcher Fusion `libmain` vs game `libmain` (the game's own `libmain`
+  produces the identical crash).
+- `skipKlb` and the reader guard are diagnostics only; they advance past the
+  crash but are not the mechanism or the fix.
 
 ## Open question
 
-Why are image slots `+0x3f874` (CD pointer) and `+0x1ba5c` (CD size) never
-written in the hosted process, and what is supposed to write them?
+What 70-byte input feeds the five-word hash state? Two branches:
 
-Given klB never reads APK bytes itself, the CD data must come from:
+1. Static image/instruction data: stock computes the same five globals. The
+   reader slots are then invalid in stock too, so stock must either write or
+   relocate the selected slots, or take an earlier branch and never issue the
+   `0x31` call.
+2. Maps/status/path-derived data: the globals differ in stock and the
+   environment difference is the gate.
 
-1. an existing `r--s` mapping the VM is expected to locate (the maps scan or
-   `/proc/self/map_files` resolution may differ from stock), or
-2. a JNI-provided buffer/state (for example from the game's `Application` or
-   `LoadedApk`), or
-3. a VM relocation/initialization step that is skipped by a guard.
-
-A fix must make PairIP's own initialization run and pass; do not pre-seed the
-two slots or fake the reader pointer.
+Do not pre-seed the slots or fake the reader pointer. A fix must make PairIP's
+own initialization run and pass.
 
 ## Next moves (priority order)
 
-1. Capture the maps-scan `memcmp` operands and the caller/return address. The
-   hook is installed with the PairIP trace and logging arms when klB opens
-   `/proc/self/maps`; run with `--ez pairip_syscall_trace true` and no other
-   extras. This should name the `.so` string klB searches for and identify
-   whether the check is an anti-tamper gate or a real lookup.
-2. Hook the maps parser at the read helper `libpairipcore+0x8cc78`
-   (`this.returnAddress`) to find the parser and how it selects the APK/CD
-   mapping; dump the buffer it builds. Confirm the hosted parse sees the same
-   `r--s` CD ranges as stock.
-3. Hook `+0x4ab64` (readlinkat / APK verify) and `+0x391b0` (dir open) to log
-   the path strings and `fstat` results; compare with the stock path strings.
-4. Decide what the reader expects: a full APK or a stream positioned at one
-   central-directory entry. The fake-CD runs only prove the magic/length
-   interpretation. Inspect the cursor arithmetic around `+0x3e030`/`+0x3e170`
-   and the VM instructions that set the two slots.
-5. Determine whether class-trace #9 is on the stock path or is a fake-CD
-   artifact. If it is genuine, the `0xf0df/0x30` descriptor is the next decoy
-   to decode.
-6. Determine how stock turns `image+0x3f874` and `image+0x1ba5c` into valid
-   values. Candidates: a runtime relocation/decryption step skipped by the
-   hosted path, or an environment branch that selects a different image.
-7. Only after a real mechanism is proven: apply the fix, build, `android
+1. Decode the `0x1b`/`0x92` handlers and log the 70-byte input at `0xf656`.
+   Determine the byte source and whether it is static or environment-fed.
+2. If static: prove stock computes the same globals, then decode the `0x31`
+   state selection (`0x321c0`/`0x32c6c`) and the preceding state's
+   `next`/`fallback` decision to find the branch stock takes.
+3. If environment-fed: reproduce stock's maps/status content and ordering.
+   Running `libunity`'s `DT_INIT` before the Fusion/.NET preload is a
+   diagnostic worth trying.
+4. Decode the `0x31` builtin semantics and the `0x40a73` operand block.
+5. Only after a real mechanism is proven: apply a gated fix, build, `android
    install`, run three cold launches, record results on #62-#64, then write the
    #60 ADR and finish #58/#59.
 
@@ -244,7 +260,8 @@ for `pairip_delay_ms`. Run `run_dumpvm.sh` only for successful runs: it waits
 for `vm ring pos=` and times out on abort runs.
 
 Local artifacts from the previous device are not transferable. Regenerate them
-with `pairip_dump_artifacts` or the Frida probes:
+with `pairip_dump_artifacts` or the Frida probes. The `/tmp/opencode` paths are
+host-local and are not committed; the device logs are pulled from logcat:
 
 - `/tmp/pairip-analysis/REPORT.md` - full static analysis, crash
   reconstruction, hypotheses H1-H5.
@@ -257,6 +274,18 @@ with `pairip_dump_artifacts` or the Frida probes:
 - `/tmp/opencode/trace_fakecd_split.raw` - split fake-CD run with VM-pc tags.
 - `/tmp/opencode/probe_syscall_caller.js`, `probe_syscall_full.js`,
   `run_probe4.sh` - Frida probes.
+- `/tmp/opencode/scan_block.py` - Python emulator for native
+  `+0x3dc88..+0x3e030`. Usage:
+  `python3 scan_block.py <bytecode-pc> 0xb0 <image.bin>`; the values are in
+  `regs[8]`/`regs[9]` (the script's `__main__` still assumes the old
+  iterable return value, so import it and call `run_one()`).
+- `/tmp/opencode/dumpvm/` - baseline `klB-image-at-crash.bin`, `imagew.txt`
+  (write ring), `klB-maps.txt`.
+- `/tmp/opencode/dumpvm-sanitize/` - procfs-sanitizer image and maps/status
+  inputs.
+- `tmp/cifi-apk/logs/verify/baseline-dumpvm.log`, `hash-ring.log`,
+  `state-ring.log`, `proc-sanitize.log`, `syscall-maps.log` - pulled logcat
+  captures (repo-local, gitignored).
 
 ## Gotchas
 
@@ -278,8 +307,8 @@ with `pairip_dump_artifacts` or the Frida probes:
 
 Call the Skill tool for:
 
-- `diagnosing-bugs` - structure the next hypothesis/test loop around the CD
-  globals and the maps-scan needle.
+- `diagnosing-bugs` - structure the next hypothesis/test loop around the
+  70-byte hash input and the stock-vs-hosted branch.
 - `android-cli` - use `android install`, device/emulator management, and log
   capture instead of raw `adb` shortcuts.
 - `research` - if stock-vs-hosted behavior needs primary-source grounding
@@ -301,8 +330,8 @@ the continuation.
   cold-launch definition, baseline commands, #57 verification, scope note.
 - [`docs/adr/README.md`](../adr/README.md) - read existing ADRs before writing
   #60.
-- [`docs/agents/issue-tracker.md`](../agents/issue-tracker.md) - issue
-  workflow.
+- [`.agents/skills/setup-matt-pocock-skills/issue-tracker-github.md`](../../.agents/skills/setup-matt-pocock-skills/issue-tracker-github.md) -
+  issue workflow.
 - Issues: #56 (umbrella), #57 (harness), #58 (startup map), #59 (matrix),
   #60 (mechanism ADR), #61 (past PairIP startup), #62 (title), #63 (three cold
   launches), #64 (regression gate). Read the issues for the authoritative

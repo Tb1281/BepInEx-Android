@@ -72,12 +72,34 @@ extern "C" __attribute__((visibility("hidden"))) void *g_pairip_syscall_original
 extern "C" __attribute__((visibility("hidden"))) void pairip_copy_patch_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_copy_patch_c(uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_copy_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_builtin_trace_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_builtin_trace_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_builtin_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_state_trace_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_state_trace_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_state_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_hash_input_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_hash_input_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_hash_input_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_hash_check_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_hash_check_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_hash_check_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_class_trace_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_class_trace_c(uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *g_pairip_class_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_name_trace_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_name_trace_c(
     const char *expected, const char *actual, size_t length);
+extern "C" __attribute__((visibility("hidden"))) void pairip_desc_trace(
+    uint32_t *out, uint64_t *ctx, uint32_t operand_pc);
+extern "C" __attribute__((visibility("hidden"))) uint32_t pairip_branch_trace(
+    uint8_t *image, uint32_t *descriptor);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_desc_original;
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_branch_original;
 
 bool InstallExecuteProgramHook();
 
@@ -269,6 +291,8 @@ bool InstallShieldHook() {
 // whole interpreter frame, which identifies the VM register that holds the
 // bad value.
 std::atomic<bool> g_trace_enabled{false};
+std::atomic<bool> g_builtin_trace{false};
+std::atomic<bool> g_reader_guard{false};
 std::atomic<uintptr_t> g_pairip_base{0};
 std::mutex g_trace_mutex;
 
@@ -278,7 +302,10 @@ std::mutex g_trace_mutex;
 // decoded opcode in w1. The state lives in executeVM's frame, so:
 //   [state+0x88] -> address of the image pointer
 //   [state+0x90] -> operand cursor (the value the klB handler treats as pc)
-//   [state-0x40] -> packed image length (low 32) and fetch cursor (high 32)
+//   [state-0x40] -> packed image length (low 32) and next pc (high 32)
+//   [state-0x68] -> fetch pc of the current instruction
+//   [state-0x60] -> raw halfword fetched at fetch pc
+//   [state-0x5c] -> decoded opcode word passed in w1
 // Only klB's image is recorded (length 0x44feb and the "IAP" magic), which
 // keeps the ring free of YTw and of other VM programs.
 constexpr uint32_t kKlBImageLength = 0x44feb;
@@ -287,7 +314,9 @@ struct VmRingEntry {
     uint32_t fetch_pc;
     uint32_t cursor;
     uint32_t opcode;
-    uint32_t reserved;
+    uint32_t raw_word;
+    uint32_t next_pc;
+    uint32_t reserved[3];
 };
 VmRingEntry g_vm_ring[kVmRingSize] = {};
 std::atomic<uint32_t> g_vm_ring_pos{0};
@@ -317,6 +346,38 @@ struct VmWriteEntry {
 };
 VmWriteEntry g_vm_write_ring[kVmWriteRingSize] = {};
 std::atomic<uint32_t> g_vm_write_pos{0};
+
+// Ring of the last builtin interpreter entries. The one-line-per-call log is
+// capped, and klB runs hundreds of builtins before the failing ZIP read, so
+// the crash call is normally past the cap. Keeping a small ring and dumping it
+// from the append hook ties the failing reader to the builtin that built it.
+constexpr size_t kBuiltinRingSize = 32;
+struct BuiltinRingEntry {
+    uint64_t arg;
+    uint64_t out;
+    uint64_t ctx;
+    uint64_t image;
+    uint64_t arg_words[6];
+    uint32_t id;
+    uint32_t pc;
+    uint32_t length;
+    uint32_t lr_offset;
+};
+BuiltinRingEntry g_builtin_ring[kBuiltinRingSize] = {};
+std::atomic<uint32_t> g_builtin_ring_pos{0};
+
+// Ring of state ids passed to the obfuscated builtin state dispatcher
+// (+0x32c6c). The state machine selects the next id from a hash check, so a
+// hosted-only data value shows up as a different id sequence.
+constexpr size_t kStateRingSize = 8192;
+struct StateRingEntry {
+    uint32_t state;
+    uint32_t selected;
+    uint32_t reader;
+    uint32_t reserved;
+};
+StateRingEntry g_state_ring[kStateRingSize] = {};
+std::atomic<uint32_t> g_state_ring_pos{0};
 
 // Ring buffer of the last raw syscalls libpairipcore issued. klB reads the
 // ZIP central directory through the same wrapper (base+0x17430), so the
@@ -447,10 +508,7 @@ extern "C" __attribute__((visibility("hidden"))) int pairip_memcmp_hook(
     const void *a, const void *b, size_t n);
 MemcmpFn g_memcmp_original = nullptr;
 
-bool InstallPairIpTrace() {
-    std::lock_guard<std::mutex> lock(g_trace_mutex);
-    if (g_pairip_append_original != nullptr) return true;
-
+bool FindPairIpBase(uintptr_t *base) {
     ModuleLookup lookup{"libpairipcore.so", 0};
     dl_iterate_phdr(FindModuleCallback, &lookup);
     if (lookup.base == 0) {
@@ -458,8 +516,14 @@ bool InstallPairIpTrace() {
         return false;
     }
     g_pairip_base.store(lookup.base);
+    if (base != nullptr) *base = lookup.base;
+    return true;
+}
 
-    auto *target = reinterpret_cast<void *>(lookup.base + 0x8d460);
+bool InstallAppendHookLocked(uintptr_t base) {
+    if (g_pairip_append_original != nullptr) return true;
+
+    auto *target = reinterpret_cast<void *>(base + 0x8d460);
     static const long page_size = sysconf(_SC_PAGESIZE);
     auto page = reinterpret_cast<uintptr_t>(target) &
                 ~static_cast<uintptr_t>(page_size - 1);
@@ -471,13 +535,22 @@ bool InstallPairIpTrace() {
     int result = DobbyHook(target, reinterpret_cast<void *>(&pairip_append_trace_entry),
                            &g_pairip_append_original);
     LOGI("trace: append hook rc=%d base=%p target=%p trampoline=%p",
-         result, reinterpret_cast<void *>(lookup.base), target,
+         result, reinterpret_cast<void *>(base), target,
          g_pairip_append_original);
-    if (result != 0 || g_pairip_append_original == nullptr) return false;
+    return result == 0 && g_pairip_append_original != nullptr;
+}
+
+bool InstallPairIpTrace() {
+    std::lock_guard<std::mutex> lock(g_trace_mutex);
+    if (g_pairip_append_original != nullptr && g_trace_enabled.load()) return true;
+
+    uintptr_t base = 0;
+    if (!FindPairIpBase(&base)) return false;
+    if (!InstallAppendHookLocked(base)) return false;
 
     // Record the klB instruction stream so the crash can be tied to the last
     // opcode that ran before the bad string view was read.
-    auto *dispatcher = reinterpret_cast<void *>(lookup.base + 0x6e918);
+    auto *dispatcher = reinterpret_cast<void *>(base + 0x6e918);
     const int dispatch_result = DobbyHook(
         dispatcher, reinterpret_cast<void *>(&pairip_dispatch_trace_entry),
         &g_pairip_dispatch_original);
@@ -485,6 +558,53 @@ bool InstallPairIpTrace() {
          dispatcher, g_pairip_dispatch_original);
     if (dispatch_result == 0 && g_pairip_dispatch_original != nullptr) {
         g_vm_trace_enabled.store(true);
+    }
+
+    // Log the builtin interpreter entry so the ZIP-view builtin can be tied
+    // to a specific id and caller.
+    if (g_pairip_builtin_original == nullptr) {
+        auto *builtin = reinterpret_cast<void *>(base + 0x31de4);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            builtin, reinterpret_cast<void *>(&pairip_builtin_trace_entry),
+            &original);
+        g_pairip_builtin_original = original;
+        LOGI("trace: builtin hook rc=%d target=%p trampoline=%p", rc, builtin,
+             original);
+        g_builtin_trace.store(rc == 0 && original != nullptr);
+    }
+
+    // Log the state-transition hash input and result. A failing check selects
+    // the fallback state; the dumped bytes name the hosted-only value.
+    if (g_pairip_hash_input_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x3dc08);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_hash_input_entry),
+            &original);
+        g_pairip_hash_input_original = original;
+        LOGI("trace: hash-input hook rc=%d target=%p trampoline=%p", rc, target,
+             original);
+    }
+    if (g_pairip_hash_check_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x3dc4c);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_hash_check_entry),
+            &original);
+        g_pairip_hash_check_original = original;
+        LOGI("trace: hash-check hook rc=%d target=%p trampoline=%p", rc, target,
+             original);
+    }
+    if (g_pairip_state_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x32c6c);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_state_trace_entry),
+            &original);
+        g_pairip_state_original = original;
+        LOGI("trace: state hook rc=%d target=%p trampoline=%p", rc, target,
+             original);
     }
 
     g_trace_enabled.store(true);
@@ -1294,6 +1414,13 @@ using ExecuteProgramFn = jobject (*)(const char *name, jobject *args,
 ExecuteProgramFn g_execute_program_original = nullptr;
 std::mutex g_execute_program_mutex;
 
+// Debug-only: skip the klB startup program instead of letting its VM read a
+// ZIP view from image literals that a hosted launch never resolves. Enabled
+// only by PairIpExperiment.skipKlb and only for the tested target.
+std::atomic<bool> g_skip_klb{false};
+
+constexpr char kKlbProgramName[] = "klB1wZSojiVvDvCN";
+
 jobject ExecuteProgramTrace(const char *name, jobject *args, uintptr_t argc) {
     const uintptr_t caller =
         reinterpret_cast<uintptr_t>(__builtin_return_address(0));
@@ -1305,6 +1432,11 @@ jobject ExecuteProgramTrace(const char *name, jobject *args, uintptr_t argc) {
             LOGI("exec-prog: arg[%zu]=%p", static_cast<size_t>(i),
                  reinterpret_cast<void *>(args[i]));
         }
+    }
+    if (g_skip_klb.load() && name != nullptr &&
+        std::strcmp(name, kKlbProgramName) == 0) {
+        LOGI("exec-prog: skipped %s (pairip_skip_klb)", name);
+        return nullptr;
     }
     if (g_execute_program_original == nullptr) return nullptr;
     return g_execute_program_original(name, args, argc);
@@ -1691,6 +1823,18 @@ extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_append_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_builtin_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_hash_input_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_hash_check_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_state_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_syscall_original = nullptr;
 
 constexpr uint32_t kInvalidSyscallSlot = 0xffffffffu;
@@ -1732,7 +1876,7 @@ uint32_t TraceSyscallEnter(long number, long a1, long a2, long a3) {
                        sizeof(entry.path) - 1);
         if (number == 56 && std::strstr(entry.path, "/proc/self/maps") !=
                                 nullptr &&
-            t_last_vm_op == 0x6d && g_klb_active.load()) {
+            g_klb_active.load()) {
             g_maps_scan_log.store(0);
             g_maps_scan_trace.store(true);
         }
@@ -1893,15 +2037,28 @@ void pairip_dispatch_trace_c(uint64_t *regs) {
         uint64_t lenpc = 0;
         uint64_t cursor_slot = 0;
         uint64_t cursor_value = 0;
+        uint64_t true_pc = 0;
+        uint32_t raw_word = 0;
+        uint32_t decoded_word = 0;
+        uint16_t fetched_insn = 0;
         SafeReadMemory(state - 0x48, &slot, sizeof(slot));
         SafeReadMemory(state - 0x40, &lenpc, sizeof(lenpc));
         SafeReadMemory(state + 0x88, &cursor_slot, sizeof(cursor_slot));
         SafeReadMemory(state + 0x90, &cursor_value, sizeof(cursor_value));
+        SafeReadMemory(state - 0x68, &true_pc, sizeof(true_pc));
+        SafeReadMemory(state - 0x60, &raw_word, sizeof(raw_word));
+        SafeReadMemory(state - 0x5c, &decoded_word, sizeof(decoded_word));
+        if (slot != 0) {
+            SafeReadMemory(static_cast<uintptr_t>(slot) +
+                               static_cast<uint32_t>(true_pc),
+                           &fetched_insn, sizeof(fetched_insn));
+        }
         LOGI("trace: dispatch[%u] state=%p slot=%016" PRIx64
              " lenpc=%016" PRIx64 " s88=%016" PRIx64 " s90=%016" PRIx64
-             " op=%#x x1=%016" PRIx64,
+             " truepc=%#x raw=%#x dec=%#x insn=%#x op=%#x x1=%016" PRIx64,
              call_index, reinterpret_cast<void *>(state), slot, lenpc,
-             cursor_slot, cursor_value,
+             cursor_slot, cursor_value, static_cast<uint32_t>(true_pc),
+             raw_word, decoded_word, fetched_insn,
              static_cast<unsigned>(regs[1] & 0xffffu), regs[1]);
     }
 
@@ -1909,12 +2066,18 @@ void pairip_dispatch_trace_c(uint64_t *regs) {
     if (!SafeReadMemory(state - 0x48, head, sizeof(head))) return;
     uint64_t image_slot = 0;
     uint32_t length = 0;
-    uint32_t fetch_pc = 0;
+    uint32_t next_pc = 0;
     uint32_t cursor = 0;
+    uint64_t fetch_pc = 0;
+    uint32_t raw_word = 0;
     std::memcpy(&image_slot, head, sizeof(image_slot));
     std::memcpy(&length, head + 0x08, sizeof(length));
-    std::memcpy(&fetch_pc, head + 0x0c, sizeof(fetch_pc));
+    std::memcpy(&next_pc, head + 0x0c, sizeof(next_pc));
     std::memcpy(&cursor, head + 0xd8, sizeof(cursor));
+    // The fetch pc, raw halfword and decoded word live just below the block
+    // that starts at state-0x48, not inside it.
+    SafeReadMemory(state - 0x68, &fetch_pc, sizeof(fetch_pc));
+    SafeReadMemory(state - 0x60, &raw_word, sizeof(raw_word));
     if (length != kKlBImageLength) return;
 
     // [state-0x48] is the image pointer itself; state+0x88 points at that slot.
@@ -1929,11 +2092,13 @@ void pairip_dispatch_trace_c(uint64_t *regs) {
 
     const uint32_t pos = g_vm_ring_pos.fetch_add(1, std::memory_order_relaxed);
     VmRingEntry &entry = g_vm_ring[pos % kVmRingSize];
-    entry.fetch_pc = fetch_pc;
+    entry.fetch_pc = static_cast<uint32_t>(fetch_pc);
     entry.cursor = cursor;
     entry.opcode = static_cast<uint32_t>(regs[1]) & 0xffffu;
-    entry.reserved = 0;
-    t_last_vm_fetch = fetch_pc;
+    entry.raw_word = raw_word;
+    entry.next_pc = next_pc;
+    std::fill(std::begin(entry.reserved), std::end(entry.reserved), 0);
+    t_last_vm_fetch = entry.fetch_pc;
     t_last_vm_op = entry.opcode;
 
     // Attribute image mutations to the instruction that produced them. The
@@ -2016,11 +2181,49 @@ void DumpSyscallRing() {
     }
 }
 
+// Dump the most recent state ids seen by the builtin state dispatcher. The
+// last ids show which state path the failing builtin took; a fallback state
+// appears as a different id than the pass path would have selected.
+void DumpStateRing() {
+    const uint32_t pos = g_state_ring_pos.load(std::memory_order_relaxed);
+    const uint32_t available = pos < kStateRingSize ? pos : kStateRingSize;
+    const uint32_t count = available < 512 ? available : 512;
+    LOGI("trace: state ring pos=%u dumping last %u", pos, count);
+    for (uint32_t i = count; i > 0; --i) {
+        const StateRingEntry &entry = g_state_ring[(pos - i) % kStateRingSize];
+        LOGI("trace: state[%u] id=%#x sel=%#x reader=%#x", pos - i, entry.state,
+             entry.selected, entry.reader);
+    }
+}
+
+// Dump the most recent builtin interpreter entries. Called with the VM ring
+// when the append hook sees the failing ZIP read, so the last entry is the
+// builtin (or builtin chain) that produced the bad reader view.
+void DumpBuiltinRing() {
+    const uint32_t pos = g_builtin_ring_pos.load(std::memory_order_relaxed);
+    const uint32_t count = pos < kBuiltinRingSize ? pos : kBuiltinRingSize;
+    LOGI("trace: builtin ring pos=%u dumping last %u", pos, count);
+    for (uint32_t i = count; i > 0; --i) {
+        const BuiltinRingEntry &entry = g_builtin_ring[(pos - i) % kBuiltinRingSize];
+        LOGI("trace: builtin[%u] id=%#x pc=%#x arg=%p out=%p img=%p len=%#x "
+             "lr=+%#x args=%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64
+             ",%016" PRIx64 ",%016" PRIx64 ",%016" PRIx64,
+             pos - i, entry.id, entry.pc, reinterpret_cast<void *>(entry.arg),
+             reinterpret_cast<void *>(entry.out),
+             reinterpret_cast<void *>(entry.image), entry.length,
+             entry.lr_offset, entry.arg_words[0], entry.arg_words[1],
+             entry.arg_words[2], entry.arg_words[3], entry.arg_words[4],
+             entry.arg_words[5]);
+    }
+}
+
 // Dump the most recent klB instructions. Called from the append hook when the
 // reader is about to read from an unmapped base, i.e. immediately before the
 // crash that the trace is meant to explain.
 void DumpVmRing() {
     DumpSyscallRing();
+    DumpBuiltinRing();
+    DumpStateRing();
     const uint32_t pos = g_vm_ring_pos.load(std::memory_order_relaxed);
     const uint32_t available = pos < kVmRingSize ? pos : kVmRingSize;
     const uint32_t count = available < kVmRingSize ? available : kVmRingSize;
@@ -2053,14 +2256,141 @@ void DumpVmRing() {
 
     for (uint32_t i = count; i > 0; --i) {
         const VmRingEntry &entry = g_vm_ring[(pos - i) % kVmRingSize];
-        LOGI("trace: vminsn[%u] fetch=%#x cursor=%#x op=%#x", pos - i,
-             entry.fetch_pc, entry.cursor, entry.opcode);
+        LOGI("trace: vminsn[%u] fetch=%#x next=%#x cursor=%#x op=%#x raw=%#x",
+             pos - i, entry.fetch_pc, entry.next_pc, entry.cursor,
+             entry.opcode, entry.raw_word);
     }
 }
 
 extern "C" __attribute__((visibility("hidden")))
-void pairip_append_trace_c(uint64_t *regs) {
+// Debug-only: log the giant builtin interpreter entry. x0 is the argument
+// block, w1 the builtin id and x2 the output slot. The argument block's +8
+// word points at the VM context, so the image length and current pc identify
+// the program without needing a stack walk.
+void pairip_builtin_trace_c(uint64_t *regs) {
+    if (regs == nullptr || !g_builtin_trace.load()) return;
+    const uintptr_t arg = static_cast<uintptr_t>(regs[0]);
+    const uint32_t id = static_cast<uint32_t>(regs[1]);
+    const uintptr_t out = static_cast<uintptr_t>(regs[2]);
+    uint64_t ctx = 0;
+    uint64_t lenslot[3] = {};
+    if (!SafeReadMemory(arg + 0x8, &ctx, sizeof(ctx)) || ctx == 0) return;
+    if (!SafeReadMemory(ctx, lenslot, sizeof(lenslot))) return;
+    const uint32_t length = static_cast<uint32_t>(lenslot[1]);
+    if (length != kKlBImageLength) return;
+
+    const uintptr_t lr = reinterpret_cast<uintptr_t>(regs[31]);
+    const uint32_t pc = static_cast<uint32_t>(lenslot[1] >> 32);
+
+    // Always keep the last entries; the text log below stops at 128 calls and
+    // would otherwise hide the builtin that runs immediately before the crash.
+    {
+        const uint32_t index =
+            g_builtin_ring_pos.fetch_add(1, std::memory_order_relaxed);
+        BuiltinRingEntry &entry = g_builtin_ring[index % kBuiltinRingSize];
+        entry.arg = arg;
+        entry.out = out;
+        entry.ctx = ctx;
+        entry.image = lenslot[0];
+        entry.id = id;
+        entry.pc = pc;
+        entry.length = length;
+        entry.lr_offset = lr >= g_pairip_base.load()
+                              ? static_cast<uint32_t>(lr - g_pairip_base.load())
+                              : 0;
+        for (size_t i = 0; i < 6; ++i) {
+            entry.arg_words[i] = 0;
+            SafeReadMemory(arg + i * 8, &entry.arg_words[i], sizeof(uint64_t));
+        }
+    }
+
+    static std::atomic<int> log_count{0};
+    if (log_count.fetch_add(1) >= 128) return;
+    LOGI("trace: builtin id=%#x arg=%p out=%p ctx=%p img=%016" PRIx64
+         " len=%#x pc=%#x lr=%p off=%#zx",
+         id, reinterpret_cast<void *>(arg), reinterpret_cast<void *>(out),
+         reinterpret_cast<void *>(ctx), lenslot[0], length,
+         static_cast<unsigned>(pc),
+         reinterpret_cast<void *>(lr),
+         lr >= g_pairip_base.load() ? lr - g_pairip_base.load() : 0);
+}
+
+extern "C" __attribute__((visibility("hidden")))
+void pairip_state_trace_c(uint64_t *regs) {
     if (regs == nullptr || !g_trace_enabled.load()) return;
+    const uint32_t index = g_state_ring_pos.fetch_add(1, std::memory_order_relaxed);
+    StateRingEntry &entry = g_state_ring[index % kStateRingSize];
+    entry.state = static_cast<uint32_t>(regs[10]);
+    entry.selected = static_cast<uint32_t>(regs[5]);
+    entry.reader = static_cast<uint32_t>(regs[9]);
+    entry.reserved = 0;
+}
+
+// Debug-only state-transition hash tracing.
+//
+// The giant klB handler performs a hash check before selecting the next state
+// id. The input site (+0x3dc08) hashes `w25` bytes at `image + w29`; the check
+// site (+0x3dc4c) compares the mixed hash against the state's expected value.
+// A mismatch selects a different state, which is how a hosted-only data value
+// can route klB into the fallback ZIP read.
+thread_local uint32_t t_hash_length = 0;
+thread_local uint32_t t_hash_offset = 0;
+thread_local uint64_t t_hash_image = 0;
+
+extern "C" __attribute__((visibility("hidden")))
+void pairip_hash_input_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+    t_hash_length = static_cast<uint32_t>(regs[25]);
+    t_hash_offset = static_cast<uint32_t>(regs[29]);
+    t_hash_image = regs[8];
+    static std::atomic<int> log_count{0};
+    if (t_hash_length == 0 || log_count.fetch_add(1) >= 48) return;
+
+    uint8_t sample[32] = {};
+    const size_t copy = t_hash_length < sizeof(sample) ? t_hash_length
+                                                       : sizeof(sample);
+    SafeReadMemory(static_cast<uintptr_t>(t_hash_image + t_hash_offset), sample,
+                   copy);
+    char hex[sizeof(sample) * 2 + 1] = {};
+    char text[sizeof(sample) + 1] = {};
+    for (size_t i = 0; i < copy; ++i) {
+        std::snprintf(hex + i * 2, 3, "%02x", sample[i]);
+        text[i] = sample[i] >= 0x20 && sample[i] <= 0x7e ? sample[i] : '.';
+    }
+    LOGI("hash: input off=%#x len=%u img=%p data=%s text=%s", t_hash_offset,
+         t_hash_length, reinterpret_cast<void *>(t_hash_image), hex, text);
+}
+
+extern "C" __attribute__((visibility("hidden")))
+void pairip_hash_check_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+    const uint64_t computed = regs[8];
+    const uint64_t expected = regs[9];
+    const bool equal = computed == expected;
+    static std::atomic<int> ok_count{0};
+    static std::atomic<int> fail_count{0};
+    if (equal && ok_count.fetch_add(1) >= 12) return;
+    if (!equal && fail_count.fetch_add(1) >= 48) return;
+
+    uint8_t sample[32] = {};
+    const size_t copy = t_hash_length < sizeof(sample) ? t_hash_length
+                                                       : sizeof(sample);
+    SafeReadMemory(static_cast<uintptr_t>(t_hash_image + t_hash_offset), sample,
+                   copy);
+    char hex[sizeof(sample) * 2 + 1] = {};
+    char text[sizeof(sample) + 1] = {};
+    for (size_t i = 0; i < copy; ++i) {
+        std::snprintf(hex + i * 2, 3, "%02x", sample[i]);
+        text[i] = sample[i] >= 0x20 && sample[i] <= 0x7e ? sample[i] : '.';
+    }
+    LOGI("hash: %s computed=%016" PRIx64 " expected=%016" PRIx64
+         " off=%#x len=%u idx=%#x data=%s text=%s",
+         equal ? "ok" : "FAIL", computed, expected, t_hash_offset, t_hash_length,
+         static_cast<uint32_t>(regs[26]), hex, text);
+}
+
+void pairip_append_trace_c(uint64_t *regs) {
+    if (regs == nullptr) return;
     static thread_local bool in_trace = false;
     if (in_trace) return;
     in_trace = true;
@@ -2074,14 +2404,52 @@ void pairip_append_trace_c(uint64_t *regs) {
 
     // The helper reads a string view from the object in x0:
     //   [0] tag/vtable, [8] cursor, [0x10] base pointer, [0x18] size.
-    // Only a bad base near a large read is interesting; logging every
-    // append call floods the trace and perturbs klB.
     uint64_t fields[4] = {};
     const bool fields_ok = SafeReadMemory(src, fields, sizeof(fields));
     uint8_t probe = 0;
     const bool base_mapped =
         fields_ok && SafeReadMemory(static_cast<uintptr_t>(fields[2]), &probe,
                                     sizeof(probe));
+
+    // Debug-only safe-failure guard. klB's ZIP probe asks this reader for a
+    // 46-byte central-directory record whose source word is still the asset's
+    // ciphertext in a hosted process. Substituting a zero-length view makes
+    // the helper take its normal overflow path (an empty string) instead of
+    // dereferencing the unmapped word. The VM then sees the record as absent;
+    // no pointer is forged and no image slot is pre-seeded.
+    if (g_reader_guard.load() && fields_ok && count == 0x2e && !base_mapped) {
+        struct GuardReader {
+            uint64_t vtable;
+            uint64_t cursor;
+            uint64_t data;
+            uint64_t size;
+        };
+        static const uint8_t kGuardZero[8] = {};
+        static thread_local GuardReader guard_reader;
+        guard_reader.vtable = fields[0];
+        guard_reader.cursor = 0;
+        guard_reader.data =
+            reinterpret_cast<uint64_t>(&kGuardZero[0]);
+        guard_reader.size = 0;
+        regs[0] = reinterpret_cast<uint64_t>(&guard_reader);
+        regs[1] = count;
+        static std::atomic<int> guard_log{0};
+        if (guard_log.fetch_add(1) < 4) {
+            LOGI("reader-guard: n=%zu src=%p data=%016" PRIx64
+                 " size=%016" PRIx64 " lr=%p off=%#zx -> empty",
+                 static_cast<size_t>(count), reinterpret_cast<void *>(src),
+                 fields[2], fields[3], reinterpret_cast<void *>(lr),
+                 lr >= base ? lr - base : 0);
+        }
+    }
+
+    if (!g_trace_enabled.load()) {
+        in_trace = false;
+        return;
+    }
+
+    // Only a bad base near a large read is interesting; logging every
+    // append call floods the trace and perturbs klB.
     const bool interesting =
         fields_ok && (count >= 0x20 || !base_mapped) && count <= 0x1000;
 
@@ -2221,6 +2589,33 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallVmDump(
         return env->NewStringUTF(error.empty() ? "install failed" : error.c_str());
     }
     return nullptr;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_bepinex_android_hooks_PairIpShield_nativeInstallSkipKlb(JNIEnv *,
+                                                                jclass) {
+    // Only the ExecuteProgram hook is needed: skipping happens inside the
+    // trampoline, so the real libpairipcore code and libunity DT_INIT stub
+    // stay unmodified.
+    if (!InstallExecuteProgramHook()) return JNI_FALSE;
+    g_skip_klb.store(true);
+    LOGI("exec-prog: klB skip enabled");
+    return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_bepinex_android_hooks_PairIpShield_nativeInstallReaderGuard(
+    JNIEnv *, jclass) {
+    // Only the reader helper is hooked; the guard fires inside the trampoline
+    // for a 46-byte read whose source word is still ciphertext, so no PairIP
+    // code or image byte is modified.
+    std::lock_guard<std::mutex> lock(g_trace_mutex);
+    uintptr_t base = 0;
+    if (!FindPairIpBase(&base)) return JNI_FALSE;
+    if (!InstallAppendHookLocked(base)) return JNI_FALSE;
+    g_reader_guard.store(true);
+    LOGI("reader-guard: enabled");
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT void JNICALL
