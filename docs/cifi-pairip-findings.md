@@ -327,9 +327,11 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
 3. Falsified (apk-zero-map, 2026-10-27): the offset-0 game `base.apk`
    mapping is present and visible to the VM, but the reader slots and crash
    are unchanged. The missing mapping is not the gate.
-4. Falsified (apk-cd-map, 2026-10-27): a real `r--s 074f5000` line inside the
-   146,432-byte maps scan changes nothing either. The maps-window branch is
-   closed; do not run further maps/procfs experiments.
+4. Falsified (apk-cd-map, 2026-10-27): a real `r--s 074f5000` base-APK line
+   inside the 146,432-byte maps scan changes nothing. Refined 2026-10-28: the
+   split-APK `r--s 06627000` line is a distinct variable associated with the
+   libunity argument and is pre-registered below; do not run other maps/procfs
+   experiments.
 5. Ruled out by the fnv-input result: reproducing stock maps/status content
    for the hash input.
 6. Decode the `0x31` builtin semantics and the `0x40a73` operand block. The
@@ -2355,4 +2357,52 @@ The producer hypothesis is **FALSIFIED**.
   remaining live target is the caller frame at `+0x6adb4`
   (`sp+0x44` id, `sp+0x74` out, `sp+0x78` operand block) and the
   `0x40a73` instruction, or the stock-only branch that avoids the
-  reader. Do not repeat this run. No new probe is pre-registered yet.
+  reader. Do not repeat this run. The `split-cd-map` probe is
+  pre-registered below.
+
+### Maps-window refinement (2026-10-28)
+
+The 2026-10-27 `apk-cd-map` result closed the **base-APK** `r--s
+074f5000` line inside the scanned prefix. It did not test the **arm64
+split APK's** `r--s 06627000` line. That distinction matters because the
+VM's `Long` argument resolves to the split APK's libunity base
+(`split_config.arm64_v8a.apk + 0x4eec000`), not to the base APK. The
+split CD line starts at byte 368,362, still outside the VM's 146,432-byte
+read window. The base-APK falsification therefore does not cover the
+split path, and the `split-cd-map` run below is not a repeat of
+`apk-cd-map`. If it is negative, the maps-window branch is closed for
+both APK paths.
+
+## Pre-registered experiment (2026-10-28, split-cd-map)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The next step is one diagnostic run against the frozen baseline
+(`pairip_preload=true`, `pairip_trace=true`, `pairip_dump_vm=true`, debug
+launcher) plus `pairip_split_cd_map=true`. It maps the installed arm64
+split APK's real central directory at the low hint `0x7900000000` before
+`libmain.so` runs, so an `r--s 06627000` line for
+`split_config.arm64_v8a.apk` falls inside the VM's maps read window.
+
+- Hypothesis: the VM's maps parser uses the split-APK CD mapping (the
+  path that backs the libunity argument) to initialize the reader slots.
+  The hosted run misses it because the real line starts at byte 368,362,
+  outside the 146,432-byte window.
+- Delta from `apk-cd-map`: that run mapped the base APK's CD at file
+  offset `0x74f5000`; this run maps the split APK's CD at file offset
+  `0x6627000`. The mapped path, file offset, and argument association
+  differ; the low hint and the single-variable baseline are the same.
+- Prediction: `split-cd-map: base=0x7900000000 size=4096
+  hint=0x7900000000 fixed=1 offset=0x6627000 eocd=0x662730a`, with the
+  matching `r--s 06627000 ... split_config.arm64_v8a.apk` line inside
+  the first 146,432 bytes. A change in the five globals, the
+  `bbb9eb6daed20ed0`/`015370f87525d57b` reader slots, the reader-source
+  `off_data`/`off_size`, or the crash signature is a positive result.
+- Falsification: the line is inside the prefix, but the five globals,
+  reader slots, reader-source offsets, state/builtin tails, crash
+  signature, and image diff are byte-identical to baseline. Then the
+  split-APK CD line is not the gate, and the maps-window branch is
+  closed for both APK paths.
+- Invalid: mapping error, missing or out-of-prefix line, or an unrelated
+  perturbation. The low mapping is diagnostic only and must not ship.
+- Status: pre-registered; run pending.

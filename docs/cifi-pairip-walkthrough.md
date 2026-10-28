@@ -2872,3 +2872,64 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-builtin-operand.lo
   instruction statically, or identify the stock-only branch that avoids
   the reader; do not repeat this run. Findings updated: yes, in the same
   commit as this entry.
+
+## Planned run: split-cd-map
+
+- Run key: `variant=split-cd-map`, debug `assembleDebug` APK, frozen
+  diagnostic baseline (`pairip_preload=true`, `pairip_trace=true`,
+  `pairip_dump_vm=true`) plus one new switch,
+  `pairip_split_cd_map=true`. The handler/builtin/reader observations
+  compiled in the baseline are unchanged.
+- Idempotency check: searched both docs for `split-cd-map`; absent. The
+  earlier `apk-cd-map` run mapped the **base** APK's CD at file offset
+  `0x74f5000`; this run maps the **arm64 split** APK's CD at file offset
+  `0x6627000`. The VM's `Long` argument resolves to the split APK's
+  libunity base, so the base-APK line did not test the path associated
+  with that argument. The split line has never been inside the scanned
+  window, so this is not a repeat.
+- Ruled-out check: the maps/content/identity branch was closed for the
+  base-APK `r--s 074f5000` line and for maps content, uid/gid, process
+  name, and offset-0 mappings. None of those runs placed the split-APK
+  `r--s 06627000` line inside the 146,432-byte scan. This run changes
+  only that line's position, not the APK bytes, identity, or uid.
+- Hypothesis: the VM's maps parser uses the split-APK CD mapping (the
+  path that backs the libunity argument) to initialize the reader slots;
+  the hosted run misses it because the real line starts at byte 368,362,
+  outside the 146,432-byte read window.
+- Prediction: the log contains `split-cd-map: base=0x7900000000
+  size=4096 hint=0x7900000000 fixed=1 offset=0x6627000
+  eocd=0x662730a`, and the VM's maps dump contains an
+  `r--s 06627000 ... split_config.arm64_v8a.apk` line inside the first
+  146,432 bytes. A change in the five globals, the
+  `bbb9eb6daed20ed0`/`015370f87525d57b` reader slots, the reader-source
+  `off_data`/`off_size`, or the crash signature is a positive result.
+- Falsification: the split line is inside the prefix, but the five
+  globals, reader slots, reader-source offsets, state/builtin tails,
+  crash signature, and image diff are byte-identical to baseline. Then
+  the split-APK CD line is not the gate, and the maps-window branch is
+  closed for both APK paths.
+- Invalid: mapping error, missing or out-of-prefix line, or an unrelated
+  perturbation. The low mapping is diagnostic only and must not ship.
+- Starting state: branch `test/feat-cifi` at the code commit for this
+  probe, tree clean; installed launcher APK will be the new
+  `assembleDebug` build; game APK untouched.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --ez pairip_split_cd_map true \
+  --es pairip_variant split-cd-map
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/split-cd-map.log
+```
+
+- Log / artifact: `tmp/cifi-apk/logs/verify/split-cd-map.log`;
+  crash image (if any) `tmp/cifi-apk/images/split-cd-map-image.bin`.
+- Status: run; verdict below.
