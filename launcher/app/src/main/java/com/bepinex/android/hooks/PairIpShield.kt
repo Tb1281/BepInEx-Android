@@ -207,6 +207,22 @@ object PairIpShield {
     }
 
     /**
+     * Debug-only: map the installed arm64 split APK's real central directory
+     * (`PK\x01\x02`) at the low hint used by the CD diagnostics. The VM
+     * receives libunity's base from the split APK, and its maps reader
+     * consumes only the first 146,432 bytes, while the real
+     * `r--s 06627000` line starts at byte 368,362. This duplicate puts the
+     * split-APK CD line inside the scanned prefix without modifying the APK.
+     * Must be called before `libmain.so` starts klB.
+     *
+     * @return null on success, or a diagnostic message.
+     */
+    fun installSplitCdMap(apkPath: String): String? {
+        ensureLoaded()
+        return nativeInstallSplitCdMap(apkPath)
+    }
+
+    /**
      * Debug-only: writes the writable VM image that `executeVM` builds for klB
      * to `klB-image.bin` under [directory], before the interpreter starts.
      * Diffing it against the APK asset shows which bytes the loader decrypts
@@ -270,6 +286,7 @@ object PairIpShield {
     private external fun nativeInstallFakeCentralDirectory(apkPath: String): String?
     private external fun nativeInstallApkZeroMap(apkPath: String): String?
     private external fun nativeInstallApkCdMap(apkPath: String): String?
+    private external fun nativeInstallSplitCdMap(apkPath: String): String?
     private external fun nativeInstallVmDump(directory: String): String?
     private external fun nativeInstallSkipKlb(): Boolean
     private external fun nativeInstallReaderGuard(): Boolean

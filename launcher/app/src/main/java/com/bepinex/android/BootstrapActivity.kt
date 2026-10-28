@@ -921,6 +921,31 @@ class BootstrapActivity : Activity() {
             }
         }
 
+        if (PairIpExperiment.splitCdMap) {
+            // Debug-only: the VM receives libunity's base from the split APK,
+            // but the real split-APK CD mapping sits at byte 368,362 of
+            // /proc/self/maps, past the VM's 143 KB read window. Duplicate
+            // that exact range at the low hint before libmain runs so its
+            // `r--s 06627000` line is scanned early.
+            val splitPath = gameContext.applicationInfo.splitSourceDirs
+                ?.firstOrNull { it.contains("arm64") && it.endsWith(".apk") }
+            if (splitPath == null) {
+                BepInExLog.e("PairIP split CD map: no arm64 split APK in splitSourceDirs")
+            } else {
+                val error = try {
+                    PairIpShield.installSplitCdMap(splitPath)
+                } catch (t: Throwable) {
+                    BepInExLog.e("PairIP split CD map: install threw", t)
+                    t.message ?: "install threw"
+                }
+                if (error == null) {
+                    BepInExLog.i("PairIP split CD map: installed from $splitPath")
+                } else {
+                    BepInExLog.e("PairIP split CD map: $error")
+                }
+            }
+        }
+
         if (PairIpExperiment.skipKlb) {
             // Debug-only: neutralize libunity's DT_INIT klB program. The hook
             // must be installed after YTw (a code hook before it trips PairIP's

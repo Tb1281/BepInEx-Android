@@ -630,6 +630,18 @@ constexpr off_t kBaseApkCdOffset = 0x74f5000;
 constexpr size_t kBaseApkCdMapSize = 0x13000;
 constexpr size_t kBaseApkCdEocdOffset = 0x1281c;
 
+// Debug-only low mapping of the arm64 split APK's real central directory.
+// The VM receives libunity's base from the split APK, and its maps reader
+// consumes only the first 146,432 bytes; the real split CD line
+// (`r--s 06627000`) sits past 368 KB. This duplicate makes the split line
+// visible early without touching either APK.
+std::mutex g_split_cd_map_mutex;
+void *g_split_cd_map = nullptr;
+size_t g_split_cd_map_size = 0;
+constexpr off_t kSplitApkCdOffset = 0x6627000;
+constexpr size_t kSplitApkCdMapSize = 0x1000;
+constexpr size_t kSplitApkCdEocdOffset = 0x30a;
+
 // Debug-only post-copy image dump. executeVM copies the Java byte[] into a
 // malloc'd buffer at +0x6a9c8 and only then starts decoding it. Comparing that
 // buffer with the APK asset shows every decryption/relocation the loader
@@ -1499,6 +1511,71 @@ bool InstallApkCdMap(const char *apk_path, std::string *error) {
          apk_path);
     if (!LogMapRange(reinterpret_cast<uintptr_t>(map), "apk-cd-map")) {
         LOGI("apk-cd-map: range not found in /proc/self/maps");
+    }
+    return true;
+}
+
+// Debug-only: maps the installed arm64 split APK's real central directory at
+// a low address. The VM's maps reader consumes only the first 146,432 bytes;
+// the real `r--s 06627000` line starts at byte 368,362. This duplicate puts
+// the split-APK CD line inside the scanned prefix without touching the APK.
+bool InstallSplitCdMap(const char *apk_path, std::string *error) {
+    std::lock_guard<std::mutex> lock(g_split_cd_map_mutex);
+    if (g_split_cd_map != nullptr) return true;
+
+    const int fd = open(apk_path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        *error = "open failed";
+        return false;
+    }
+    struct stat status {};
+    if (fstat(fd, &status) != 0 || status.st_size <= 0) {
+        close(fd);
+        *error = "stat failed";
+        return false;
+    }
+    const size_t file_size = static_cast<size_t>(status.st_size);
+    const size_t required =
+        static_cast<size_t>(kSplitApkCdOffset) + kSplitApkCdEocdOffset + 22;
+    if (file_size < required) {
+        close(fd);
+        *error = "split APK too small for the expected central directory";
+        return false;
+    }
+
+    constexpr uintptr_t kHint = 0x7900000000ULL;
+    void *map = mmap(reinterpret_cast<void *>(kHint), kSplitApkCdMapSize,
+                     PROT_READ, MAP_SHARED | MAP_FIXED_NOREPLACE, fd,
+                     kSplitApkCdOffset);
+    const int map_errno = errno;
+    close(fd);
+    if (map == MAP_FAILED) {
+        *error = "mmap failed: " + std::to_string(map_errno);
+        return false;
+    }
+
+    const auto *bytes = static_cast<const uint8_t *>(map);
+    if (std::memcmp(bytes, "PK\x01\x02", 4) != 0) {
+        munmap(map, kSplitApkCdMapSize);
+        *error = "central directory signature mismatch";
+        return false;
+    }
+    if (std::memcmp(bytes + kSplitApkCdEocdOffset, "PK\x05\x06", 4) != 0) {
+        munmap(map, kSplitApkCdMapSize);
+        *error = "end-of-central-directory signature mismatch";
+        return false;
+    }
+
+    g_split_cd_map = map;
+    g_split_cd_map_size = kSplitApkCdMapSize;
+    LOGI("split-cd-map: base=%p size=%zu hint=%p fixed=1 offset=%#lx "
+         "eocd=%#lx path=%s",
+         map, kSplitApkCdMapSize, reinterpret_cast<void *>(kHint),
+         static_cast<unsigned long>(kSplitApkCdOffset),
+         static_cast<unsigned long>(kSplitApkCdOffset + kSplitApkCdEocdOffset),
+         apk_path);
+    if (!LogMapRange(reinterpret_cast<uintptr_t>(map), "split-cd-map")) {
+        LOGI("split-cd-map: range not found in /proc/self/maps");
     }
     return true;
 }
@@ -4110,6 +4187,17 @@ Java_com_bepinex_android_hooks_PairIpShield_nativeInstallApkCdMap(
     const std::string path = JStringToUtf8(env, apk_path);
     std::string error;
     if (!InstallApkCdMap(path.c_str(), &error)) {
+        return env->NewStringUTF(error.empty() ? "install failed" : error.c_str());
+    }
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_bepinex_android_hooks_PairIpShield_nativeInstallSplitCdMap(
+    JNIEnv *env, jclass, jstring apk_path) {
+    const std::string path = JStringToUtf8(env, apk_path);
+    std::string error;
+    if (!InstallSplitCdMap(path.c_str(), &error)) {
         return env->NewStringUTF(error.empty() ? "install failed" : error.c_str());
     }
     return nullptr;

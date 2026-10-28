@@ -53,6 +53,7 @@ object PairIpExperiment {
     const val EXTRA_READER_GUARD = "pairip_reader_guard"
     const val EXTRA_APK_ZERO_MAP = "pairip_apk_zero_map"
     const val EXTRA_APK_CD_MAP = "pairip_apk_cd_map"
+    const val EXTRA_SPLIT_CD_MAP = "pairip_split_cd_map"
     const val EXTRA_ALLOW_NONDEBUG = "pairip_allow_nondebug_experiments"
 
     /**
@@ -339,6 +340,18 @@ object PairIpExperiment {
     @Volatile
     var apkCdMap: Boolean = false
 
+    /**
+     * Debug-only: map the installed arm64 split APK's real central directory
+     * at a low address before `libmain.so` runs. The VM receives libunity's
+     * base from the split APK, but its maps reader consumes only a 143 KB
+     * prefix, while the real `r--s 06627000` line starts past 368 KB; this
+     * duplicate puts the split-APK CD line inside the scanned prefix. Used
+     * only to test the maps-window hypothesis; never enable this in
+     * production.
+     */
+    @Volatile
+    var splitCdMap: Boolean = false
+
     fun configure(context: Context, intent: Intent) {
         val debuggable =
             context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
@@ -396,6 +409,7 @@ object PairIpExperiment {
         readerGuard = extras.getBoolean(EXTRA_READER_GUARD, readerGuard)
         apkZeroMap = extras.getBoolean(EXTRA_APK_ZERO_MAP, apkZeroMap)
         apkCdMap = extras.getBoolean(EXTRA_APK_CD_MAP, apkCdMap)
+        splitCdMap = extras.getBoolean(EXTRA_SPLIT_CD_MAP, splitCdMap)
     }
 
     fun describe(): String = buildString {
@@ -435,5 +449,6 @@ object PairIpExperiment {
         append(" readerGuard=").append(readerGuard)
         append(" apkZeroMap=").append(apkZeroMap)
         append(" apkCdMap=").append(apkCdMap)
+        append(" splitCdMap=").append(splitCdMap)
     }
 }
