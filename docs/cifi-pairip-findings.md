@@ -2232,3 +2232,43 @@ Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
   caller frame at `[sp+0xb0]`/`[sp+0xb8]`; `x9` is dead and is the
   tail-branch scratch, so the relocated `str` keeps `x8`.
 - Status: pre-registered; no run yet.
+
+## nested-register-natives result (2026-10-28 10:23)
+
+The hook installed but never fired; the registration question is
+**ANSWERED statically**, so the run is not repeated.
+
+- Run log: `tmp/cifi-apk/logs/verify/nested-register-natives.log`, 7,287
+  lines, sha256
+  `46f85919e86bbc751dad90b5b02d56008d11777ca3e65d1fdf7282b8eb57a9cc`.
+  One cold launch (pid 23752, `Status: ok`, `LaunchState: COLD`,
+  `TotalTime: 282`); installed APK sha256 `807ea87a...`; game untouched.
+- Miss: `trace: register-native hook rc=0 target=0x7a974971f4` at
+  10:23:31.655, but no `register:` line. `+0x8b1f0` is inside `JNI_OnLoad`
+  (`0x89c84`, size `6228 = 0x1854`), which runs during
+  `System.loadLibrary("pairipcore")` at 10:23:31.426 (in `VMRunner`'s
+  static initializer), 229 ms before the hook was installed by the
+  post-factory trace setup. The hook site was correct; the timing was not.
+- Registration, decoded from the `JNI_OnLoad` store sequence at
+  `+0x8b0a4..+0x8b1f4`:
+  - class: `com.pairip.VMRunner`
+  - name: `executeVM` (9 bytes; libc++ short tag `0x12`)
+  - signature: `([B[Ljava/lang/Object;)Ljava/lang/Object;` (41 bytes)
+  - `fnPtr`: `libpairipcore.so+0x6a968` (`executeVM_inner`)
+- Cross-check: `VMRunner.java:23` declares
+  `public static native Object executeVM(byte[] vmCode, Object[] args);`
+  and line 26 loads `pairipcore`. `VMRunner.invoke:57` calls it with
+  `getVmByteCode` -> `readByteCode` (base-APK asset
+  `assets/klB1wZSojiVvDvCN`) and `VmDecryptor.decrypt`, which returns the
+  input untouched. The Java-side VM entry and byte-array source are
+  therefore fully identified.
+- Invariants: handler target `0x4d94`, `w21_before=0xa0d82eed`,
+  `saved_lr=0x7b51488274`, crash and reader fallback unchanged. Image
+  `nested-register-natives-image.bin`, 282,603 bytes, sha256
+  `b52070a08f8b2eb66d478158b59cef2b1f2350ab69faeda845e1268a5626010c`;
+  53 bytes differ from the vtable image; five globals and reader slots are
+  identical.
+- Verdict: hook INCONCLUSIVE; JNI registration CONFIRMED. Do not run
+  `early-register-natives`. The remaining live question is the missing CD
+  string view (`[state+0x20]` null; `+0x834dc`/`+0x834f0` setter unvisited;
+  fallback to `image+0x3f874`/`0x1ba5c`).

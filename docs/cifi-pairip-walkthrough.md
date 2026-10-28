@@ -2689,3 +2689,61 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-register-natives.l
   keeps its `x8` value. This is the same observation, with the site moved
   to the first instruction where the stored value exists.
 - Status: pre-registered; no run yet.
+
+## nested-register-natives result (2026-10-28 10:23)
+
+The registration hook did not fire; the run is **INCONCLUSIVE** as
+instrumentation, but the underlying question is **ANSWERED statically**, so
+the probe must not be repeated.
+
+- Run: one cold launch (pid 23752); both packages force-stopped and logcat
+  cleared first. `am start -W` printed `Status: ok`, `LaunchState: COLD`,
+  `TotalTime: 282`, `WaitTime: 287`. Installed launcher APK sha256
+  `807ea87acfe30bda182eb4d6f9576a21c26cd40662b545db7e575aaa2af6936e`
+  (`versionCode=1`, `lastUpdateTime=2026-10-28 10:23:14`); game APK
+  untouched.
+- Hook: `trace: register-native hook rc=0 target=0x7a974971f4
+  trampoline=0x7e1e46d354` at 10:23:31.655, and no `register:` event in the
+  log.
+- Timeline: libpairipshield active 10:23:31.417; `libpairipcore.so` loaded
+  10:23:31.426 and `VMRunner` executed `YTw4BW9dg3brGdIP` 10:23:31.426-.503;
+  trace hooks installed 10:23:31.650-.655; klB `exec-prog` 10:23:31.832;
+  `0x7e` handler 10:23:33.139; crash 10:23:33.174.
+- Cause: `+0x8b1f0` is inside `JNI_OnLoad` (ELF symbol address `0x89c84`,
+  size `6228 = 0x1854`), whose `RegisterNatives` call runs synchronously
+  during `System.loadLibrary("pairipcore")` in `VMRunner`'s static
+  initializer at 10:23:31.426, 229 ms before the hook existed. This is a
+  timing miss, not a different native-entry path.
+- Static decode of the registration (mechanical emulation of the `mov`/
+  `strb` sequence in the disassembly): the name buffer at
+  `0x8b0a4..0x8b0f8` is `executeVM` (9 bytes, libc++ short-string tag
+  `0x12 = 2*9`); the signature buffer at `0x8adcc..0x8aec8` is
+  `([B[Ljava/lang/Object;)Ljava/lang/Object;` (41 bytes); the `fnPtr` is
+  `base+0x6a968`.
+- Java match: `tmp/cifi-apk/jadx/sources/com/pairip/VMRunner.java:23`
+  declares `public static native Object executeVM(byte[] vmCode,
+  Object[] args);` and line 26 is `System.loadLibrary("pairipcore")`. The
+  caller is `VMRunner.invoke` line 57; the array comes from
+  `getVmByteCode` -> `readByteCode`, which reads
+  `assets/klB1wZSojiVvDvCN` from the base APK, and `VmDecryptor.decrypt`
+  returns its argument unchanged.
+- Invariants: the handler/vtable/pre-xor/post-xor lines are byte-identical
+  to the `vtable` run (`target=0x4d94`, `w21_before=0xa0d82eed`,
+  `saved_lr=0x7b51488274`); the crash is unchanged signal 11 in
+  `__memmove_aarch64_nt+140` at 10:23:33.174. Image
+  `nested-register-natives-image.bin`, 282,603 bytes, sha256
+  `b52070a08f8b2eb66d478158b59cef2b1f2350ab69faeda845e1268a5626010c`;
+  53 bytes differ from the vtable image, while the five globals and both
+  reader slots are identical.
+- Log: `tmp/cifi-apk/logs/verify/nested-register-natives.log`, 7,287
+  lines, sha256
+  `46f85919e86bbc751dad90b5b02d56008d11777ca3e65d1fdf7282b8eb57a9cc`.
+- Verdict: hook **INCONCLUSIVE** (never fired); registration
+  **CONFIRMED** as `com.pairip.VMRunner.executeVM([B[Ljava/lang/Object;)
+  Ljava/lang/Object;` -> `libpairipcore.so+0x6a968`. An
+  `early-register-natives` run is not justified: no discriminator remains.
+- Next: the registration line is closed. The live target is still the
+  missing CD string-view source: `[state+0x20]` is null, the
+  `+0x834dc`/`+0x834f0` setter is unvisited, and the handler falls back to
+  the image-backed view at `image+0x3f874`/`0x1ba5c`.
+- Findings updated: yes, in the same commit as this entry.
