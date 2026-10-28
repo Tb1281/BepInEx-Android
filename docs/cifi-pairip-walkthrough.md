@@ -2555,3 +2555,129 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-start-caller-vtabl
 - Log / artifact: `tmp/cifi-apk/logs/verify/nested-start-caller-vtable.log`;
   crash image expected under `tmp/cifi-apk/images/`.
 - Status: pre-registered; no run yet.
+
+## Verdict: nested-start-caller-vtable (2026-10-28 10:16)
+
+- Run key: `variant=nested-start-caller-vtable`, code commit `a94afb9`,
+  debug `assembleDebug` APK; APK sha256
+  `ac20d71c3e32ae7e2883797601eab887fe1cb00c819a0bc04b3d1315a555b155`,
+  installed 10:16:31 (`versionCode=1`), installed hash verified. Game APK
+  untouched.
+- Idempotency check: no prior verdict for `nested-start-caller-vtable`; the
+  `pc22727` and `nested-start-caller` runs are cited, not repeated. This run
+  adds only the vtable/frame observation.
+- Hypothesis: the nested program is started through `[state+8]`'s vtable
+  `+0x720` at `+0x83478`; the target is either `executeVM_inner` (`+0x6a968`)
+  or an external JNI/libart entry, and the zero-hit scan is explained by
+  which one.
+- Starting state: branch `test/feat-cifi` at `a94afb9`, tree clean; both
+  packages force-stopped, `pidof` empty, logcat cleared. Variant line:
+  `variant=nested-start-caller-vtable`, `preload=true`, `trace=true`,
+  `dumpVmImage=true`, `stackSpoof=true`, `contextSeed=true`, `hiddenApi=true`,
+  `lateHooks=true`, `delayMs=0`; every other switch false.
+- Launch: `Status: ok`, `LaunchState: UNKNOWN (0)`, `WaitTime: 3011` ms.
+  The device-reported launch state differed from the earlier `COLD` label,
+  but the process was cold by construction: both packages were force-stopped,
+  `pidof` returned empty, and logcat was cleared before the start. One cold
+  launch (pid 19609). Recorded here rather than dropped.
+- Command: identical to the pre-registered command above.
+- Observed (10:16:57.579):
+
+```text
+nested: vtable state=0x7ff9372bd0 obj=0xb400007bb465c2d0 obj_in=0 obj_off=0 obj_map=[anon:scudo:primary]+0x72d0 vt=0x7b51e19598 vt_in=0 vt_off=0 vt_map=libart.so+0x19598 fn=0x7b518533b0 fn_in=0 fn_off=0 fn_map=libart.so+0x1013b0 fn_is_vm=0
+trace: nested-stack id=0x40b0000c pc=0x22727 lr=+0x6adc4 x29=0x5ddd74f5 sp=0x7ff9372b30 base=0x7a90c9c000 guard=2b707bf3bdd783df saved_fp=0000007ff9372e50 saved_lr=0000007b51488274 saved_lr_in=0 saved_lr_off=0
+trace: nested-stack[566] +0x6b90c
+trace: nested-stack hits=1 tagged=0 window=2048
+```
+
+- JNI identification (static, NDK `jni.h` table indexes): `[state+8]` is a
+  `JNIEnv`, not a C++ VM object. `[obj]` is libart's
+  `JNINativeInterface` table; `[table+0x720]` is index 228
+  `ExceptionCheck`, and the handler tail tests its `jboolean` return with
+  `tst w0, #0xff` at `+0x83488`. The next call at `+0x83490` uses
+  `[table+0x78]` = index 15 `ExceptionOccurred`. `+0x83478` is therefore the
+  handler's JNI exception check, not a nested-VM entry.
+- Native entry: `+0x8b1f0` stores `adr x8, 0x6a968` into a
+  `JNINativeMethod.fnPtr` slot and calls `[x20]+0x6b8` = index 215
+  `RegisterNatives`. `executeVM_inner` is a native method. Its prologue
+  reads the third JNI argument: `+0x6a9b4` calls `[env]+0x558` = index 171
+  `GetArrayLength`, allocates that length, `memset`s it, and `+0x6a9f8`
+  calls `[env]+0x640` = index 200 `GetByteArrayRegion` into the buffer.
+  The native input is a Java byte array of the VM image length
+  (`0x44feb`); the native call reaches `executeVM_inner` from outside
+  libpairipcore, which is why the 256-word scan saw no libpairipcore caller.
+- Frame evidence: the dumped guard at `sp+0x1b8` (`0x2b707bf3bdd783df`)
+  matches the guard read through `sp+0x1b8`, and all 64 words are readable,
+  so `sp` is executeVM's frame base. The saved-LR slot `sp+0x1c8` is
+  `0x7b51488274`, outside `[0x7a90c9c000, 0x7a90d2c000)`; the only
+  module-range word in `0x4000` is `+0x6b90c` at index 566, a deeper
+  executeVM return address, not the caller.
+- Handler/pre-xor/post-xor and the reader-source line are unchanged
+  (`0x4d94`, `w21_before=0xa0d82eed`); the crash remains signal 11 in
+  `__memmove_aarch64_nt+140` at 10:16:57.605, exit at 10:16:57.644.
+- Image: `nested-start-caller-vtable-image.bin`, 282,603 bytes, sha256
+  `581ca63f7b6a2d93580a2b0a31a164331a83902796d110b00549aae55351bf73`;
+  53 bytes differ from the `pc22727` image; five final globals and pristine
+  reader slots as before.
+- Log: `tmp/cifi-apk/logs/verify/nested-start-caller-vtable.log`, 7,571
+  lines, sha256
+  `212f5cee8ab5b4418ce94fe6035818ec1bf62650cd5035634ea61a9ea9746123`.
+- Verdict: vtable-caller hypothesis **RULED OUT**; the JNI-native entry is
+  **CONFIRMED**. `+0x83478` is `ExceptionCheck`; `executeVM_inner` is
+  registered with `RegisterNatives` and called from art with a Java
+  `byte[]` input.
+- Next: identify the registered native method (name, signature, class) and
+  then the Java caller that supplies the byte array.
+- Findings updated: yes, in the same commit as this entry.
+
+## Planned run: nested-register-natives
+
+- Run key: `variant=nested-register-natives`, debug `assembleDebug` APK,
+  frozen diagnostic baseline plus the existing handler/builtin observations
+  and one new observation-only hook at `+0x8b1f0`.
+- Idempotency check: searched both docs for `nested-register-natives`;
+  absent. The `+0x8b1f0` site has no prior run key; the `vtable` run is cited
+  for the JNI identification and is not repeated.
+- Hypothesis: `+0x8b1f0` registers `executeVM_inner` as a native method whose
+  name and signature identify the Java-side VM entry and the
+  `byte[]`-valued input argument. The registered name/signature will let the
+  Java caller and its array source be located statically.
+- Falsification: the JNINativeMethod strings are unreadable, the call is not
+  `RegisterNatives`, or the signature does not take a `byte[]`; then the
+  native entry is reached through a different JNI registration and the
+  observed name/signature becomes the new lead.
+- One change from the previous run: add a full-register shim on the
+  `adr x8, 0x6a968` at `+0x8b1f0` (the relocated `adr` runs in the
+  trampoline, so `x8` is safe as scratch). The callback logs `env` (x20),
+  `jclass` (x1), `methods` (x2), `nMethods` (w3), and the
+  `JNINativeMethod` fields `name`, `signature`, `fnPtr` at `[x2]`,
+  `[x2+8]`, `[x2+16]`, clearing the low tag bit when present, plus
+  `fnPtr`'s module and mapping offset. Nothing is written to the saved
+  register file. The handler, builtin, reader, and baseline extras are
+  unchanged.
+- Expected discriminator: `register: env=... class=... n=1 name=<method>
+  sig=<signature> fn=+0x6a968 fn_map=libpairipcore.so+...`. A `[B`-bearing
+  signature confirms the byte-array native input; then search the game dex
+  for the declaring class and its caller. If the name is `RegisterNatives`
+  for a different class or `n != 1`, follow that class instead.
+- Starting state: branch `test/feat-cifi` at the docs commit for this
+  pre-registration, tree clean; installed APK remains `ac20d71c...` until
+  the new hook is rebuilt; game APK untouched.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant nested-register-natives
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-register-natives.log
+```
+
+- Log / artifact: `tmp/cifi-apk/logs/verify/nested-register-natives.log`.
+- Status: pre-registered; no run yet.

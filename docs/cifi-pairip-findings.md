@@ -2160,3 +2160,70 @@ Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
   branch and marks the earlier zero-hit scan as defective. Handler values
   and crash signature must stay unchanged.
 - Status: pre-registered; no run yet.
+
+## nested-start-caller-vtable result (2026-10-28 10:16)
+
+The vtable-caller hypothesis is **RULED OUT**; the nested execution is a JNI
+native-method entry, **CONFIRMED**.
+
+- Run log: `tmp/cifi-apk/logs/verify/nested-start-caller-vtable.log`, 7,571
+  lines, sha256
+  `212f5cee8ab5b4418ce94fe6035818ec1bf62650cd5035634ea61a9ea9746123`.
+  One cold launch (pid 19609); installed APK sha256
+  `ac20d71c3e32ae7e2883797601eab887fe1cb00c819a0bc04b3d1315a555b155`;
+  game APK untouched. `am start -W` printed `Status: ok`,
+  `LaunchState: UNKNOWN (0)`, `WaitTime: 3011`; the process was cold by
+  construction (both packages force-stopped, `pidof` empty, logcat cleared).
+- Handler object: `[state+8]` = `0xb400007bb465c2d0`, a scudo heap object
+  whose `[obj]` is `0x7b51e19598` (libart mapping). `[0x7b51e19598+0x720]` =
+  `0x7b518533b0` (libart mapping), not `+0x6a968`.
+- JNI identification: with the NDK `jni.h` table layout, index
+  `0x720/8 = 228` is `ExceptionCheck`; the handler tests its return with
+  `tst w0, #0xff` at `+0x83488`, and the next call at `+0x83490` reads index
+  `0x78/8 = 15` = `ExceptionOccurred`. `+0x83478` is the handler's JNI
+  exception check. It does not start the nested program.
+- Native entry: `+0x8b1f0` does `adr x8, 0x6a968`, stores it in a
+  `JNINativeMethod.fnPtr` slot, then calls `[x20]+0x6b8` = index 215
+  `RegisterNatives`. `executeVM_inner` is registered as a native method.
+  Inside it, `+0x6a9b4` calls index 171 `GetArrayLength(env, x2)`,
+  `+0x6a9c8` allocates that length, `+0x6a9dc` `memset`s it, and `+0x6a9f8`
+  calls index 200 `GetByteArrayRegion(env, array, 0, length, buffer)`. The
+  native input is a Java byte array (the VM image length `0x44feb`).
+- Stack confirmation: `guard` read at `sp+0x1b8` matches the raw word at
+  that frame slot; 64/64 words are readable, so `sp` is executeVM's frame
+  base. The saved-LR slot `sp+0x1c8` is `0x7b51488274`, outside
+  `[0x7a90c9c000, 0x7a90d2c000)` (libart-side caller), and the 2,048-word
+  scan finds only `+0x6b90c` at index 566, a deeper executeVM return
+  address. The earlier zero-hit 256-word window was too shallow, not a
+  broken read.
+- Invariants: handler/pre-xor/post-xor and the reader-source line are
+  unchanged (`0x4d94`, `w21_before=0xa0d82eed`); the crash is unchanged
+  signal 11 in `__memmove_aarch64_nt+140` at 10:16:57.605. The image
+  `nested-start-caller-vtable-image.bin`, 282,603 bytes, sha256
+  `581ca63f7b6a2d93580a2b0a31a164331a83902796d110b00549aae55351bf73`,
+  differs from the `pc22727` image in 53 bytes; the five final globals and
+  pristine reader slots are unchanged.
+- Verdict: vtable-caller RULED OUT; native/JNI entry CONFIRMED.
+- Next: identify the registered native method name/signature/class, then the
+  Java caller that supplies the byte array.
+
+## Pre-registered experiment (2026-10-28, nested-register-natives)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+- Hypothesis: `+0x8b1f0` registers `executeVM_inner` as a native method whose
+  name and signature identify the Java-side VM entry and its `byte[]` input;
+  the names then locate the Java caller and the array source statically.
+- Falsification: the `JNINativeMethod` strings are unreadable, the call is
+  not `RegisterNatives`, or the signature does not take a `byte[]`; the
+  observed registration then becomes the new lead.
+- One change from the previous run: observation-only full-register shim on
+  the `adr x8, 0x6a968` at `+0x8b1f0`, logging `env`, `jclass`, `methods`,
+  `nMethods`, and the `name`/`signature`/`fnPtr` fields, with `fnPtr`'s
+  module and mapping offset. The relocated `adr` in the trampoline
+  overwrites `x8`, so `x8` is safe as the tail scratch. All other hooks,
+  extras, and the launch command are unchanged.
+- Expected discriminator: `register: env=... class=... n=1 name=<method>
+  sig=<signature> fn=+0x6a968 fn_map=libpairipcore.so+...`. A `[B` signature
+  confirms the byte-array native input.
+- Status: pre-registered; no run yet.
