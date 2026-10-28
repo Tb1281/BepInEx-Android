@@ -415,6 +415,19 @@ struct BuiltinRingEntry {
 BuiltinRingEntry g_builtin_ring[kBuiltinRingSize] = {};
 std::atomic<uint32_t> g_builtin_ring_pos{0};
 
+// Debug-only observation of the 0x9a0c0031 builtin operand block. The entry
+// hook records the executeVM frame; the reader append inside the same builtin
+// reads the recorded pointers again immediately before the failing memmove.
+// The builtin does not return before the crash, so there is no return site.
+std::atomic<uintptr_t> g_b31_pending_sp{0};
+std::atomic<uintptr_t> g_b31_pending_image{0};
+std::atomic<uintptr_t> g_b31_pending_arg{0};
+std::atomic<uintptr_t> g_b31_pending_out{0};
+std::atomic<uint32_t> g_b31_pending_id{0};
+std::atomic<uint32_t> g_b31_pending_pc{0};
+std::atomic<uint64_t> g_b31_pending_seq{0};
+std::atomic<bool> g_b31_append_logged{false};
+
 // Ring of state ids passed to the obfuscated builtin state dispatcher
 // (+0x32c6c). The state machine selects the next id from a hash check, so a
 // hosted-only data value shows up as a different id sequence.
@@ -2913,6 +2926,84 @@ void DumpVmRing() {
     }
 }
 
+// Debug-only: dump the 0x9a0c0031 builtin operand block, its output slot,
+// the instruction bytes at image+pc, the descriptor table at image+0xb0, the
+// five globals and the two reader slots. Called at the builtin entry and at
+// the reader append inside the same builtin (the last observable point before
+// the failing memmove). Nothing is written.
+void DumpBuiltin31State(const char *phase, uint64_t seq, uint32_t id,
+                        uint32_t pc, uintptr_t image, uintptr_t arg,
+                        uintptr_t out) {
+    LOGI("trace: b31-%s seq=%" PRIu64 " id=%#x pc=%#x image=%p arg=%p "
+         "out=%p",
+         phase, seq, id, pc, reinterpret_cast<void *>(image),
+         reinterpret_cast<void *>(arg), reinterpret_cast<void *>(out));
+
+    uint64_t insn[8] = {};
+    if (image != 0 && SafeReadMemory(image + pc, insn, sizeof(insn))) {
+        LOGI("trace: b31-%s-insn %016" PRIx64 " %016" PRIx64 " %016" PRIx64
+             " %016" PRIx64 " %016" PRIx64 " %016" PRIx64 " %016" PRIx64
+             " %016" PRIx64,
+             phase, insn[0], insn[1], insn[2], insn[3], insn[4], insn[5],
+             insn[6], insn[7]);
+    } else {
+        LOGI("trace: b31-%s-insn unreadable", phase);
+    }
+
+    uint64_t desc[8] = {};
+    if (image != 0 && SafeReadMemory(image + 0xb0, desc, sizeof(desc))) {
+        LOGI("trace: b31-%s-desc %016" PRIx64 " %016" PRIx64 " %016" PRIx64
+             " %016" PRIx64 " %016" PRIx64 " %016" PRIx64 " %016" PRIx64
+             " %016" PRIx64,
+             phase, desc[0], desc[1], desc[2], desc[3], desc[4], desc[5],
+             desc[6], desc[7]);
+    } else {
+        LOGI("trace: b31-%s-desc unreadable", phase);
+    }
+
+    for (int line = 0; line < 4; ++line) {
+        uint64_t words[8] = {};
+        const uintptr_t address = arg + static_cast<uintptr_t>(line) * 64;
+        if (arg == 0 || !SafeReadMemory(address, words, sizeof(words))) {
+            LOGI("trace: b31-%s-arg[%#x] unreadable", phase, line * 64);
+            break;
+        }
+        LOGI("trace: b31-%s-arg[%#x] %016" PRIx64 " %016" PRIx64 " %016"
+             PRIx64 " %016" PRIx64 " %016" PRIx64 " %016" PRIx64 " %016"
+             PRIx64 " %016" PRIx64,
+             phase, line * 64, words[0], words[1], words[2], words[3], words[4],
+             words[5], words[6], words[7]);
+    }
+
+    uint32_t out32 = 0;
+    if (out != 0 && SafeReadMemory(out, &out32, sizeof(out32))) {
+        LOGI("trace: b31-%s-out32 %#x", phase, out32);
+    } else {
+        LOGI("trace: b31-%s-out32 unreadable", phase);
+    }
+
+    static const uint32_t kGlobalOffsets[5] = {0x1da6f, 0x1f422, 0x2129a,
+                                               0x377ff, 0x38edd};
+    uint64_t globals[5] = {};
+    for (int i = 0; i < 5; ++i) {
+        if (image == 0 ||
+            !SafeReadMemory(image + kGlobalOffsets[i], &globals[i],
+                            sizeof(globals[i]))) {
+            globals[i] = 0;
+        }
+    }
+    uint64_t readers[2] = {};
+    if (image != 0) {
+        SafeReadMemory(image + 0x3f874, &readers[0], sizeof(readers[0]));
+        SafeReadMemory(image + 0x1ba5c, &readers[1], sizeof(readers[1]));
+    }
+    LOGI("trace: b31-%s-globals %016" PRIx64 " %016" PRIx64 " %016" PRIx64
+         " %016" PRIx64 " %016" PRIx64,
+         phase, globals[0], globals[1], globals[2], globals[3], globals[4]);
+    LOGI("trace: b31-%s-readers %016" PRIx64 " %016" PRIx64, phase, readers[0],
+         readers[1]);
+}
+
 extern "C" __attribute__((visibility("hidden")))
 // Debug-only: log the giant builtin interpreter entry. x0 is the argument
 // block, w1 the builtin id and x2 the output slot. The argument block's +8
@@ -3045,6 +3136,22 @@ void pairip_builtin_trace_c(uint64_t *regs) {
             entry.arg_words[i] = 0;
             SafeReadMemory(arg + i * 8, &entry.arg_words[i], sizeof(uint64_t));
         }
+    }
+
+    // The 0x31 call at pc 0x40a73 is the one that reaches the reader; record
+    // its executeVM frame so the append hook inside the same builtin can dump
+    // the operand/output state immediately before the failing memmove.
+    if ((id & 0xffffu) == 0x31u && pc == 0x40a73u && lr_offset == 0x6adc4u) {
+        const uintptr_t caller_sp = arg - 0x78;
+        g_b31_pending_sp.store(caller_sp, std::memory_order_relaxed);
+        g_b31_pending_image.store(lenslot[0], std::memory_order_relaxed);
+        g_b31_pending_arg.store(arg, std::memory_order_relaxed);
+        g_b31_pending_out.store(out, std::memory_order_relaxed);
+        g_b31_pending_id.store(id, std::memory_order_relaxed);
+        g_b31_pending_pc.store(pc, std::memory_order_relaxed);
+        g_b31_pending_seq.store(seq, std::memory_order_relaxed);
+        g_b31_append_logged.store(false, std::memory_order_relaxed);
+        DumpBuiltin31State("in", seq, id, pc, lenslot[0], arg, out);
     }
 
     static std::atomic<int> log_count{0};
@@ -3825,6 +3932,33 @@ void pairip_append_trace_c(uint64_t *regs) {
     if (!g_trace_enabled.load()) {
         in_trace = false;
         return;
+    }
+
+    // The reader append at +0x3e170 is the last observable point inside the
+    // 0x9a0c0031 builtin: the helper faults in memmove before the builtin can
+    // return. Dump the operand/output state recorded at the builtin entry.
+    if (g_b31_pending_sp.load(std::memory_order_relaxed) != 0 &&
+        lr >= base && (lr - base) == 0x3e170u &&
+        !g_b31_append_logged.exchange(true, std::memory_order_relaxed)) {
+        const uintptr_t pending_sp =
+            g_b31_pending_sp.load(std::memory_order_relaxed);
+        const uintptr_t pending_image =
+            g_b31_pending_image.load(std::memory_order_relaxed);
+        const uintptr_t pending_arg =
+            g_b31_pending_arg.load(std::memory_order_relaxed);
+        const uintptr_t pending_out =
+            g_b31_pending_out.load(std::memory_order_relaxed);
+        const uint32_t pending_id =
+            g_b31_pending_id.load(std::memory_order_relaxed);
+        const uint32_t pending_pc =
+            g_b31_pending_pc.load(std::memory_order_relaxed);
+        const uint64_t pending_seq =
+            g_b31_pending_seq.load(std::memory_order_relaxed);
+        LOGI("trace: b31-reader-sp pending_sp=%p append_sp=%p",
+             reinterpret_cast<void *>(pending_sp),
+             reinterpret_cast<void *>(caller_sp));
+        DumpBuiltin31State("reader", pending_seq, pending_id, pending_pc,
+                           pending_image, pending_arg, pending_out);
     }
 
     // Only a bad base near a large read is interesting; logging every
