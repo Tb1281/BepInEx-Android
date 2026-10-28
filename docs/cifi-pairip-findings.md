@@ -1971,3 +1971,65 @@ launch. The pre-registered hypothesis is **CONFIRMED**.
   or the CD view the reader expects. See the Open questions and Next steps
   items 17-18. Do not repeat the loader, license, application, map,
   identity, or stack-text experiments.
+
+## Static correction (2026-10-28): the 14:55 handler computes `0x4d94`
+
+No new device run. This section corrects the earlier attempt to explain the
+`0x22725` pc by sweeping handler inputs against the 08:27 crash image.
+
+- The 14:55 `state-ring` run's handler-entry image was reconstructed by
+  replaying all 2,209 `imagew` writes from `state-ring.log` against the
+  pristine 282,603-byte VM asset. Every old-value check matched (0
+  mismatches), so the replay is exact for the recorded writes. Output:
+  `/tmp/opencode/image-14-55.bin`, sha256
+  `1c4570b26620bf47033b1636500528875b4a5e23e432f53d20292393bb690f97`.
+- Emulating the `0x7e` handler at `+0x6ff60` on that image reproduces the
+  first hash exactly: computed `x13=0x3f1c3aa5e22a8c4d` equals the expected
+  word, `w8=0xa1c832fc`, selected constant `w13=0x4515d1f9`, and target
+  `(w8 ^ w13) % 0x44feb = 0x4d94`. The crash-time VM dump contains `0x4d94`
+  at `vm[0x468]` (the `vm[0x440]` line, sixth word), so the handler did run
+  and compute that target on the device.
+- The 08:27 crash image is the wrong input for the 14:55 run. The five
+  globals at `0x1da6f`, `0x1f422`, `0x2129a`, `0x377ff`, and `0x38edd`
+  differ between the 14:55 pre-handler image and the 08:27 crash image; for
+  example `0x1da6f` is `0x10b65edb` in 14:55 and `0x534a6211` in 08:27.
+  Replaying or sweeping the handler against the 08:27 image therefore cannot
+  reproduce the 14:55 target. The earlier `0x365e5` result from that image is
+  expected and is not evidence about the 14:55 path.
+- The handler's only store to the image on this path is the 32-bit 0/1 flag
+  at `+0x7044c` (`str w14, [x13, w12, uxtw]`, `cset w14, eq`); it does not
+  write the five globals. The final global values come from the nested
+  program that runs after the handler selects the next pc.
+- The image diff is sampled at the next dispatcher entry, so native writes
+  made by the current handler appear in the crash-time image but not in the
+  write ring. The replay therefore reconstructs the handler-entry image, not
+  the post-handler image.
+- `0x22725` is not the outer next fetch. The VM ring ends at
+  `fetch=0x1f811 op=0x7e`, and the crash occurs inside that handler before
+  the next dispatcher entry. The builtin ring shows `0x22727` as a nested
+  builtin-prep pc (`builtin[11194]`, after `builtin[11193] pc=0x1f813`),
+  followed by the reader path. The next question is who starts that nested
+  program: the VM-driven handler tail or the JNI/vtable call at `+0x83478`.
+
+## Pre-registered experiment (2026-10-28, nested-start-caller)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+- Hypothesis: the nested program that reaches builtin prep pc `0x22725` is
+  entered through the `[state+0x8]` vtable call at `+0x83478` (vtable
+  `+0x720`) from the `0x7e` handler's tail, not by a second dispatcher fetch.
+  The handler entry at fetch `0x1f811` computes `w8^w13 = 0x4d94`, stores it
+  as `ctx[1]`, and the vtable call is the first frame above the nested
+  builtin.
+- Falsification: the builtin stack scan shows no libpairipcore return address
+  at or above `+0x83478`, or the handler entry is not reached with
+  `fetch=0x1f811`, or the pre/post-xor values differ from the replay. Then
+  the nested program is started elsewhere (a different handler tail, a JNI
+  callback, or a second dispatcher entry) and the observed caller chain is
+  the new lead.
+- One change from the frozen diagnostic baseline: add observation-only hooks
+  at `+0x6ff60`, `+0x70540`, and `+0x7ea14`, plus a stack scan in the
+  existing builtin trace at pc `0x22725`. `preload`, `trace`,
+  `dumpVmImage`, `stackSpoof`, `contextSeed`, and `hiddenApi` stay at their
+  baseline values; no other experiment switch changes.
+- Status: pre-registered; no run yet.
