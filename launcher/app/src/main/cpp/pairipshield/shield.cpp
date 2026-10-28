@@ -2842,7 +2842,7 @@ void pairip_builtin_trace_c(uint64_t *regs) {
     const uintptr_t base = g_pairip_base.load();
     const uint32_t lr_offset =
         lr >= base ? static_cast<uint32_t>(lr - base) : 0;
-    if (pc == 0x22725u) {
+    if (pc == 0x22725u || pc == 0x22727u) {
         const uintptr_t original_sp =
             reinterpret_cast<uintptr_t>(regs) + 0x110;
         LOGI("trace: nested-stack id=%#x pc=%#x lr=+%#x x29=%p sp=%p", id,
@@ -2852,7 +2852,7 @@ void pairip_builtin_trace_c(uint64_t *regs) {
         static std::atomic<int> scan_count{0};
         if (scan_count.fetch_add(1) < 4) {
             int hits = 0;
-            for (int i = 0; i < 96 && hits < 24; ++i) {
+            for (int i = 0; i < 256 && hits < 32; ++i) {
                 uint64_t word = 0;
                 if (!SafeReadMemory(
                         original_sp + static_cast<uintptr_t>(i) * 8, &word,
