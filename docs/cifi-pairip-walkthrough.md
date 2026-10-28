@@ -2280,3 +2280,55 @@ reader-source: ctx=0x7ff9372088 image=0xb400007b1224d010 off_data=0x3f874 off_si
   2026-10-27 line-166 claim with a surviving log: the `stock-libmain` chain
   produces the same reader offsets and the same crash.
 - Findings updated: yes, in this commit.
+
+## Planned run: nested-start-caller
+
+- Run key: `variant=nested-start-caller`, code commit `b15007d`, debug
+  `assembleDebug` APK sha256
+  `a4d831761ddbfd239a6dc72c6dcb5d7fae9819c7e319181de76f86f1530fe36b`,
+  frozen diagnostic baseline plus the three observation hooks.
+- Idempotency check: searched both docs for `nested-start-caller`; only the
+  findings pre-registration exists, with no walkthrough verdict. The
+  ruled-out list was checked: this is not a loader, license, application,
+  map, identity, or stack-text repeat; it observes the `0x7e` handler tail
+  that selects the next pc.
+- Hypothesis: the nested program that reaches builtin prep pc `0x22725` is
+  started by the `[state+0x8]` vtable call at `+0x83478` (vtable `+0x720`),
+  not by a second dispatcher fetch. The handler entry at fetch `0x1f811`
+  computes `w8 ^ w13 = 0x4d94`, stores it in `ctx[1]`, and the vtable call is
+  the frame above the nested builtin.
+- Expected discriminator: `trace: nested-handler hook rc=0`,
+  `nested-prexor hook rc=0`, and `nested-postxor hook rc=0`; a
+  `nested: handler ... fetch=0x1f811` line; `nested: prexor ...
+  target=0x4d94`; `nested: postxor ... rem=0x4d94`; and at pc `0x22725` a
+  `trace: nested-stack` line with a libpairipcore return offset at or above
+  `+0x83478` (the vtable `blr` returns to `+0x83488`). A stack scan with no
+  candidate in the `+0x834xx` range falsifies the vtable-call hypothesis and
+  makes the observed caller chain the new lead.
+- Starting state: branch `test/feat-cifi` at `b15007d`, tree clean after the
+  docs pre-flight commit. The installed launcher is the previous
+  reader-source build
+  (`5be5c199376dc5f4d0849a6bd88593429e78d1a2a00a86734b76acf18a124428`,
+  `versionCode=1`, `lastUpdateTime=2026-10-28 02:23:47`); the game APK is
+  untouched (`versionCode=3022`, `versionName=0.7.3.64`,
+  `lastUpdateTime=2026-10-22 16:35:02`). CIFI pid 4415 is running and will
+  be force-stopped before the launch.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant nested-start-caller
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-start-caller.log
+```
+
+- Log / artifact: `tmp/cifi-apk/logs/verify/nested-start-caller.log`; the
+  crash-time image is pulled only if the handler hooks fire.
+- Status: pre-registered; ready to install and run.
