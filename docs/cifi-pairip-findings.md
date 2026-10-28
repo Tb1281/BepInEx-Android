@@ -327,11 +327,11 @@ manual `am start` plus a 20-25 s logcat capture for crash runs.
 3. Falsified (apk-zero-map, 2026-10-27): the offset-0 game `base.apk`
    mapping is present and visible to the VM, but the reader slots and crash
    are unchanged. The missing mapping is not the gate.
-4. Falsified (apk-cd-map, 2026-10-27): a real `r--s 074f5000` base-APK line
-   inside the 146,432-byte maps scan changes nothing. Refined 2026-10-28: the
-   split-APK `r--s 06627000` line is a distinct variable associated with the
-   libunity argument and is pre-registered below; do not run other maps/procfs
-   experiments.
+4. Falsified (apk-cd-map, 2026-10-27; split-cd-map, 2026-10-28): neither the
+   base-APK `r--s 074f5000` line nor the split-APK `r--s 06627000` line
+   changes anything when placed inside the 146,432-byte maps scan. The
+   maps-window branch is closed for both APK paths; do not run further
+   maps/procfs experiments.
 5. Ruled out by the fnv-input result: reproducing stock maps/status content
    for the hash input.
 6. Decode the `0x31` builtin semantics and the `0x40a73` operand block. The
@@ -2405,4 +2405,49 @@ split APK's real central directory at the low hint `0x7900000000` before
   closed for both APK paths.
 - Invalid: mapping error, missing or out-of-prefix line, or an unrelated
   perturbation. The low mapping is diagnostic only and must not ship.
-- Status: pre-registered; run pending.
+- Status: run; verdict below.
+
+## split-cd-map result (2026-10-28 12:18)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The split-APK maps-window hypothesis is **FALSIFIED**.
+
+- Run: one cold launch (pid 24409); both packages force-stopped and
+  logcat cleared first. `am start -W` printed `Status: ok`,
+  `LaunchState: COLD`, `TotalTime: 219`, `WaitTime: 222`. Installed
+  launcher APK sha256
+  `13319e8ebd0e638978374932ad7b1417f65b732e22f67f02b612f2df2721b58a`
+  (`versionCode=1`, installed 12:18:17); the device `base.apk` size and
+  sha256 match the local build; game APK untouched.
+- Log: `tmp/cifi-apk/logs/verify/split-cd-map.log`, 10,847 lines,
+  sha256
+  `40491a4d73352cf9f3e84b0a58a451fcbd6893ebbd2b0578bca845c69f0173cc`.
+- Mapping: the split APK's real CD was mapped at `0x7900000000`
+  (`MAP_SHARED`, file offset `0x6627000`, length `0x1000`), and the
+  VM's maps dump contains
+  `7900000000-7900001000 r--s 06627000 ... split_config.arm64_v8a.apk`
+  at byte 3,596 (line 32), inside the 146,432-byte scan. The original
+  split-APK CD line remains at byte 367,195 (line 3792), outside the
+  scan.
+- Every observable is unchanged: the five globals are `0x534a6211`,
+  `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`, `0x4d062af3`; the reader
+  slots are `bbb9eb6daed20ed0` / `015370f87525d57b`; the reader-source
+  offsets are `0x3f874` / `0x1ba5c`; the state tail is
+  `id=0x872a21c sel=0x31bb`; the builtin tail is `id=0x9a0c0031
+  pc=0x40a73`; the crash is `__memmove_aarch64_nt+140` with the
+  `split_config.arm64_v8a.apk +0x514` frame; the image diff is 368 bytes
+  in 79 ranges with both ZIP slots unchanged.
+- Maps artifact: `tmp/cifi-apk/vmrun/klB-maps-split-cd-map.txt`,
+  427,211 bytes, sha256
+  `b184265757c517d2d627cde617c471f99bf95b9e532a86e362fda4d6b3c1dfa9`.
+  Image: `tmp/cifi-apk/images/split-cd-map-image.bin`, 282,603 bytes,
+  sha256
+  `62f79c9165ba260ac526e91194b37341abb8053d31aa4c4ab5d8c359164d2951`.
+- Verdict: **FALSIFIED**. A split-APK CD line inside the scanned prefix
+  changes nothing. The maps-window branch is closed for both the
+  base-APK and split-APK paths; do not run further maps/procfs
+  experiments.
+- Consequence: the missing reader-slot input is not a maps line, an
+  APK mapping, an identity fact, a loader, or a stack-text value. The
+  live target is the `0x31` caller frame at `+0x6adb4` and the
+  `0x40a73` instruction/operand semantics. Do not repeat this run.

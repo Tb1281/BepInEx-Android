@@ -2933,3 +2933,59 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/split-cd-map.log
 - Log / artifact: `tmp/cifi-apk/logs/verify/split-cd-map.log`;
   crash image (if any) `tmp/cifi-apk/images/split-cd-map-image.bin`.
 - Status: run; verdict below.
+
+## split-cd-map result (2026-10-28 12:18)
+
+- Run key: `variant=split-cd-map`, code commit `555ae05`, debug
+  `assembleDebug` APK; installed APK sha256
+  `13319e8ebd0e638978374932ad7b1417f65b732e22f67f02b612f2df2721b58a`
+  (`versionCode=1`, `versionName=0.0.0-dev-debug`, installed 12:18:17).
+  The device `base.apk` size and sha256 match the local build. Game APK
+  untouched (`versionCode=3022`, `versionName=0.7.3.64`,
+  `lastUpdateTime=2026-10-22 16:35:02`).
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 219` ms,
+  `WaitTime: 222` ms; one cold launch (pid 24409). Both packages were
+  force-stopped and logcat was cleared first.
+- Log: `tmp/cifi-apk/logs/verify/split-cd-map.log`, 10,847 lines,
+  sha256
+  `40491a4d73352cf9f3e84b0a58a451fcbd6893ebbd2b0578bca845c69f0173cc`.
+- Mapping: `split-cd-map: base=0x7900000000 size=4096
+  hint=0x7900000000 fixed=1 offset=0x6627000 eocd=0x662730a
+  path=.../split_config.arm64_v8a.apk`. The duplicate maps line is at
+  byte 3,596 (line 32), inside the VM's 146,432-byte read window; the
+  original split-APK CD line is at byte 367,195 (line 3792), still
+  outside.
+- Observed at 12:18:34.988: `b31-in seq=12869 id=0x9a0c0031 pc=0x40a73
+  image=0xb400007b1224d010 arg=0x7ff9372ba8 out=0x7ff9372ba4`;
+  `b31-in-out32 0x22b39`; `b31-in-readers
+  bbb9eb6daed20ed0 015370f87525d57b`. At the reader append:
+  `b31-reader` repeats the same seq/id/pc/image/arg/out, the same
+  32-word operand block, the same instruction/descriptor bytes, the
+  same five globals (`d0f40604534a6211`, `fb2509f3e29e9c3b`,
+  `800c61eb8a1aeb2d`, `139edf99bfe458cb`, `fb62f81e4d062af3`), the
+  same `out32`, and the same two reader slots.
+- Reader-source: `ctx=0x7ff9372b88 image=0xb400007b1224d010
+  off_data=0x3f874 off_size=0x1ba5c data=bbb9eb6daed20ed0
+  size=015370f87525d57b ... fetch=0x1f811 fetch_bytes=e1daf3c012020400
+  lr=0x690 off=0`; identical to baseline.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` at
+  12:18:35.000; `libsigchain` reverted the handler at 12:18:35.000 and
+  the process exited by signal 11 at 12:18:35.024.
+- Image: `split-cd-map-image.bin`, 282,603 bytes, sha256
+  `62f79c9165ba260ac526e91194b37341abb8053d31aa4c4ab5d8c359164d2951`.
+  It differs from the `nested-builtin-operand` image (`7557e541...`) in
+  28 ranges / 45 bytes (ASLR and counter noise) and from the pristine
+  asset in 79 ranges / 368 bytes; both reader slots and the five
+  globals are identical to the previous run.
+- Maps: `tmp/cifi-apk/vmrun/klB-maps-split-cd-map.txt`, 427,211 bytes,
+  sha256
+  `b184265757c517d2d627cde617c471f99bf95b9e532a86e362fda4d6b3c1dfa9`.
+- Verdict: **FALSIFIED**. The split-APK CD line inside the scanned
+  prefix did not change the reader slots, the reader-source offsets,
+  the five globals, the state/builtin tails, or the crash. The
+  maps-window branch is now closed for both the base-APK and split-APK
+  paths.
+- Next: decode the caller frame at `+0x6adb4` (`sp+0x44` id, `sp+0x74`
+  out, `sp+0x78` operand block) and the `0x40a73` instruction statically;
+  do not repeat this run. Findings updated: yes, in the same commit as
+  this entry.
