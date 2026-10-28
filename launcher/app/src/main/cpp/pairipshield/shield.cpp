@@ -100,6 +100,12 @@ extern "C" __attribute__((visibility("hidden"))) void pairip_postxor_c(
     uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *
 g_pairip_postxor_original;
+extern "C" __attribute__((visibility("hidden"))) void
+pairip_register_trace_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_register_trace_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *
+g_pairip_register_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_hash_input_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_hash_input_c(
     uint64_t *regs);
@@ -857,6 +863,19 @@ bool InstallPairIpTrace() {
         LOGI("trace: nested-postxor hook rc=%d target=%p trampoline=%p", rc,
              target, original);
     }
+    // Observation-only: log the JNINativeMethod registered for executeVM_inner
+    // at +0x8b1f0. Hook the following store, where x8 already holds the
+    // function pointer; x9 is dead and is the tail-branch scratch.
+    if (g_pairip_register_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x8b1f4);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_register_trace_entry),
+            &original);
+        g_pairip_register_original = original;
+        LOGI("trace: register-native hook rc=%d target=%p trampoline=%p", rc,
+             target, original);
+    }
 
     g_trace_enabled.store(true);
 
@@ -1561,6 +1580,26 @@ bool SafeReadMemory(uintptr_t address, void *out, size_t size) {
         if (got < 0 && errno == EINTR) continue;
         return false;
     }
+}
+
+// Debug-only: bounded C-string read for the JNINativeMethod name/signature.
+// Reads one byte at a time so a string that ends at a page boundary is
+// reported instead of failing the whole fetch.
+bool SafeReadCString(uintptr_t address, char *out, size_t out_size) {
+    if (out == nullptr || out_size == 0) return false;
+    out[0] = '\0';
+    if (address == 0) return false;
+    for (size_t i = 0; i + 1 < out_size; ++i) {
+        char byte = 0;
+        if (!SafeReadMemory(address + i, &byte, sizeof(byte))) {
+            out[i] = '\0';
+            return i != 0;
+        }
+        out[i] = byte;
+        if (byte == '\0') return true;
+    }
+    out[out_size - 1] = '\0';
+    return true;
 }
 
 // Debug-only: resolve a pointer to its /proc/self/maps mapping. The returned
@@ -2305,6 +2344,7 @@ void *g_pairip_reader_source_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_handler_entry_original = nullptr;
+void *g_pairip_register_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_prexor_original = nullptr;
@@ -3245,6 +3285,52 @@ void pairip_postxor_c(uint64_t *regs) {
          w8, quotient, len, remainder, w21_before,
          reinterpret_cast<void *>(state),
          static_cast<unsigned>(lenpc >> 32));
+}
+
+// Debug-only: log the JNINativeMethod that +0x8b1f0 registers through
+// JNIEnv->RegisterNatives. The hook sits on the `str x8, [sp, #0xc0]` at
+// +0x8b1f4, after the `adr x8, 0x6a968` has produced the function pointer.
+// The name and signature pointers are in the caller frame at [sp+0xb0] and
+// [sp+0xb8]; their low tag bit is cleared before reading the C strings.
+extern "C" __attribute__((visibility("hidden")))
+void pairip_register_trace_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+
+    static std::atomic<int> log_count{0};
+    if (log_count.fetch_add(1) >= 16) return;
+
+    const uintptr_t original_sp = reinterpret_cast<uintptr_t>(regs) + 0x110;
+    const uintptr_t env = static_cast<uintptr_t>(regs[20]);
+    const uintptr_t cls = static_cast<uintptr_t>(regs[1]);
+    const uintptr_t methods = static_cast<uintptr_t>(regs[2]);
+    const uint32_t count = static_cast<uint32_t>(regs[3]);
+    const uintptr_t fn = static_cast<uintptr_t>(regs[8]);
+
+    uint64_t name_ptr = 0;
+    uint64_t signature_ptr = 0;
+    SafeReadMemory(original_sp + 0xb0, &name_ptr, sizeof(name_ptr));
+    SafeReadMemory(original_sp + 0xb8, &signature_ptr, sizeof(signature_ptr));
+
+    char name[128] = {};
+    char signature[128] = {};
+    SafeReadCString(static_cast<uintptr_t>(name_ptr & ~1ULL), name,
+                    sizeof(name));
+    SafeReadCString(static_cast<uintptr_t>(signature_ptr & ~1ULL), signature,
+                    sizeof(signature));
+
+    const uintptr_t base = g_pairip_base.load();
+    const bool fn_in_module = fn >= base && fn < base + 0x90000u;
+    char fn_map[64] = {};
+    uintptr_t fn_map_off = 0;
+    DescribeMapping(fn, fn_map, sizeof(fn_map), &fn_map_off);
+
+    LOGI("register: env=%p class=%p methods=%p n=%u name=%s sig=%s "
+         "fn=%p fn_in=%d fn_off=%#zx fn_map=%s+%#zx",
+         reinterpret_cast<void *>(env), reinterpret_cast<void *>(cls),
+         reinterpret_cast<void *>(methods), count, name, signature,
+         reinterpret_cast<void *>(fn), fn_in_module ? 1 : 0,
+         static_cast<size_t>(fn_in_module ? fn - base : 0), fn_map,
+         static_cast<size_t>(fn_map_off));
 }
 
 // Debug-only state-transition hash tracing.
