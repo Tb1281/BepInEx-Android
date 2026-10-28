@@ -178,6 +178,7 @@ not a dispatcher-selected state. See the static map below.
 | Shared sequence counter (`seq-7e`) | `seqev B seq=12787` (`id=0x40b0007e pc=0x1f813 ctx=0x7ff9372b88 img=b400007b1224d010`) precedes `seqev D seq=12788` (`state=0x7ff9372bd0`, `fetch=0x1f811 next=0x1f813 op=0x7e`, same image) by 1; the second launch repeats it as 12797/12798. PROVEN: the `0x1f813` builtin is the fetch/prep step before the dispatcher entry, `0x6ff60` is the handler for the final `0x7e`, and the nested `0x31` at `pc=0x40a73` (`seq=12824`) runs after the dispatcher entry, inside the handler. |
 | JNI `Long` unboxing (`pairip_jni_trace` + `GetLongField`/`CallLongMethodA`) | Zero `GetLongField` records. Two `CallLongMethodA` calls, both `java.io.File.length()` on `/proc/self/maps` and `/proc/self/status`, each returning 0; no `Long.longValue`, no field read on a `Long`, no method call on a `Long` receiver. The VM constructs 421 `java.lang.Long` objects from hash-like image values but never reads them back through JNI. The argument `0x79f72af000` still resolves to split-APK offset `0x4eec000` (`libunity.so` base). Crash, five globals, reader slots, ring positions, and pointer-only image diff unchanged. Falsified: the `Long` argument is not consumed through JNI. |
 | Anti-debug stack text (`pairip_jni_trace` + `GetStringUTFChars`) | 48 `GetStringUTFChars` records, all from `libpairipcore+0x73814` (the `+0x7380c` call site), returning the 24 fabricated `pairIpUnityLaunchStack` frames twice (two stack walks). The VM writes each UTF-8 pointer and length into the VM image at hash-derived byte offsets (`[x19]` is the image base, `w23=0x44feb` the image size). Five globals, reader slots, state/builtin tails, and the 368-byte/79-range image diff are byte-identical to `long-unbox`; the crash is unchanged. Ring counters differ (builtin 3,548 vs 3,699; state 39,572 vs 41,366), so path length varies and counters are not an invariant. CONFIRMED: the spoofed stack text is consumed, but it does not populate the reader slots by itself. |
+| `0x31` builtin operand boundary (`nested-builtin-operand`) | `b31-in` and `b31-reader` are byte-identical: `out32=0x22b39`, the 32-word operand block, the instruction bytes at `0x40a73`, the descriptor table at `image+0xb0`, the five globals, and both reader slots do not change between the builtin entry and the reader append. The builtin does not produce a pointer/size pair. FALSIFIED: the `0x31` builtin is a consumer/validator, not the producer of the CD view. |
 
 Fake-CD runs are diagnostic only. Pointing the reader at a real central
 directory proves the reader expects ZIP bytes, but it does not make the hosted
@@ -2309,4 +2310,49 @@ that builtin produces the missing CD view or only consumes the descriptor.
   size-like value at the reader boundary proves the builtin produced the
   view; an unchanged block with `out32=0` and pristine reader slots proves
   it did not.
-- Status: pre-registered; no run yet.
+- Status: run; verdict below.
+
+## nested-builtin-operand result (2026-10-28 11:23)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+The producer hypothesis is **FALSIFIED**.
+
+- Run: one cold launch (pid 11283); both packages force-stopped and
+  logcat cleared first. `am start -W` printed `Status: ok`,
+  `LaunchState: COLD`, `TotalTime: 220`, `WaitTime: 225`. Installed
+  launcher APK sha256
+  `ff12214238f6e72d0102aa6f35bd92183f32b58c118b11228c8c90b8e48dd0a3`
+  (`versionCode=1`, installed 11:22:46); game APK untouched.
+- Log: `tmp/cifi-apk/logs/verify/nested-builtin-operand.log`, 7,777
+  lines, sha256
+  `56948c8856b562f360eb1d05d1fe6a48acca586428b819a8f5e596e2dc4d9b46`.
+- Boundary dumps: `b31-in seq=12859 id=0x9a0c0031 pc=0x40a73
+  image=0xb400007b1224d010 arg=0x7ff9372ba8 out=0x7ff9372ba4` with
+  `out32=0x22b39` and reader slots
+  `bbb9eb6daed20ed0`/`015370f87525d57b`; `b31-reader-sp
+  pending_sp=0x7ff9372b30 append_sp=0x7ff9372250`; `b31-reader` repeats
+  the same seq/id/pc/image/arg/out, the same 32-word operand block, the
+  same instruction bytes at `0x40a73`, the same descriptor table at
+  `image+0xb0`, the same five globals
+  (`0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`, `0x4d062af3`),
+  the same `out32`, and the same two reader slots.
+- Reader-source line: `off_data=0x3f874`, `off_size=0x1ba5c`,
+  `data=bbb9eb6daed20ed0`, `size=015370f87525d57b`,
+  `fetch=0x1f811`, `fetch_bytes=e1daf3c012020400`; unchanged.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` at
+  11:23:02.944; process exit by signal 11 at 11:23:02.962. Image
+  `nested-builtin-operand-image.bin`, 282,603 bytes, sha256
+  `7557e541fa96515dcd7b9c954b5377f01130aa42a58be0b28c19a7acfda9afff`;
+  29 ranges / 53 bytes differ from the `nested-register-natives` image
+  (ASLR and counter noise), 79 ranges / 368 bytes from the pristine
+  asset; the reader slots and five globals are identical.
+- Verdict: **FALSIFIED**. The `0x31` builtin did not create a
+  pointer/size pair; `out32` stayed `0x22b39`, and the operand block,
+  instruction/descriptor bytes, globals, and reader slots were unchanged
+  between the entry and the reader append. The builtin consumes and
+  validates the descriptor; it does not supply the CD view.
+- Consequence: the producer is earlier than the `0x31` call. The
+  remaining live target is the caller frame at `+0x6adb4`
+  (`sp+0x44` id, `sp+0x74` out, `sp+0x78` operand block) and the
+  `0x40a73` instruction, or the stock-only branch that avoids the
+  reader. Do not repeat this run. No new probe is pre-registered yet.

@@ -2820,4 +2820,55 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-builtin-operand.lo
 
 - Log / artifact: `tmp/cifi-apk/logs/verify/nested-builtin-operand.log`;
   crash image `tmp/cifi-apk/images/nested-builtin-operand-image.bin`.
-- Status: pre-registered; no run yet.
+- Status: run; verdict below.
+
+## nested-builtin-operand result (2026-10-28 11:23)
+
+- Run key: `variant=nested-builtin-operand`, code commit `4239299`, debug
+  `assembleDebug` APK; installed APK sha256
+  `ff12214238f6e72d0102aa6f35bd92183f32b58c118b11228c8c90b8e48dd0a3`
+  (`versionCode=1`, `versionName=0.0.0-dev-debug`, installed 11:22:46).
+  Game APK untouched (`versionCode=3022`, `versionName=0.7.3.64`,
+  `lastUpdateTime=2026-10-22 16:35:02`).
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 220` ms,
+  `WaitTime: 225` ms; one cold launch (pid 11283). Both packages were
+  force-stopped and logcat was cleared first.
+- Log: `tmp/cifi-apk/logs/verify/nested-builtin-operand.log`, 7,777 lines,
+  sha256
+  `56948c8856b562f360eb1d05d1fe6a48acca586428b819a8f5e596e2dc4d9b46`.
+- Observed at 11:23:02.926: `b31-in seq=12859 id=0x9a0c0031 pc=0x40a73
+  image=0xb400007b1224d010 arg=0x7ff9372ba8 out=0x7ff9372ba4`;
+  `b31-in-out32 0x22b39`; `b31-in-readers
+  bbb9eb6daed20ed0 015370f87525d57b`. At the reader append:
+  `b31-reader-sp pending_sp=0x7ff9372b30 append_sp=0x7ff9372250`;
+  `b31-reader seq=12859 id=0x9a0c0031 pc=0x40a73 image=0xb400007b1224d010
+  arg=0x7ff9372ba8 out=0x7ff9372ba4`, with the same 32-word operand
+  block, the same instruction bytes at `0x40a73`, the same descriptor
+  table at `image+0xb0`, the same five globals (`d0f40604534a6211`,
+  `fb2509f3e29e9c3b`, `800c61eb8a1aeb2d`, `139edf99bfe458cb`,
+  `fb62f81e4d062af3`), the same `out32=0x22b39`, and the same two reader
+  slots.
+- Reader-source: `ctx=0x7ff9372b88 image=0xb400007b1224d010
+  off_data=0x3f874 off_size=0x1ba5c data=bbb9eb6daed20ed0
+  size=015370f87525d57b ... fetch=0x1f811 fetch_bytes=e1daf3c012020400
+  lr=0x690 off=0`; unchanged from baseline.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` at
+  11:23:02.944; `libsigchain` reverted the handler at 11:23:02.937 and the
+  process exited by signal 11 at 11:23:02.962.
+- Image: `nested-builtin-operand-image.bin`, 282,603 bytes, sha256
+  `7557e541fa96515dcd7b9c954b5377f01130aa42a58be0b28c19a7acfda9afff`.
+  It differs from the `nested-register-natives` image (`b52070a0...`) in
+  29 ranges / 53 bytes (ASLR and counter noise) and from the pristine
+  asset in 79 ranges / 368 bytes; both reader slots and the five globals
+  are identical to the previous run.
+- Verdict: **FALSIFIED** for the producer hypothesis. The `0x31` builtin
+  did not create a pointer/size pair: `out32` stayed `0x22b39`, and the
+  operand block, instruction/descriptor bytes, globals, and reader slots
+  were byte-identical at the builtin entry and at the reader append. The
+  builtin is a consumer/validator of the descriptor, not the source of
+  the CD view.
+- Next: the producer is earlier than the `0x31` call. Decode the caller
+  frame (`+0x6adb4`, `sp+0x44`/`sp+0x74`/`sp+0x78`) and the `0x40a73`
+  instruction statically, or identify the stock-only branch that avoids
+  the reader; do not repeat this run. Findings updated: yes, in the same
+  commit as this entry.
