@@ -2332,3 +2332,103 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-start-caller.log
 - Log / artifact: `tmp/cifi-apk/logs/verify/nested-start-caller.log`; the
   crash-time image is pulled only if the handler hooks fire.
 - Status: pre-registered; ready to install and run.
+
+### nested-start-caller result (2026-10-28 10:02)
+
+- Build/install: `assembleDebug` at 09:59, APK sha256
+  `a4d831761ddbfd239a6dc72c6dcb5d7fae9819c7e319181de76f86f1530fe36b`,
+  installed with `android install` at 10:02:16; the installed `base.apk`
+  hashes to the same value (`versionCode=1`). The game APK is untouched
+  (`versionCode=3022`, `versionName=0.7.3.64`,
+  `lastUpdateTime=2026-10-22 16:35:02`).
+- Launch: `Status: ok`, `LaunchState: COLD`, `TotalTime: 314` ms; one cold
+  launch (pid 13301). Both packages were force-stopped, `pidof` was empty,
+  and logcat was cleared first. Log
+  `tmp/cifi-apk/logs/verify/nested-start-caller.log`, 10,906 lines, sha256
+  `de345ed516aa54f0720cce840ba60f77dce4f6016843051e27148ce1495e8de1`.
+- Variant line: `variant=nested-start-caller`, `preload=true`,
+  `trace=true`, `dumpVmImage=true`, `stackSpoof=true`, `contextSeed=true`,
+  `hiddenApi=true`, `lateHooks=true`, `delayMs=0`; every other experiment
+  switch false.
+- Hooks: `nested-handler hook rc=0 target=0x7a8cdd3f60
+  trampoline=0x7e1e46d2e8`; `nested-prexor hook rc=0 target=0x7a8cdd4540
+  trampoline=0x7e1e46d304`; `nested-postxor hook rc=0 target=0x7a8cde2a14
+  trampoline=0x7e1e46d32c`.
+- Handler/pre-xor/post-xor (three lines, 10:02:41.328):
+
+```text
+nested: handler state=0x7ff9372bd0 ctx=0x7ff9372b88 image=0xb400007b1224d010 len=0x44feb ctxpc=0x1f813 desc=0xb0 fetch=0x1f811 op=0x7e x30=+0x6aa68
+nested: prexor w8=0xa1c832fc w13=0x4515d1f9 len=0x44feb target=0x4d94 state=0x7ff9372bd0 ctxpc=0x1f843
+nested: postxor w8=0xe4dde305 quotient=0x3513 len=0x44feb rem=0x4d94 w21_before=0xa0d82eed state=0x7ff9372bd0 ctxpc=0x1f843
+```
+
+- Handler confirmation: the pre-xor hash and constant match the 14:55
+  replay exactly, and the post-xor remainder is `0x4d94`. The crash-time VM
+  dump contains `0x4d94` at `vm[0x468]` (`vm[0x440]` line, sixth word).
+- Nested builtins: the ring reaches `builtin[11258] id=0x40b0007e
+  pc=0x1f813`, then `builtin[11259] id=0x40b0000c pc=0x22727`, then 25 more
+  builtins ending at `builtin[11284] id=0x9a0c0031 pc=0x40a73`. The actual
+  prep pc is `0x22727`, not the pre-registered `0x22725`.
+- Stack scan: **zero** `trace: nested-stack` lines. The scan condition was
+  `pc == 0x22725`, so it did not fire at the observed `0x22727`. The caller
+  chain was therefore not captured.
+- Image: `klB-image-at-crash.bin` pulled from
+  `/data/user/0/com.bepinex.android.debug/files/pairip-vm/`, 282,603 bytes,
+  sha256
+  `ced13875d79b69aefa2d5148bf24ff028ca94a2affaa001c01a8dd3970e95617`.
+  The five globals are now `0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`,
+  `0xbfe458cb`, `0x4d062af3` (the same values as the 08:27 image), while the
+  reader slots `0x3f874`/`0x1ba5c` and the fetch word at `0x1f811` remain
+  pristine. Vs the 14:55 handler-entry image it differs in 120 bytes across
+  45 ranges; the nested program rewrote the five globals before the crash.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` at 10:02:41.358,
+  frame `#04` `split_config.arm64_v8a.apk (+0)`; the process exited by
+  signal 11 at 10:02:41.380.
+- Verdict: **INCONCLUSIVE** for the vtable-caller hypothesis. The handler
+  target and the nested-program execution are confirmed (`0x4d94`, the five
+  final globals), but the caller chain was not observed because the stack
+  scan filter used `0x22725` instead of the actual prep pc `0x22727`. This is
+  an observation-filter defect, not a mechanism failure.
+- Next: re-run with the scan filter corrected to `0x22727` and a wider stack
+  window. New key `nested-start-caller-pc22727`; the only change is the
+  observation filter. Findings updated: yes, in this commit.
+
+## Planned run: nested-start-caller-pc22727
+
+- Run key: `variant=nested-start-caller-pc22727`, code commit `02d91bf`,
+  debug `assembleDebug` APK, frozen diagnostic baseline plus the three
+  handler hooks.
+- Idempotency check: searched both docs for `nested-start-caller-pc22727`;
+  only the findings pre-registration exists, with no walkthrough verdict. The
+  previous `nested-start-caller` run is not repeated; its handler result is
+  cited and only the stack-scan filter changes.
+- Hypothesis: at the builtin prep pc `0x22727`, the stack above the builtin
+  interpreter entry contains a libpairipcore return address at or above
+  `+0x83478` (expected `+0x83488`), proving the `[state+0x8]` vtable call at
+  `+0x83478` started the nested program.
+- Expected discriminator: `trace: nested-stack id=0x40b0000c pc=0x22727`
+  followed by `trace: nested-stack[N] +0x83488` or another offset in
+  `[+0x83478, +0x83500)`. The handler/pre-xor/post-xor lines and the crash
+  signature must remain unchanged.
+- Starting state: branch `test/feat-cifi` at the filter-fix commit, tree
+  clean; the previous run's APK
+  `a4d831761ddbfd239a6dc72c6dcb5d7fae9819c7e319181de76f86f1530fe36b`
+  is installed. The game APK is untouched.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant nested-start-caller-pc22727
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-start-caller-pc22727.log
+```
+
+- Log / artifact: `tmp/cifi-apk/logs/verify/nested-start-caller-pc22727.log`.
+- Status: pre-registered; ready to apply the filter fix, rebuild, and run.

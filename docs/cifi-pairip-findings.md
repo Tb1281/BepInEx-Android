@@ -2033,3 +2033,56 @@ Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
   `dumpVmImage`, `stackSpoof`, `contextSeed`, and `hiddenApi` stay at their
   baseline values; no other experiment switch changes.
 - Status: pre-registered; no run yet.
+
+## nested-start-caller result (2026-10-28 10:02)
+
+The three handler hooks ran and confirm the 14:55 replay; the caller-chain
+hypothesis is **INCONCLUSIVE** because the stack scan used the wrong prep pc.
+
+- Run log: `tmp/cifi-apk/logs/verify/nested-start-caller.log`, 10,906 lines,
+  sha256
+  `de345ed516aa54f0720cce840ba60f77dce4f6016843051e27148ce1495e8de1`.
+  One cold launch (pid 13301); installed APK sha256
+  `a4d831761ddbfd239a6dc72c6dcb5d7fae9819c7e319181de76f86f1530fe36b`;
+  game APK untouched.
+- Handler: `state=0x7ff9372bd0 ctx=0x7ff9372b88
+  image=0xb400007b1224d010 len=0x44feb ctxpc=0x1f813 desc=0xb0
+  fetch=0x1f811 op=0x7e`; pre-xor `w8=0xa1c832fc w13=0x4515d1f9
+  target=0x4d94`; post-xor `w8=0xe4dde305 quotient=0x3513 rem=0x4d94
+  w21_before=0xa0d82eed`. This matches the 14:55 image replay exactly. The
+  crash-time VM dump has `0x4d94` at `vm[0x468]`.
+- Nested program: after `builtin[11258] pc=0x1f813`, the ring shows
+  `builtin[11259] id=0x40b0000c pc=0x22727`, then 25 more builtins ending at
+  `builtin[11284] id=0x9a0c0031 pc=0x40a73`. The actual prep pc is
+  `0x22727`, not `0x22725`.
+- Stack scan: zero lines. The callback condition was `pc == 0x22725`, so
+  it did not fire. This is an observation-filter defect, not a failed
+  mechanism prediction; the caller chain is still unknown.
+- Image: `nested-start-caller-image.bin`, 282,603 bytes, sha256
+  `ced13875d79b69aefa2d5148bf24ff028ca94a2affaa001c01a8dd3970e95617`.
+  The five globals are `0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`,
+  `0xbfe458cb`, `0x4d062af3` (the 08:27 final values); the reader slots
+  `0x3f874`/`0x1ba5c` and `0x1f811` are pristine. Vs the 14:55 image: 120
+  bytes across 45 ranges, all from the nested program.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` at 10:02:41.358.
+- Verdict: handler target CONFIRMED; caller chain INCONCLUSIVE.
+- Next: correct the scan filter to `0x22727`, widen the window, and re-run.
+
+## Pre-registered experiment (2026-10-28, nested-start-caller-pc22727)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+- Hypothesis: at the builtin prep pc `0x22727`, the stack above the builtin
+  interpreter entry contains a libpairipcore return address at or above
+  `+0x83478` (the vtable `blr` at `+0x83484` returns to `+0x83488`), proving
+  that the `[state+0x8]` vtable call at `+0x83478` started the nested
+  program. The handler target `0x4d94` and the nested global rewrite are
+  already confirmed and are not being re-tested.
+- Falsification: the stack scan at `0x22727` finds no return address in
+  `[+0x83478, +0x83500)`; then the nested program is entered through a
+  different frame and the observed caller chain replaces the hypothesis.
+- One change from the previous run: the builtin stack-scan filter is
+  `pc == 0x22727` (also accepting `0x22725` for safety) and the scan window
+  is 256 words. The three handler hooks, the baseline extras, and the launch
+  command are unchanged.
+- Status: pre-registered; no run yet.
