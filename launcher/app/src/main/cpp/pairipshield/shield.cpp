@@ -1563,6 +1563,60 @@ bool SafeReadMemory(uintptr_t address, void *out, size_t size) {
     }
 }
 
+// Debug-only: resolve a pointer to its /proc/self/maps mapping. The returned
+// name is the mapping's basename and the offset is relative to that mapping,
+// so a vtable target outside libpairipcore is identifiable without pulling the
+// process memory map offline. Anonymous mappings report "[anon]".
+bool DescribeMapping(uintptr_t address, char *name, size_t name_size,
+                     uintptr_t *mapping_offset) {
+    if (name == nullptr || name_size == 0 || mapping_offset == nullptr) {
+        return false;
+    }
+    // Android heap pointers carry a top-byte tag; the mapping ranges are
+    // untagged, so compare the untagged address.
+    const uintptr_t lookup = address & 0x00ffffffffffffffULL;
+    std::snprintf(name, name_size, "[unmapped]");
+    *mapping_offset = 0;
+    FILE *maps = std::fopen("/proc/self/maps", "r");
+    if (maps == nullptr) return false;
+
+    char line[512];
+    bool found = false;
+    while (std::fgets(line, sizeof(line), maps) != nullptr) {
+        unsigned long start = 0;
+        unsigned long end = 0;
+        int path_column = 0;
+        const int fields =
+            std::sscanf(line, "%lx-%lx %*s %*lx %*s %*s %n", &start, &end,
+                        &path_column);
+        if (fields < 2 || lookup < start || lookup >= end) continue;
+
+        const char *path = path_column > 0 ? line + path_column : "";
+        size_t path_length = std::strlen(path);
+        while (path_length > 0 &&
+               (path[path_length - 1] == '\n' || path[path_length - 1] == ' ')) {
+            --path_length;
+        }
+        const char *basename = path;
+        for (size_t i = 0; i < path_length; ++i) {
+            if (path[i] == '/') basename = path + i + 1;
+        }
+        const size_t basename_length =
+            path_length - static_cast<size_t>(basename - path);
+        if (basename_length == 0) {
+            std::snprintf(name, name_size, "[anon]");
+        } else {
+            std::snprintf(name, name_size, "%.*s",
+                          static_cast<int>(basename_length), basename);
+        }
+        *mapping_offset = lookup - start;
+        found = true;
+        break;
+    }
+    std::fclose(maps);
+    return found;
+}
+
 // Debug-only: identify the code that mutates klB's image before the first
 // dispatcher entry. The dispatcher diff proves 23 scattered ranges change in
 // that window, but the visible prologue contains no image stores, so the
@@ -2845,26 +2899,78 @@ void pairip_builtin_trace_c(uint64_t *regs) {
     if (pc == 0x22725u || pc == 0x22727u) {
         const uintptr_t original_sp =
             reinterpret_cast<uintptr_t>(regs) + 0x110;
-        LOGI("trace: nested-stack id=%#x pc=%#x lr=+%#x x29=%p sp=%p", id,
-             static_cast<unsigned>(pc), lr_offset,
+        // The caller is executeVM_inner: its prologue (stp x29, x30,
+        // [sp, #-0x60]!; sub sp, sp, #0x1c0) saves the caller's LR at
+        // frame+0x1c8 and the stack guard at frame+0x1b8. If the scan
+        // origin is really that frame base, those slots identify the
+        // nested entry call site directly.
+        uint64_t saved_guard = 0;
+        uint64_t saved_fp = 0;
+        uint64_t saved_lr = 0;
+        SafeReadMemory(original_sp + 0x1b8, &saved_guard, sizeof(saved_guard));
+        SafeReadMemory(original_sp + 0x1c0, &saved_fp, sizeof(saved_fp));
+        SafeReadMemory(original_sp + 0x1c8, &saved_lr, sizeof(saved_lr));
+        const bool saved_lr_in_module =
+            saved_lr >= base && saved_lr < base + 0x90000u;
+        LOGI("trace: nested-stack id=%#x pc=%#x lr=+%#x x29=%p sp=%p "
+             "base=%p guard=%016" PRIx64 " saved_fp=%016" PRIx64
+             " saved_lr=%016" PRIx64 " saved_lr_in=%d saved_lr_off=%#zx",
+             id, static_cast<unsigned>(pc), lr_offset,
              reinterpret_cast<void *>(regs[29]),
-             reinterpret_cast<void *>(original_sp));
+             reinterpret_cast<void *>(original_sp),
+             reinterpret_cast<void *>(base), saved_guard, saved_fp, saved_lr,
+             saved_lr_in_module ? 1 : 0,
+             static_cast<size_t>(saved_lr_in_module ? saved_lr - base : 0));
         static std::atomic<int> scan_count{0};
         if (scan_count.fetch_add(1) < 4) {
+            uint64_t raw[64] = {};
+            int readable = 0;
+            for (int i = 0; i < 64; ++i) {
+                if (SafeReadMemory(original_sp + static_cast<uintptr_t>(i) * 8,
+                                   &raw[i], sizeof(raw[i]))) {
+                    ++readable;
+                }
+            }
+            for (int line = 0; line < 8; ++line) {
+                LOGI("trace: nested-stack-raw[%#x] %016" PRIx64
+                     " %016" PRIx64 " %016" PRIx64 " %016" PRIx64
+                     " %016" PRIx64 " %016" PRIx64 " %016" PRIx64
+                     " %016" PRIx64,
+                     line * 64, raw[line * 8 + 0], raw[line * 8 + 1],
+                     raw[line * 8 + 2], raw[line * 8 + 3],
+                     raw[line * 8 + 4], raw[line * 8 + 5],
+                     raw[line * 8 + 6], raw[line * 8 + 7]);
+            }
+            LOGI("trace: nested-stack-raw readable=%d/64", readable);
             int hits = 0;
-            for (int i = 0; i < 256 && hits < 32; ++i) {
+            int tagged = 0;
+            for (int i = 0; i < 2048; ++i) {
                 uint64_t word = 0;
                 if (!SafeReadMemory(
                         original_sp + static_cast<uintptr_t>(i) * 8, &word,
                         sizeof(word))) {
                     continue;
                 }
-                if (word >= base && word < base + 0x90000u) {
-                    LOGI("trace: nested-stack[%d] +%#zx", i,
-                         static_cast<size_t>(word - base));
-                    ++hits;
+                const bool in_module =
+                    word >= base && word < base + 0x90000u;
+                // A signed or top-byte-tagged return address keeps the
+                // low 48 bits; count it separately instead of silently
+                // treating it as absent.
+                const uint64_t masked = word & 0x0000ffffffffffffULL;
+                const bool tagged_module =
+                    !in_module && masked >= base && masked < base + 0x90000u;
+                if (!in_module && !tagged_module) continue;
+                ++hits;
+                if (tagged_module) ++tagged;
+                if (hits <= 32) {
+                    LOGI("trace: nested-stack[%d] +%#zx%s", i,
+                         static_cast<size_t>(
+                             (in_module ? word : masked) - base),
+                         in_module ? "" : " tagged");
                 }
             }
+            LOGI("trace: nested-stack hits=%d tagged=%d window=%d", hits,
+                 tagged, 2048);
         }
     }
     if ((id & 0xffffu) == 0x7eu && pc == 0x1f813u) {
@@ -3039,6 +3145,50 @@ void pairip_handler_entry_c(uint64_t *regs) {
          t_last_vm_op,
          regs[31] >= g_pairip_base.load() ? regs[31] - g_pairip_base.load()
                                            : 0);
+
+    // +0x83478 calls [state+8]'s vtable +0x720. Reading the object here, at
+    // the handler entry that produces the nested target, shows whether that
+    // slot is executeVM_inner or an outside (JNI/libart) entry before the
+    // call runs.
+    uintptr_t obj = 0;
+    uintptr_t vtable = 0;
+    uintptr_t vtable_fn = 0;
+    SafeReadMemory(state + 8, &obj, sizeof(obj));
+    if (obj != 0) SafeReadMemory(obj, &vtable, sizeof(vtable));
+    if (vtable != 0) SafeReadMemory(vtable + 0x720, &vtable_fn, sizeof(vtable_fn));
+
+    const uintptr_t base = g_pairip_base.load();
+    const bool obj_in_module =
+        obj >= base && obj < base + 0x90000u;
+    const bool vtable_in_module =
+        vtable >= base && vtable < base + 0x90000u;
+    const bool fn_in_module =
+        vtable_fn >= base && vtable_fn < base + 0x90000u;
+
+    char obj_map[64] = {};
+    char vtable_map[64] = {};
+    char fn_map[64] = {};
+    uintptr_t obj_map_off = 0;
+    uintptr_t vtable_map_off = 0;
+    uintptr_t fn_map_off = 0;
+    DescribeMapping(obj, obj_map, sizeof(obj_map), &obj_map_off);
+    DescribeMapping(vtable, vtable_map, sizeof(vtable_map), &vtable_map_off);
+    DescribeMapping(vtable_fn, fn_map, sizeof(fn_map), &fn_map_off);
+
+    LOGI("nested: vtable state=%p obj=%p obj_in=%d obj_off=%#zx "
+         "obj_map=%s+%#zx vt=%p vt_in=%d vt_off=%#zx vt_map=%s+%#zx "
+         "fn=%p fn_in=%d fn_off=%#zx fn_map=%s+%#zx fn_is_vm=%d",
+         reinterpret_cast<void *>(state), reinterpret_cast<void *>(obj),
+         obj_in_module ? 1 : 0,
+         static_cast<size_t>(obj_in_module ? obj - base : 0), obj_map,
+         static_cast<size_t>(obj_map_off),
+         reinterpret_cast<void *>(vtable), vtable_in_module ? 1 : 0,
+         static_cast<size_t>(vtable_in_module ? vtable - base : 0),
+         vtable_map, static_cast<size_t>(vtable_map_off),
+         reinterpret_cast<void *>(vtable_fn), fn_in_module ? 1 : 0,
+         static_cast<size_t>(fn_in_module ? vtable_fn - base : 0), fn_map,
+         static_cast<size_t>(fn_map_off),
+         vtable_fn == base + 0x6a968u ? 1 : 0);
 }
 
 // Pre-xor site in the same handler (+0x70540, `eor w8, w8, w13`). w8 is the
