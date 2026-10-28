@@ -874,3 +874,175 @@ pairip_name_trace_entry:
     b       memcmp@plt
 
     .size pairip_name_trace_entry, . - pairip_name_trace_entry
+
+/*
+ * Debug-only shims for the 0x7e arithmetic handler. The entry shim sits on
+ * the handler label +0x6ff60 and records the executeVM frame; +0x70540 is
+ * the `eor w8, w8, w13` that XORs the FNV hash with the selected constant,
+ * and +0x7ea14 is the `msub w21, w9, w19, w8` that reduces the result modulo
+ * the image length. All three sites are non-branch instructions or branch
+ * targets, so the full-register save/restore contract is the same as the
+ * other shims. Installed only under `pairip_trace`.
+ */
+
+    .text
+    .global pairip_handler_entry_entry
+    .type pairip_handler_entry_entry, %function
+    .p2align 4
+pairip_handler_entry_entry:
+    sub     sp, sp, #0x110
+    stp     x0, x1, [sp, #0x00]
+    stp     x2, x3, [sp, #0x10]
+    stp     x4, x5, [sp, #0x20]
+    stp     x6, x7, [sp, #0x30]
+    stp     x8, x9, [sp, #0x40]
+    stp     x10, x11, [sp, #0x50]
+    stp     x12, x13, [sp, #0x60]
+    stp     x14, x15, [sp, #0x70]
+    stp     x16, x17, [sp, #0x80]
+    stp     x18, x19, [sp, #0x90]
+    stp     x20, x21, [sp, #0xa0]
+    stp     x22, x23, [sp, #0xb0]
+    stp     x24, x25, [sp, #0xc0]
+    stp     x26, x27, [sp, #0xd0]
+    stp     x28, x29, [sp, #0xe0]
+    mrs     x9, nzcv
+    str     x9, [sp, #0xf0]
+    str     x30, [sp, #0xf8]
+
+    mov     x0, sp
+    bl      pairip_handler_entry_c
+
+    ldr     x9, [sp, #0xf0]
+    msr     nzcv, x9
+    ldp     x0, x1, [sp, #0x00]
+    ldp     x2, x3, [sp, #0x10]
+    ldp     x4, x5, [sp, #0x20]
+    ldp     x6, x7, [sp, #0x30]
+    ldp     x8, x9, [sp, #0x40]
+    ldp     x10, x11, [sp, #0x50]
+    ldp     x12, x13, [sp, #0x60]
+    ldp     x14, x15, [sp, #0x70]
+    ldp     x16, x17, [sp, #0x80]
+    ldp     x18, x19, [sp, #0x90]
+    ldp     x20, x21, [sp, #0xa0]
+    ldp     x22, x23, [sp, #0xb0]
+    ldp     x24, x25, [sp, #0xc0]
+    ldp     x26, x27, [sp, #0xd0]
+    ldp     x28, x29, [sp, #0xe0]
+    ldr     x30, [sp, #0xf8]
+    add     sp, sp, #0x110
+
+    adrp    x16, g_pairip_handler_entry_original
+    ldr     x16, [x16, :lo12:g_pairip_handler_entry_original]
+    br      x16
+
+    .size pairip_handler_entry_entry, . - pairip_handler_entry_entry
+
+    .text
+    .global pairip_prexor_entry
+    .type pairip_prexor_entry, %function
+    .p2align 4
+pairip_prexor_entry:
+    sub     sp, sp, #0x110
+    stp     x0, x1, [sp, #0x00]
+    stp     x2, x3, [sp, #0x10]
+    stp     x4, x5, [sp, #0x20]
+    stp     x6, x7, [sp, #0x30]
+    stp     x8, x9, [sp, #0x40]
+    stp     x10, x11, [sp, #0x50]
+    stp     x12, x13, [sp, #0x60]
+    stp     x14, x15, [sp, #0x70]
+    stp     x16, x17, [sp, #0x80]
+    stp     x18, x19, [sp, #0x90]
+    stp     x20, x21, [sp, #0xa0]
+    stp     x22, x23, [sp, #0xb0]
+    stp     x24, x25, [sp, #0xc0]
+    stp     x26, x27, [sp, #0xd0]
+    stp     x28, x29, [sp, #0xe0]
+    mrs     x9, nzcv
+    str     x9, [sp, #0xf0]
+    str     x30, [sp, #0xf8]
+
+    mov     x0, sp
+    bl      pairip_prexor_c
+
+    ldr     x9, [sp, #0xf0]
+    msr     nzcv, x9
+    ldp     x0, x1, [sp, #0x00]
+    ldp     x2, x3, [sp, #0x10]
+    ldp     x4, x5, [sp, #0x20]
+    ldp     x6, x7, [sp, #0x30]
+    ldp     x8, x9, [sp, #0x40]
+    ldp     x10, x11, [sp, #0x50]
+    ldp     x12, x13, [sp, #0x60]
+    ldp     x14, x15, [sp, #0x70]
+    ldp     x16, x17, [sp, #0x80]
+    ldp     x18, x19, [sp, #0x90]
+    ldp     x20, x21, [sp, #0xa0]
+    ldp     x22, x23, [sp, #0xb0]
+    ldp     x24, x25, [sp, #0xc0]
+    ldp     x26, x27, [sp, #0xd0]
+    ldp     x28, x29, [sp, #0xe0]
+    ldr     x30, [sp, #0xf8]
+    add     sp, sp, #0x110
+
+    adrp    x16, g_pairip_prexor_original
+    ldr     x16, [x16, :lo12:g_pairip_prexor_original]
+    br      x16
+
+    .size pairip_prexor_entry, . - pairip_prexor_entry
+
+    .text
+    .global pairip_postxor_entry
+    .type pairip_postxor_entry, %function
+    .p2align 4
+pairip_postxor_entry:
+    sub     sp, sp, #0x110
+    stp     x0, x1, [sp, #0x00]
+    stp     x2, x3, [sp, #0x10]
+    stp     x4, x5, [sp, #0x20]
+    stp     x6, x7, [sp, #0x30]
+    stp     x8, x9, [sp, #0x40]
+    stp     x10, x11, [sp, #0x50]
+    stp     x12, x13, [sp, #0x60]
+    stp     x14, x15, [sp, #0x70]
+    stp     x16, x17, [sp, #0x80]
+    stp     x18, x19, [sp, #0x90]
+    stp     x20, x21, [sp, #0xa0]
+    stp     x22, x23, [sp, #0xb0]
+    stp     x24, x25, [sp, #0xc0]
+    stp     x26, x27, [sp, #0xd0]
+    stp     x28, x29, [sp, #0xe0]
+    mrs     x9, nzcv
+    str     x9, [sp, #0xf0]
+    str     x30, [sp, #0xf8]
+
+    mov     x0, sp
+    bl      pairip_postxor_c
+
+    ldr     x9, [sp, #0xf0]
+    msr     nzcv, x9
+    ldp     x0, x1, [sp, #0x00]
+    ldp     x2, x3, [sp, #0x10]
+    ldp     x4, x5, [sp, #0x20]
+    ldp     x6, x7, [sp, #0x30]
+    ldp     x8, x9, [sp, #0x40]
+    ldp     x10, x11, [sp, #0x50]
+    ldp     x12, x13, [sp, #0x60]
+    ldp     x14, x15, [sp, #0x70]
+    ldp     x16, x17, [sp, #0x80]
+    ldp     x18, x19, [sp, #0x90]
+    ldp     x20, x21, [sp, #0xa0]
+    ldp     x22, x23, [sp, #0xb0]
+    ldp     x24, x25, [sp, #0xc0]
+    ldp     x26, x27, [sp, #0xd0]
+    ldp     x28, x29, [sp, #0xe0]
+    ldr     x30, [sp, #0xf8]
+    add     sp, sp, #0x110
+
+    adrp    x16, g_pairip_postxor_original
+    ldr     x16, [x16, :lo12:g_pairip_postxor_original]
+    br      x16
+
+    .size pairip_postxor_entry, . - pairip_postxor_entry

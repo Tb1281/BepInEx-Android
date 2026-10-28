@@ -86,6 +86,20 @@ extern "C" __attribute__((visibility("hidden"))) void pairip_reader_source_c(
     uint64_t *regs);
 extern "C" __attribute__((visibility("hidden"))) void *
 g_pairip_reader_source_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_handler_entry_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_handler_entry_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *
+g_pairip_handler_entry_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_prexor_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_prexor_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *g_pairip_prexor_original;
+extern "C" __attribute__((visibility("hidden"))) void pairip_postxor_entry();
+extern "C" __attribute__((visibility("hidden"))) void pairip_postxor_c(
+    uint64_t *regs);
+extern "C" __attribute__((visibility("hidden"))) void *
+g_pairip_postxor_original;
 extern "C" __attribute__((visibility("hidden"))) void pairip_hash_input_entry();
 extern "C" __attribute__((visibility("hidden"))) void pairip_hash_input_c(
     uint64_t *regs);
@@ -809,6 +823,38 @@ bool InstallPairIpTrace() {
             &original);
         g_pairip_reader_source_original = original;
         LOGI("trace: reader-source hook rc=%d target=%p trampoline=%p", rc,
+             target, original);
+    }
+    // Observation-only hooks for the 0x7e handler that computes the next pc.
+    // The entry hook captures the executeVM frame, the context block and the
+    // descriptor index; the two arithmetic sites confirm the selected
+    // constant and the remainder written to ctx[1].
+    if (g_pairip_handler_entry_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x6ff60);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_handler_entry_entry),
+            &original);
+        g_pairip_handler_entry_original = original;
+        LOGI("trace: nested-handler hook rc=%d target=%p trampoline=%p", rc,
+             target, original);
+    }
+    if (g_pairip_prexor_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x70540);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_prexor_entry), &original);
+        g_pairip_prexor_original = original;
+        LOGI("trace: nested-prexor hook rc=%d target=%p trampoline=%p", rc,
+             target, original);
+    }
+    if (g_pairip_postxor_original == nullptr) {
+        auto *target = reinterpret_cast<void *>(base + 0x7ea14);
+        void *original = nullptr;
+        const int rc = DobbyHook(
+            target, reinterpret_cast<void *>(&pairip_postxor_entry), &original);
+        g_pairip_postxor_original = original;
+        LOGI("trace: nested-postxor hook rc=%d target=%p trampoline=%p", rc,
              target, original);
     }
 
@@ -2204,6 +2250,15 @@ extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_reader_source_original = nullptr;
 
 extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_handler_entry_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_prexor_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
+void *g_pairip_postxor_original = nullptr;
+
+extern "C" __attribute__((visibility("hidden")))
 void *g_pairip_syscall_original = nullptr;
 
 constexpr uint32_t kInvalidSyscallSlot = 0xffffffffu;
@@ -2787,6 +2842,31 @@ void pairip_builtin_trace_c(uint64_t *regs) {
     const uintptr_t base = g_pairip_base.load();
     const uint32_t lr_offset =
         lr >= base ? static_cast<uint32_t>(lr - base) : 0;
+    if (pc == 0x22725u) {
+        const uintptr_t original_sp =
+            reinterpret_cast<uintptr_t>(regs) + 0x110;
+        LOGI("trace: nested-stack id=%#x pc=%#x lr=+%#x x29=%p sp=%p", id,
+             static_cast<unsigned>(pc), lr_offset,
+             reinterpret_cast<void *>(regs[29]),
+             reinterpret_cast<void *>(original_sp));
+        static std::atomic<int> scan_count{0};
+        if (scan_count.fetch_add(1) < 4) {
+            int hits = 0;
+            for (int i = 0; i < 96 && hits < 24; ++i) {
+                uint64_t word = 0;
+                if (!SafeReadMemory(
+                        original_sp + static_cast<uintptr_t>(i) * 8, &word,
+                        sizeof(word))) {
+                    continue;
+                }
+                if (word >= base && word < base + 0x90000u) {
+                    LOGI("trace: nested-stack[%d] +%#zx", i,
+                         static_cast<size_t>(word - base));
+                    ++hits;
+                }
+            }
+        }
+    }
     if ((id & 0xffffu) == 0x7eu && pc == 0x1f813u) {
         uint64_t q[8] = {};
         SafeReadMemory(ctx, q, sizeof(q));
@@ -2925,6 +3005,96 @@ void pairip_reader_source_c(uint64_t *regs) {
          reinterpret_cast<void *>(regs[31]),
          regs[31] >= g_pairip_base.load() ? regs[31] - g_pairip_base.load()
                                           : 0);
+}
+
+// Debug-only handler-entry observation for the 0x7e arithmetic handler.
+// At +0x6ff60 x22 is executeVM's frame, [x22+0x88] is the context block
+// (image pointer, length|pc), and [x22+0x90] is the descriptor index. The
+// callback runs before the relocated `ldr x9, [x22, #0x88]`, so it reads the
+// frame directly and leaves every register untouched.
+extern "C" __attribute__((visibility("hidden")))
+void pairip_handler_entry_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+    if (t_last_vm_fetch != 0x1f811u && t_last_vm_fetch != 0x4d94u) return;
+
+    static std::atomic<int> log_count{0};
+    if (log_count.fetch_add(1) >= 8) return;
+
+    const uintptr_t state = static_cast<uintptr_t>(regs[22]);
+    uintptr_t ctx = 0;
+    uintptr_t image = 0;
+    uint64_t lenpc = 0;
+    uint32_t desc = 0;
+    SafeReadMemory(state + 0x88, &ctx, sizeof(ctx));
+    SafeReadMemory(ctx, &image, sizeof(image));
+    SafeReadMemory(ctx + 8, &lenpc, sizeof(lenpc));
+    SafeReadMemory(state + 0x90, &desc, sizeof(desc));
+
+    LOGI("nested: handler state=%p ctx=%p image=%p len=%#x ctxpc=%#x "
+         "desc=%#x fetch=%#x op=%#x x30=+%#zx",
+         reinterpret_cast<void *>(state), reinterpret_cast<void *>(ctx),
+         reinterpret_cast<void *>(image),
+         static_cast<unsigned>(lenpc & 0xffffffffu),
+         static_cast<unsigned>(lenpc >> 32), desc, t_last_vm_fetch,
+         t_last_vm_op,
+         regs[31] >= g_pairip_base.load() ? regs[31] - g_pairip_base.load()
+                                           : 0);
+}
+
+// Pre-xor site in the same handler (+0x70540, `eor w8, w8, w13`). w8 is the
+// hash, w13 the selected constant and w19 the image length; the target is the
+// pc the handler writes into ctx[1] before the vtable call.
+extern "C" __attribute__((visibility("hidden")))
+void pairip_prexor_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+    if (t_last_vm_fetch != 0x1f811u) return;
+
+    static std::atomic<int> log_count{0};
+    if (log_count.fetch_add(1) >= 8) return;
+
+    const uint32_t w8 = static_cast<uint32_t>(regs[8]);
+    const uint32_t w13 = static_cast<uint32_t>(regs[13]);
+    const uint32_t len = static_cast<uint32_t>(regs[19]);
+    const uint32_t target = len != 0 ? (w8 ^ w13) % len : 0;
+    const uintptr_t state = static_cast<uintptr_t>(regs[22]);
+    uintptr_t ctx = 0;
+    uint64_t lenpc = 0;
+    SafeReadMemory(state + 0x88, &ctx, sizeof(ctx));
+    SafeReadMemory(ctx + 8, &lenpc, sizeof(lenpc));
+
+    LOGI("nested: prexor w8=%#x w13=%#x len=%#x target=%#x state=%p "
+         "ctxpc=%#x",
+         w8, w13, len, target, reinterpret_cast<void *>(state),
+         static_cast<unsigned>(lenpc >> 32));
+}
+
+// Post-xor site at +0x7ea14 (`msub w21, w9, w19, w8`). This is the remainder
+// that becomes the next pc; the callback computes it before the relocated
+// msub executes, so the log shows the value the handler is about to store.
+extern "C" __attribute__((visibility("hidden")))
+void pairip_postxor_c(uint64_t *regs) {
+    if (regs == nullptr || !g_trace_enabled.load()) return;
+    if (t_last_vm_fetch != 0x1f811u) return;
+
+    static std::atomic<int> log_count{0};
+    if (log_count.fetch_add(1) >= 8) return;
+
+    const uint32_t w8 = static_cast<uint32_t>(regs[8]);
+    const uint32_t quotient = static_cast<uint32_t>(regs[9]);
+    const uint32_t len = static_cast<uint32_t>(regs[19]);
+    const uint32_t remainder = len != 0 ? w8 % len : 0;
+    const uint32_t w21_before = static_cast<uint32_t>(regs[21]);
+    const uintptr_t state = static_cast<uintptr_t>(regs[22]);
+    uintptr_t ctx = 0;
+    uint64_t lenpc = 0;
+    SafeReadMemory(state + 0x88, &ctx, sizeof(ctx));
+    SafeReadMemory(ctx + 8, &lenpc, sizeof(lenpc));
+
+    LOGI("nested: postxor w8=%#x quotient=%#x len=%#x rem=%#x "
+         "w21_before=%#x state=%p ctxpc=%#x",
+         w8, quotient, len, remainder, w21_before,
+         reinterpret_cast<void *>(state),
+         static_cast<unsigned>(lenpc >> 32));
 }
 
 // Debug-only state-transition hash tracing.
