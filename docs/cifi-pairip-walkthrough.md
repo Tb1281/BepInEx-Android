@@ -2747,3 +2747,77 @@ the probe must not be repeated.
   `+0x834dc`/`+0x834f0` setter is unvisited, and the handler falls back to
   the image-backed view at `image+0x3f874`/`0x1ba5c`.
 - Findings updated: yes, in the same commit as this entry.
+
+## Planned run: nested-builtin-operand
+
+- Run key: `variant=nested-builtin-operand`, debug `assembleDebug` APK,
+  frozen diagnostic baseline (`pairip_preload=true`, `pairip_trace=true`,
+  `pairip_dump_vm=true`) plus the existing handler/builtin/reader
+  observations and one new observation-only dump at the `0x9a0c0031`
+  builtin entry and at the reader append inside that builtin.
+- Idempotency check: searched both docs for `nested-builtin-operand`;
+  absent. The `0x9a0c0031` entry and the `+0x3e170` reader append have no
+  prior run key; `reader-source` hooked the reader's own load at `+0x3e034`
+  and did not capture the builtin entry, the output slot, or the full
+  operand block, so this is not a repeat.
+- Hypothesis: the `0x9a0c0031` builtin (effective opcode `0x31`) is the
+  producer of the CD view. Its entry receives the operand block at
+  `caller_sp+0x78` and the output slot at `caller_sp+0x74`; if it produces
+  a pointer/size pair, the pair will appear in the output slot, the
+  operand block, or the image, while `image+0x3f874`/`0x1ba5c` stay
+  pristine. If the builtin only consumes the descriptor and updates the
+  five globals/hashes, the output slot and the operand block will stay
+  without a pointer/size pair, and the CD view must come from the loader
+  or an earlier state.
+- Falsification: the builtin writes the reader slots during the call
+  (they change from `bbb9eb6daed20ed0`/`015370f87525d57b`), or the
+  output/operand block contains no pointer-like and no size-like value at
+  either boundary. The first contradicts the image-diff finding and means
+  the reader fallback is not the missing step; the second means the `0x31`
+  builtin is a consumer/validator, not the producer.
+- One change from the previous run: add `DumpBuiltin31State` calls at the
+  existing builtin-entry hook (when `id & 0xffff == 0x31`, `pc == 0x40a73`,
+  `lr == +0x6adc4`) and at the existing append hook (when
+  `lr == +0x3e170` and the entry record is pending). Each dump logs the
+  instruction bytes at `image+0x40a73`, the descriptor table at
+  `image+0xb0`, the 32-word operand block at `arg`, the 32-bit output slot
+  at `out`, the five globals (`0x1da6f`, `0x1f422`, `0x2129a`, `0x377ff`,
+  `0x38edd`), and the reader slots (`0x3f874`, `0x1ba5c`). Nothing is
+  written to the saved register file or to the image. The handler,
+  builtin, reader, and baseline extras are unchanged.
+- Why not a return hook: the crash-time `executeVM` frame still holds
+  `arg=0x7ff9372ba8`, `id=0x9a0c0031`, `out=0x7ff9372ba4` (log line
+  `vm[0x7c0]` in the `nested-register-natives` run), and the fault is in
+  the append helper called from the reader builder inside the same
+  builtin. The `0x31` call does not return before the crash, so `+0x6adc4`
+  is not a usable "after" site; the reader append is the last observable
+  point.
+- Expected discriminator: a `trace: b31-in ...` / `trace: b31-reader ...`
+  pair. A pointer-like word in `out`, `arg`, or the instruction/descriptor
+  bytes at the reader boundary that points into the image
+  (`0xb400007b1224d010 + off`, `off < 0x44feb`) or to a readable buffer,
+  with a companion size-like word, proves the builtin produced the view.
+  An unchanged operand block, `out32=0`, pristine reader slots, and the
+  baseline five globals prove it did not.
+- Starting state: branch `test/feat-cifi` at the docs commit for this
+  pre-registration, tree clean; installed APK remains `807ea87a...` until
+  the new dump is rebuilt; game APK untouched.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant nested-builtin-operand
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-builtin-operand.log
+```
+
+- Log / artifact: `tmp/cifi-apk/logs/verify/nested-builtin-operand.log`;
+  crash image `tmp/cifi-apk/images/nested-builtin-operand-image.bin`.
+- Status: pre-registered; no run yet.

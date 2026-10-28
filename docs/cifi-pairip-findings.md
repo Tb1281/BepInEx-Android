@@ -2272,3 +2272,41 @@ The hook installed but never fired; the registration question is
   `early-register-natives`. The remaining live question is the missing CD
   string view (`[state+0x20]` null; `+0x834dc`/`+0x834f0` setter unvisited;
   fallback to `image+0x3f874`/`0x1ba5c`).
+
+## Pre-registered experiment (2026-10-28, nested-builtin-operand)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+The next step is one diagnostic run against the frozen baseline
+(`pairip_preload=true`, `pairip_trace=true`, `pairip_dump_vm=true`, debug
+launcher). It observes the `0x9a0c0031` builtin boundary to decide whether
+that builtin produces the missing CD view or only consumes the descriptor.
+
+- Hypothesis: the `0x9a0c0031` builtin (effective opcode `0x31`) is the
+  producer of the CD view. At entry it receives the operand block at
+  `caller_sp+0x78` and the output slot at `caller_sp+0x74`; a pointer/size
+  pair for the view should appear in the output slot, the operand block, or
+  the image, while `image+0x3f874`/`0x1ba5c` stay pristine. If the builtin
+  only consumes the descriptor and updates the five globals/hashes, no
+  pointer/size pair will appear and the CD view must come from the loader
+  or an earlier state.
+- Falsification: the builtin writes the reader slots during the call, or
+  the output/operand block contains no pointer-like and no size-like value
+  at either boundary. The first contradicts the image-diff finding; the
+  second means the `0x31` builtin is not the producer.
+- Observation points: the existing builtin-entry hook at `+0x31de4`
+  (filtered to `id & 0xffff == 0x31`, `pc == 0x40a73`, `lr == +0x6adc4`)
+  and the existing append hook at `+0x8d460` (filtered to
+  `lr == +0x3e170`, the reader builder's call inside the same builtin).
+  A return hook at `+0x6adc4` is not used: the crash-time `executeVM`
+  frame still holds `id=0x9a0c0031` and the fault is inside the append
+  helper called from the reader builder, so the builtin does not return
+  before the crash.
+- Expected discriminator: `trace: b31-in` / `trace: b31-reader` dumps of
+  the 32-word operand block, the 32-bit output slot, the instruction bytes
+  at `image+0x40a73`, the descriptor table at `image+0xb0`, the five
+  globals, and the reader slots. A pointer-like value with a companion
+  size-like value at the reader boundary proves the builtin produced the
+  view; an unchanged block with `out32=0` and pristine reader slots proves
+  it did not.
+- Status: pre-registered; no run yet.
