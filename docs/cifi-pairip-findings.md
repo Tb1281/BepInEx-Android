@@ -2226,4 +2226,9 @@ Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
 - Expected discriminator: `register: env=... class=... n=1 name=<method>
   sig=<signature> fn=+0x6a968 fn_map=libpairipcore.so+...`. A `[B` signature
   confirms the byte-array native input.
+- Pre-run instrumentation note: the hook sits on `+0x8b1f4`
+  (`str x8, [sp, #0xc0]`), not `+0x8b1f0`, because only there has the `adr`
+  produced the `fnPtr` now in `x8`. The name/signature are read from the
+  caller frame at `[sp+0xb0]`/`[sp+0xb8]`; `x9` is dead and is the
+  tail-branch scratch, so the relocated `str` keeps `x8`.
 - Status: pre-registered; no run yet.

@@ -2680,4 +2680,12 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-register-natives.l
 ```
 
 - Log / artifact: `tmp/cifi-apk/logs/verify/nested-register-natives.log`.
+- Pre-run instrumentation note (before any run): the `fnPtr` store
+  (`str x8, [sp, #0xc0]`) executes after the `adr` at `+0x8b1f0`, so the
+  shim sits on `+0x8b1f4` instead. At that point `x8` already holds
+  `base+0x6a968`, the name/signature pointers are at `[sp+0xb0]`/
+  `[sp+0xb8]`, and `x9` is dead (the next use is none before the `ldr`
+  reloads), so `x9` is the tail-branch scratch and the relocated `str`
+  keeps its `x8` value. This is the same observation, with the site moved
+  to the first instruction where the stored value exists.
 - Status: pre-registered; no run yet.
