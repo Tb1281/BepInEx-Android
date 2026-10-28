@@ -2432,3 +2432,126 @@ adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-start-caller-pc227
 
 - Log / artifact: `tmp/cifi-apk/logs/verify/nested-start-caller-pc22727.log`.
 - Status: pre-registered; ready to apply the filter fix, rebuild, and run.
+
+## Verdict: nested-start-caller-pc22727 (2026-10-28 10:06)
+
+- Run key: `variant=nested-start-caller-pc22727`, code commit `02d91bf`,
+  debug `assembleDebug` APK; installed APK sha256
+  `b65b73adf81da07f50e245293bb2621abc7dcdf582659d1a48dc6ea9a4d998d0`
+  (`versionCode=1`, installed 10:06:20). Game APK untouched
+  (`versionCode=3022`, `versionName=0.7.3.64`,
+  `lastUpdateTime=2026-10-22 16:35:02`).
+- Idempotency check: no prior verdict for `nested-start-caller-pc22727`;
+  the previous `nested-start-caller` run is cited, and its only delta (the
+  stack-scan filter and window) is what this run tested.
+- Hypothesis: at the nested builtin prep pc `0x22727`, the stack above the
+  builtin interpreter entry contains a libpairipcore return address in
+  `[+0x83478, +0x83500)`, proving that the `[state+0x8]` vtable call at
+  `+0x83478` started the nested program.
+- Starting state: branch `test/feat-cifi` at `02d91bf`, tree clean; both
+  packages force-stopped, `pidof` empty, logcat cleared; launch
+  `Status: ok`, `LaunchState: COLD`, one cold launch (pid 14846). Variant
+  line: `variant=nested-start-caller-pc22727`, `preload=true`, `trace=true`,
+  `dumpVmImage=true`, `stackSpoof=true`, `contextSeed=true`, `hiddenApi=true`,
+  `lateHooks=true`, `delayMs=0`; every other experiment switch false.
+- Command: identical to the pre-registered command above (`android install`
+  of the `02d91bf` APK, force-stop both packages, `adb logcat -c`,
+  `am start -W BootstrapActivity` with `pairip_preload`, `pairip_trace`,
+  `pairip_dump_vm`, `variant=nested-start-caller-pc22727`, sleep 25, logcat
+  capture).
+- Observed: the corrected filter fired at 10:06:43.074:
+
+```text
+trace: nested-stack id=0x40b0000c pc=0x22727 lr=+0x6adc4 x29=0x5ddd74f5 sp=0x7ff9372b30
+```
+
+  and **zero** `trace: nested-stack[...]` hit lines followed: no
+  libpairipcore-range word in the 256-word (`0x800`) window. The handler,
+  pre-xor and post-xor lines are byte-identical to `nested-start-caller`:
+  `fetch=0x1f811 op=0x7e x30=+0x6aa68`, `w8=0xa1c832fc w13=0x4515d1f9
+  target=0x4d94`, `w21_before=0xa0d82eed`, `rem=0x4d94`.
+- Handler target: CONFIRMED again (`0x4d94`; the 14:55 replay match is
+  unchanged). The crash-time VM dump contains `0x4d94` at `vm[0x468]`.
+- Image: `nested-start-caller-pc22727-image.bin`, 282,603 bytes, sha256
+  `b3fadc956f6943fef286e79a4137fe66bde666125cbc360c2aa57cdbbd54be65`.
+  It differs from the 10:02 image in 46 bytes; the five globals are the
+  08:27 final values (`0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`,
+  `0xbfe458cb`, `0x4d062af3`) and the reader slots `0x3f874`/`0x1ba5c` and
+  the `0x1f811` fetch word remain pristine.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` at
+  10:06:43.102; the process exited by signal 11 at 10:06:43.128.
+- Log: `tmp/cifi-apk/logs/verify/nested-start-caller-pc22727.log`, 7,375
+  lines, sha256
+  `76b64d05d3e73902b1960904e9d1d7161c0e384404ee19ce24aa929641d8c47b`.
+- Verdict: **INCONCLUSIVE** for the vtable-caller hypothesis. The filter
+  fired, so the scan executed, but it found no module-range word. The scan
+  origin is executeVM's frame base: the logged `sp` is `state - 0xa0`, and
+  the dispatcher call at `+0x6aa60` is `add x0, sp, #0xa0; bl 0x6e918`. That
+  frame's prologue (`+0x6a968`) saves its caller's LR at `sp+0x1c8`, so a
+  libpairipcore caller would place a module-range word in the scanned
+  window. The zero-hit result therefore discriminates two branches: either
+  the nested VM was entered from outside libpairipcore (JNI/libart path), or
+  the scan/read is still defective. The caller chain remains unobserved.
+- Next: `nested-start-caller-vtable` — identify `[state+0x8]`, its vtable and
+  the `[vt+0x720]` target at handler entry, and dump the executeVM frame
+  slots at the builtin entry.
+- Findings updated: yes, in the same commit as this entry.
+
+## Planned run: nested-start-caller-vtable
+
+- Run key: `variant=nested-start-caller-vtable`, debug `assembleDebug` APK,
+  frozen diagnostic baseline plus the three existing handler hooks and the
+  observation-only caller identification described below.
+- Idempotency check: searched both docs for `nested-start-caller-vtable`;
+  absent. `nested-start-caller-pc22727` now has a verdict and is not
+  repeated; `nested-start-caller` is cited. The handler target is not
+  retested.
+- Hypothesis: the nested program is started through the `[state+0x8]`
+  object's vtable `+0x720` at `+0x83478`, and that target is either
+  `executeVM_inner` (`+0x6a968`) or an external JNI/libart entry. The
+  zero-hit stack scan is explained by which of those two it is.
+- Falsification: if `[vt+0x720]` is not a callable mapping, or the
+  executeVM saved-LR slot at `sp+0x1c8` is not `+0x83488` while the target
+  is `+0x6a968`, the handler-tail vtable call is not the nested entry and
+  the observed mapping of the target becomes the new caller lead.
+- One change from the previous run: observation only. (1) At the existing
+  `+0x6ff60` handler-entry hook, log `obj=[state+0x8]`, `vt=[obj]`,
+  `fn=[vt+0x720]`, the in-module offset of each when present, and
+  `dladdr(fn)`'s module/offset (falling back to `/proc/self/maps` when
+  `dladdr` fails). (2) At the builtin entry for pc `0x22727`, log the raw
+  executeVM frame slots `sp+0x1b8`, `sp+0x1c0`, `sp+0x1c8` and a 64-word
+  dump of `[sp, sp+0x200)`, then widen the module-range scan from 256 to
+  2,048 words (`0x4000`) and print the hit count plus the first 32 hits.
+  The three handler hooks, the baseline extras, the install path and the
+  launch command are unchanged.
+- Expected discriminator: `nested: handler ... obj=... vt=... fn=...
+  fn_mod=...` plus `trace: nested-stack-saved` lines. If `fn` resolves to a
+  non-libpairipcore mapping (libart/libc/anon) and `saved[0x1c8]` is not
+  `+0x83488`, the vtable call crosses into the JNI/native-callback path and
+  the zero-hit scan is explained; if `fn=+0x6a968` and
+  `saved[0x1c8]=+0x83488`, the vtable call directly starts the nested VM and
+  the earlier scan was defective. The handler/pre-xor/post-xor values and
+  the crash signature must remain unchanged.
+- Starting state: branch `test/feat-cifi` at the docs commit for this
+  pre-registration, tree clean; the installed APK remains the `02d91bf`
+  build `b65b73ad...` until the observation code is rebuilt; game APK
+  untouched.
+- Command:
+
+```bash
+android install launcher/app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.bepinex.android.debug
+adb shell am force-stop com.OctocubeGamesCompany.CIFI
+adb logcat -c
+adb shell am start -W \
+  -n com.bepinex.android.debug/com.bepinex.android.BootstrapActivity \
+  --es target_package com.OctocubeGamesCompany.CIFI \
+  --ez pairip_preload true --ez pairip_trace true --ez pairip_dump_vm true \
+  --es pairip_variant nested-start-caller-vtable
+sleep 25
+adb logcat -d -v threadtime > tmp/cifi-apk/logs/verify/nested-start-caller-vtable.log
+```
+
+- Log / artifact: `tmp/cifi-apk/logs/verify/nested-start-caller-vtable.log`;
+  crash image expected under `tmp/cifi-apk/images/`.
+- Status: pre-registered; no run yet.

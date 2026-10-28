@@ -2086,3 +2086,77 @@ Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
   is 256 words. The three handler hooks, the baseline extras, and the launch
   command are unchanged.
 - Status: pre-registered; no run yet.
+
+## nested-start-caller-pc22727 result (2026-10-28 10:06)
+
+The corrected filter fired, but the stack scan found no libpairipcore word;
+the vtable-caller hypothesis is **INCONCLUSIVE** and the zero-hit result is
+the new discriminator.
+
+- Run log: `tmp/cifi-apk/logs/verify/nested-start-caller-pc22727.log`,
+  7,375 lines, sha256
+  `76b64d05d3e73902b1960904e9d1d7161c0e384404ee19ce24aa929641d8c47b`.
+  One cold launch (pid 14846); installed APK sha256
+  `b65b73adf81da07f50e245293bb2621abc7dcdf582659d1a48dc6ea9a4d998d0`;
+  game APK untouched.
+- Handler lines are byte-identical to `nested-start-caller`:
+  `state=0x7ff9372bd0 ctx=0x7ff9372b88 fetch=0x1f811 op=0x7e
+  x30=+0x6aa68`; `w8=0xa1c832fc w13=0x4515d1f9 target=0x4d94`;
+  `w8=0xe4dde305 quotient=0x3513 rem=0x4d94 w21_before=0xa0d82eed`. The
+  handler target `0x4d94` is CONFIRMED again; the crash-time VM dump has it
+  at `vm[0x468]`.
+- Nested program: unchanged; `builtin[11259] id=0x40b0000c pc=0x22727`,
+  then 25 more ending at `builtin[11284] id=0x9a0c0031 pc=0x40a73`.
+- Stack scan: the filter fired exactly once:
+  `trace: nested-stack id=0x40b0000c pc=0x22727 lr=+0x6adc4
+  x29=0x5ddd74f5 sp=0x7ff9372b30`. No `trace: nested-stack[...]` hit line
+  followed: zero module-range words in the 256-word (`0x800`) window.
+- Why zero hits is informative, not just a failed observation: the logged
+  `sp` is executeVM's frame base. The dispatcher call at `+0x6aa60` is
+  `add x0, sp, #0xa0; bl 0x6e918`, and the logged handler state is
+  `sp + 0xa0`. The `+0x6a968` prologue saves its caller's LR at `sp+0x1c8`
+  (`stp x29, x30, [sp, #-0x60]!` then `sub sp, sp, #0x1c0`). A
+  libpairipcore caller, including the `+0x83478` vtable call returning to
+  `+0x83488`, would place a module-range word in the scanned window. Either
+  the nested VM is entered from outside libpairipcore (JNI/libart path), or
+  the scan/read is defective. The immediate LR `+0x6adc4` is only in x30,
+  not on the stack, so it does not satisfy the scan.
+- Image: `nested-start-caller-pc22727-image.bin`, 282,603 bytes, sha256
+  `b3fadc956f6943fef286e79a4137fe66bde666125cbc360c2aa57cdbbd54be65`;
+  46 bytes differ from the 10:02 image. The five globals are the 08:27
+  final values `0x534a6211`, `0xe29e9c3b`, `0x8a1aeb2d`, `0xbfe458cb`,
+  `0x4d062af3`; the reader slots `0x3f874`/`0x1ba5c` and the `0x1f811`
+  fetch word are pristine.
+- Crash: unchanged signal 11 in `__memmove_aarch64_nt+140` at
+  10:06:43.102; exit by signal 11 at 10:06:43.128.
+- Verdict: handler target CONFIRMED; caller chain INCONCLUSIVE.
+- Next: identify the object and vtable target at the handler entry, and dump
+  the executeVM saved-LR slot at the builtin entry.
+
+## Pre-registered experiment (2026-10-28, nested-start-caller-vtable)
+
+Run log and key: [`cifi-pairip-walkthrough.md`](cifi-pairip-walkthrough.md).
+
+- Hypothesis: the nested program is started through the `[state+0x8]`
+  object's vtable `+0x720` at `+0x83478`. That target is either
+  `executeVM_inner` (`+0x6a968`) or an external JNI/libart entry; the
+  zero-hit stack scan is explained by which one it is.
+- Falsification: if the target is not callable, or the `sp+0x1c8` saved-LR
+  slot is not `+0x83488` while the target is `+0x6a968`, the handler-tail
+  vtable call is not the nested entry; the target's mapping becomes the new
+  caller lead.
+- One change from the previous run: observation only at the two existing
+  hook sites. At `+0x6ff60`, log `obj=[state+0x8]`, `vt=[obj]`,
+  `fn=[vt+0x720]`, their in-module offsets, and `dladdr(fn)`'s module and
+  offset (with a `/proc/self/maps` fallback). At the builtin entry for pc
+  `0x22727`, log the raw slots `sp+0x1b8`, `sp+0x1c0`, `sp+0x1c8`, dump 64
+  words from `[sp, sp+0x200)`, and widen the module-range scan to 2,048
+  words (`0x4000`), printing the count and first 32 hits. The three handler
+  hooks, the baseline extras, and the launch command are unchanged.
+- Expected discriminator: `nested: handler ... obj=... vt=... fn=...
+  fn_mod=...` and `trace: nested-stack-saved ...`. A non-libpairipcore `fn`
+  with `saved[0x1c8]` outside the module proves the JNI/callback branch; a
+  `fn=+0x6a968` with `saved[0x1c8]=+0x83488` proves the direct vtable
+  branch and marks the earlier zero-hit scan as defective. Handler values
+  and crash signature must stay unchanged.
+- Status: pre-registered; no run yet.
