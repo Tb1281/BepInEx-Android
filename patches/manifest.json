@@ -249,5 +249,20 @@
     ],
     "adr": [],
     "compile_unit": true
+  },
+  {
+    "id": "0013-core-delete-the-orphaned-AppleSiliconDetourFix",
+    "number": 13,
+    "subject": "core: delete the orphaned AppleSiliconDetourFix",
+    "purpose": "core: delete the orphaned AppleSiliconDetourFix",
+    "description": "",
+    "files": [
+      "BepInEx.Preloader.Core/RuntimeFixes/AppleSiliconDetourFix.cs"
+    ],
+    "depends_on": [
+      "0006-core-delete-the-Mono-runtime"
+    ],
+    "adr": [],
+    "compile_unit": true
   }
 ]
