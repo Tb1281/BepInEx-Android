@@ -40,7 +40,7 @@ with `scripts/apply_repo_settings.sh`; the script is the source of truth.
    approval count is zero, so the approval capability does not satisfy a review
    gate. Re-run it after changing a protected branch or environment policy.
 
-The current key was generated on 2026-10-20. Its SHA-256 certificate fingerprint is `b2fe00a6a80d6e69beee4eea8e8063dc74cca6759c0fdecc2c322bf56066db73`. Treat the keystore as unrecoverable if the offline backup is lost.
+The current key was generated on 2026-11-18. Its SHA-256 certificate fingerprint is `cf71ba6d69b747dc5f50606552b595a3245158fcb37f19dcb709d1fc8bcef829`. Treat the keystore as unrecoverable if the offline backup is lost.
 
 ## Repository settings
 
