@@ -9,7 +9,8 @@
  * Architecture:
  *   - NOT linked to libfusion.so (resolved dynamically via dlopen/dlsym)
  *   - JNI_OnLoad: registers custom load/unload on NativeLoader
- *   - load(): resolves fusion symbols 鈫?stages config 鈫?loads unity+il2cpp 鈫? *            bootstraps fusion (which hooks il2cpp_init)
+ *   - load(): resolves fusion symbols -> stages config -> loads unity+il2cpp
+ *            -> bootstraps fusion (which hooks il2cpp_init)
  *
  * This is the entry point that bridges Unity's native loading to BepInEx.
  */
@@ -34,8 +35,6 @@ using JNI_Unload_t = void (*)(JavaVM *vm, void *reserved);
 using FusionStageFromConfigPath_t = bool (*)(const char *configPath);
 using FusionBootstrapFromLibMain_t = bool (*)(JNIEnv *env);
 
-static FILE *logFile = nullptr;
-static std::string log_path;
 static std::string override_unity_path;
 static std::string override_il2cpp_path;
 
@@ -209,7 +208,11 @@ static jobject unwrap_to_root_context(JNIEnv *env, jobject context)
             env->ExceptionClear();
             break;
         }
-        if (!base || env->IsSameObject(base, current)) break;
+        if (!base || env->IsSameObject(base, current)) {
+            if (base) env->DeleteLocalRef(base);
+            break;
+        }
+        if (current != context) env->DeleteLocalRef(current);
         current = base;
     }
     return current;
@@ -231,32 +234,63 @@ static std::string resolve_staged_config_path(JNIEnv *env)
         "currentApplication", "()Landroid/app/Application;");
     if (!currentApp) {
         LOGE("currentApplication method not found");
+        env->DeleteLocalRef(activityThreadClass);
         return {};
     }
 
     jobject app = env->CallStaticObjectMethod(activityThreadClass, currentApp);
     if (!app) {
         LOGE("currentApplication returned null");
+        env->DeleteLocalRef(activityThreadClass);
         return {};
     }
 
     jobject root = unwrap_to_root_context(env, app);
 
     jclass contextClass = env->FindClass("android/content/Context");
+    if (!contextClass) {
+        LOGE("Context class not found");
+        env->DeleteLocalRef(activityThreadClass);
+        return {};
+    }
     jmethodID getFilesDir = env->GetMethodID(contextClass, "getFilesDir",
         "()Ljava/io/File;");
+    if (!getFilesDir) {
+        LOGE("getFilesDir method not found");
+        env->DeleteLocalRef(contextClass);
+        env->DeleteLocalRef(activityThreadClass);
+        return {};
+    }
     jobject filesDirObj = env->CallObjectMethod(root, getFilesDir);
     if (!filesDirObj) {
         LOGE("getFilesDir returned null");
+        env->DeleteLocalRef(contextClass);
+        env->DeleteLocalRef(activityThreadClass);
         return {};
     }
 
     jclass fileClass = env->FindClass("java/io/File");
+    if (!fileClass) {
+        LOGE("File class not found");
+        env->DeleteLocalRef(contextClass);
+        env->DeleteLocalRef(activityThreadClass);
+        return {};
+    }
     jmethodID getAbsolutePath = env->GetMethodID(fileClass, "getAbsolutePath",
         "()Ljava/lang/String;");
+    if (!getAbsolutePath) {
+        LOGE("getAbsolutePath method not found");
+        env->DeleteLocalRef(fileClass);
+        env->DeleteLocalRef(contextClass);
+        env->DeleteLocalRef(activityThreadClass);
+        return {};
+    }
     jstring pathStr = (jstring)env->CallObjectMethod(filesDirObj, getAbsolutePath);
 
     std::string filesDir = jstring_to_string(env, pathStr);
+    env->DeleteLocalRef(fileClass);
+    env->DeleteLocalRef(contextClass);
+    env->DeleteLocalRef(activityThreadClass);
     return filesDir + "/bootstrap/active.cfg";
 }
 
@@ -339,16 +373,21 @@ static void load_original_game_main(JNIEnv *env, const std::string &configPath)
 
 jboolean internal_load(JNIEnv *env, const char *libraryPath, void **libHandle)
 {
-    nlog(libraryPath ? libraryPath : "internal_load: NULL path");
     if (!libraryPath) {
+        nlog("internal_load: NULL path");
         return JNI_FALSE;
     }
+    nlog(libraryPath);
 
+    dlerror();
     void *handle = dlopen(libraryPath, RTLD_LAZY | RTLD_LOCAL);
-    nlog(handle ? "internal_load: dlopen OK" : "internal_load: dlopen FAILED");
     if (!handle) {
+        const char *err = dlerror();
+        LOGE("internal_load: dlopen failed for %s: %s",
+             libraryPath, err ? err : "(no dlerror)");
         return JNI_FALSE;
     }
+    nlog("internal_load: dlopen OK");
 
     /* Call JNI_OnLoad if present (libil2cpp.so may not have it) */
     nlog("internal_load: checking JNI_OnLoad");
@@ -420,16 +459,6 @@ const char *libmain_get_override_il2cpp_path()
     return override_il2cpp_path.c_str();
 }
 
-void libmain_set_log_path(const char *path)
-{
-    log_path = path;
-    if (logFile) { fclose(logFile); logFile = nullptr; }
-    if (!log_path.empty()) {
-        logFile = fopen(log_path.c_str(), "w");
-        if (logFile) LOGI("Logging to %s", log_path.c_str());
-    }
-}
-
 // NativeLoader.load / unload replacement
 
 JNIEXPORT jboolean JNICALL
@@ -437,7 +466,7 @@ load(JNIEnv *env, jclass clazz, jstring path)
 {
     nlog("load() called");
     (void)clazz;
-    (void)path;
+    (void)path;  // Unity's path is ignored: fusion overrides decide what is loaded.
 
     /* 1. Resolve libfusion symbols */
     nlog("load: resolving fusion symbols");
@@ -467,7 +496,7 @@ load(JNIEnv *env, jclass clazz, jstring path)
     nlog("load: fusion staged OK");
 
     /* 4. Load Unity first, THEN IL2CPP.
-     * Loading patched libil2cpp with RTLD_NOW before libunity runs IL2CPP
+     * Loading + running the patched libil2cpp before libunity executes IL2CPP
      * constructors too early and crashes some Unity Android forks (PVZ). */
     nlog("load: loading libunity");
     if (!internal_load(env, override_unity_path.c_str(), &unityLibHandle)) {
@@ -487,6 +516,9 @@ load(JNIEnv *env, jclass clazz, jstring path)
     /* 5. Bootstrap fusion */
     nlog("load: calling fusion_bootstrap_from_libmain");
     if (!bootstrap(env)) {
+        internal_unload(env, &il2cppLibHandle);
+        internal_unload(env, &unityLibHandle);
+        /* originalMainHandle stays resident by design. */
         nlog("load: fusion_bootstrap FAILED");
         return JNI_FALSE;
     }
@@ -498,14 +530,14 @@ load(JNIEnv *env, jclass clazz, jstring path)
 JNIEXPORT jboolean JNICALL
 unload(JNIEnv *env, jclass activityObject)
 {
+    (void)activityObject;
     if (unityLibHandle) internal_unload(env, &unityLibHandle);
     if (il2cppLibHandle) internal_unload(env, &il2cppLibHandle);
-    if (logFile) { fclose(logFile); logFile = nullptr; }
     LOGI("unload complete");
     return JNI_TRUE;
 }
 
-// Constructor runs before JNI_OnLoad —verifies library code executes at all
+// Constructor runs before JNI_OnLoad - verifies library code executes at all
 __attribute__((constructor)) static void libmain_ctor() {
     nlog("libmain constructor");
 }

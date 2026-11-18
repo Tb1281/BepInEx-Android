@@ -34,6 +34,7 @@
 
 #include "dobby.h"
 #include "lsplant.hpp"
+#include "page_protect.h"
 #include "xz.h"
 
 #define LOG_TAG "HookEngine"
@@ -228,20 +229,24 @@ void *ResolveArtSymbol(std::string_view name, bool prefix) {
 
 // ---------------------------------------------------------------------------
 // Inline hooker backed by Dobby, following LSPlant's own test app: make the
-// target page writable before Dobby patches it.
+// target page writable before Dobby patches it. page_protect.h owns the
+// snapshot/mprotect/restore contract: only Dobby's inline patch window is
+// touched and hooking never leaves executable memory writable (W^X).
 // ---------------------------------------------------------------------------
 
 void *InlineHooker(void *target, void *hooker) {
-    static const long kPageSize = sysconf(_SC_PAGESIZE);
-    auto start = reinterpret_cast<uintptr_t>(target) & ~static_cast<uintptr_t>(kPageSize - 1);
-    mprotect(reinterpret_cast<void *>(start), static_cast<size_t>(kPageSize) * 2,
-             PROT_READ | PROT_WRITE | PROT_EXEC);
     void *origin = nullptr;
-    if (DobbyHook(target, hooker, &origin) == 0) return origin;
-    return nullptr;
+    const bool hooked = page_protect::WithWritablePages(
+        reinterpret_cast<uintptr_t>(target),
+        [&] { return DobbyHook(target, hooker, &origin) == 0; });
+    return hooked ? origin : nullptr;
 }
 
-bool InlineUnhooker(void *func) { return DobbyDestroy(func) == 0; }
+bool InlineUnhooker(void *func) {
+    return page_protect::WithWritablePages(
+        reinterpret_cast<uintptr_t>(func),
+        [&] { return DobbyDestroy(func) == 0; });
+}
 
 bool g_lsplant_ok = false;
 

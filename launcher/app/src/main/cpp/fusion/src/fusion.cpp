@@ -1,8 +1,8 @@
 /*
- * BepInEx.Android —libfusion.so core
+ * BepInEx.Android - libfusion.so core
  *
  * Coordinates the full injection pipeline:
- *   Config parse 鈫?allocate injected code cave 鈫?il2cpp_init hook 鈫?CoreCLR 鈫?BepInEx
+ *   Config parse -> allocate injected code cave -> il2cpp_init hook -> CoreCLR -> BepInEx
  */
 
 #include "fusion.h"
@@ -65,14 +65,13 @@ static std::string read_file(const char *path)
     FILE *f = fopen(path, "rb");
     if (!f) return result;
 
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size > 0) {
-        result.resize(size);
-        fread(&result[0], 1, size, f);
-    }
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return {}; }
+    const long size = ftell(f);
+    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return {}; }
+    result.resize(static_cast<size_t>(size));
+    const size_t read = result.empty() ? 0 : fread(result.data(), 1, result.size(), f);
     fclose(f);
+    if (read != result.size()) return {};
     return result;
 }
 
@@ -87,6 +86,7 @@ static std::string read_file(const char *path)
  *   unityDataDirectory=/storage/...
  *   unityVersion=2022.3.62f3
  *   useOriginalLibUnity=false
+ *   gameUnityLibraryPath=<apk>!/lib/arm64-v8a/libunity.so
  */
 static bool parse_fusion_config(const char *text, FusionConfig *out)
 {
@@ -118,6 +118,7 @@ static bool parse_fusion_config(const char *text, FusionConfig *out)
         else if (key == "unityDataDirectory") out->unityDataDir = value;
         else if (key == "unityVersion") out->unityVersion = value;
         else if (key == "useOriginalLibUnity") out->useOriginalLibUnity = (value == "true");
+        else if (key == "gameUnityLibraryPath") out->gameUnityLibraryPath = value;
         else if (key == "externalFilesDirectory") out->externalFilesDir = value;
     }
 
@@ -137,6 +138,7 @@ static bool stage_fusion_config(const FusionConfig &config)
     LOGI("  unityDataDir: %s", config.unityDataDir.c_str());
     LOGI("  unityVersion: %s", config.unityVersion.c_str());
     LOGI("  useOrigUnity: %s", config.useOriginalLibUnity ? "true" : "false");
+    LOGI("  gameUnity:    %s", config.gameUnityLibraryPath.c_str());
     LOGI("  externalDir:  %s", config.externalFilesDir.c_str());
 
     if (!config.externalFilesDir.empty()) {
@@ -147,37 +149,48 @@ static bool stage_fusion_config(const FusionConfig &config)
     std::string unityPath;
     std::string il2cppPath;
     std::string gameIl2cppPath = config.gameLibraryDir + "/libil2cpp.so";
+    std::string gameUnityPath = config.gameUnityLibraryPath.empty()
+        ? config.gameLibraryDir + "/libunity.so"
+        : config.gameUnityLibraryPath;
 
     if (config.useOriginalLibUnity) {
-        unityPath = config.gameLibraryDir + "/libunity.so";
+        /* For split installs this may be an uncompressed APK entry; bionic's
+         * linker maps such entries directly, matching a normal game launch. It
+         * only works while the entry stays uncompressed (extractNativeLibs=false). */
+        unityPath = gameUnityPath;
     } else {
         unityPath = config.appLibraryDir + "/libunity.so";
-        /* appLibraryDir/libunity.so may not exist for most games; fall back to game's */
+        /* appLibraryDir/libunity.so may not exist for most games; fall back to
+         * the resolved game path (staged copy or APK entry). */
         if (std::ifstream(unityPath).fail()) {
             LOGW("app copy of libunity not found at %s; using game path instead", unityPath.c_str());
-            unityPath = config.gameLibraryDir + "/libunity.so";
+            unityPath = gameUnityPath;
         }
     }
 
     /*
      * Patch libil2cpp.so with an extended memory segment
-     * (1 MB code cave) 鈫?copy to appDataDir 鈫?load the patched copy.
+     * (1 MB code cave) -> copy to appDataDir -> load the patched copy.
      *
      * The code cave provides executable memory within the library's own
      * segment, bypassing Android 14+ W^X restrictions. Dobby trampolines
      * are allocated from this cave instead of mmap (which would be W^X).
      *
      * The patched copy path matches the DataLibrary redirect in
-     * NativeLibraryManager 鈫?findLibrary("il2cpp") returns this path.
+     * NativeLibraryManager: findLibrary("il2cpp") resolves from
+     * appDataDirectory, so appDataDir/libil2cpp.so is the returned path.
      */
     std::string patchedIl2CppPath = config.appDataDir + "/libil2cpp.so";
     LOGI("Patching il2cpp: %s -> %s (1MB pool)", gameIl2cppPath.c_str(), patchedIl2CppPath.c_str());
 
-    void *poolHandle = allocate_setup_injected_noload(
+    /* allocate_setup_injected_noload() writes the patched ELF and returns the
+     * code-cave base; allocate_bind_loaded() re-binds it after the dlopen. Only
+     * success/failure matters here. */
+    void *codeCave = allocate_setup_injected_noload(
         gameIl2cppPath.c_str(),
         patchedIl2CppPath.c_str(),
         1024 * 1024);  // 1 MB code cave, load AFTER libunity
-    if (!poolHandle) {
+    if (!codeCave) {
         LOGE("allocate_setup_injected_noload failed — falling back to original il2cpp path");
         il2cppPath = gameIl2cppPath;
     } else {
@@ -210,7 +223,7 @@ static bool stage_fusion_config(const FusionConfig &config)
  *   1. Destroy the hook (one-shot —only fire once)
  *   2. Call the real il2cpp_init (chains through Dobby trampoline)
  *   3. Set environment variables for BepInEx
- *   4. Start CoreCLR 鈫?BepInEx
+ *   4. Start CoreCLR -> BepInEx
  *
  * Signature of the hook target: int il2cpp_init(char *domain_name)
  */
@@ -270,20 +283,6 @@ bool fusion_stage_from_config_path(const char *configPath)
     return stage_fusion_config(config);
 }
 
-/*
- * Bootstrap the fusion chain.
- *
- * Called from libmain's load() AFTER libunity.so and libil2cpp.so
- * have been dlopen'd. Steps:
- *
- *   1. Initialize IL2CPP (dlopen with RTLD_GLOBAL 鈫?symbols visible for P/Invoke)
- *   2. Initialize SafeHook with IL2CPP handle/base
- *   3. Install one-shot DobbyHook on il2cpp_init
- *
- * NOTE: Code cave injection (allocate_setup_injected) is not yet
- * implemented. For now we rely on Dobby's own trampoline allocation.
- * The il2cpp_init function is large enough for Dobby to hook directly.
- */
 static jobject g_appClassLoader = nullptr;
 static jmethodID g_loadClassMethod = nullptr;
 
@@ -302,6 +301,64 @@ jmethodID fusion_get_load_class_mid(void)
     return g_loadClassMethod;
 }
 
+// Resolves app.getClassLoader() (the launcher's loader, which can see
+// net.dot.android.crypto.*) or null.
+static jobject AppClassLoader(JNIEnv *env)
+{
+    jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
+    if (!activityThreadClass) return nullptr;
+
+    jmethodID currentAppMethod = env->GetStaticMethodID(
+        activityThreadClass, "currentApplication", "()Landroid/app/Application;");
+    if (!currentAppMethod) return nullptr;
+
+    jobject app = env->CallStaticObjectMethod(activityThreadClass, currentAppMethod);
+    if (!app) return nullptr;
+
+    jclass contextClass = env->FindClass("android/content/Context");
+    if (!contextClass) return nullptr;
+
+    jmethodID getClassLoaderMethod = env->GetMethodID(
+        contextClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    if (!getClassLoaderMethod) return nullptr;
+
+    jobject classLoader = env->CallObjectMethod(app, getClassLoaderMethod);
+    if (!classLoader) return nullptr;
+    return env->NewGlobalRef(classLoader);
+}
+
+// Fallback: BootstrapActivity's own loader, used only when the app loader was
+// not available yet.
+static jobject BootstrapClassLoader(JNIEnv *env)
+{
+    jclass bootClass = env->FindClass("com/bepinex/android/BootstrapActivity");
+    if (!bootClass) return nullptr;
+
+    jclass classClass = env->FindClass("java/lang/Class");
+    if (!classClass) return nullptr;
+
+    jmethodID getClMethod = env->GetMethodID(
+        classClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    if (!getClMethod) return nullptr;
+
+    jobject classLoader = env->CallObjectMethod(bootClass, getClMethod);
+    if (!classLoader) return nullptr;
+    return env->NewGlobalRef(classLoader);
+}
+
+/*
+ * Bootstrap the fusion chain. Called from libmain's load() after libunity.so and
+ * libil2cpp.so are dlopen'd and before Unity calls il2cpp_init.
+ *
+ *   0. Capture the JavaVM and the app ClassLoader (CoreCLR starts later on a
+ *      thread with no JNIEnv).
+ *   1. Hook libunity's scripting_method_invoke (best effort: the game runs even
+ *      if this fails).
+ *   2. dlopen libil2cpp.so with RTLD_GLOBAL and bind the staged code cave.
+ *   3. Point SafeHook at allocate_injected, so Dobby trampolines come from the
+ *      1 MB cave stage_fusion_config() added to the patched copy.
+ *   4. Install the one-shot DobbyHook on il2cpp_init.
+ */
 bool fusion_bootstrap_from_libmain(JNIEnv *env)
 {
     if (!g_staged) {
@@ -327,43 +384,20 @@ bool fusion_bootstrap_from_libmain(JNIEnv *env)
     /* Capture application ClassLoader so native threads (like UnityMain) can
      * resolve APK classes (such as net.dot.android.crypto.*) during PAL init. */
     if (env) {
-        jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
-        if (activityThreadClass) {
-            jmethodID currentAppMethod = env->GetStaticMethodID(
-                activityThreadClass, "currentApplication", "()Landroid/app/Application;");
-            if (currentAppMethod) {
-                jobject app = env->CallStaticObjectMethod(activityThreadClass, currentAppMethod);
-                if (app) {
-                    jclass contextClass = env->FindClass("android/content/Context");
-                    jmethodID getClassLoaderMethod = env->GetMethodID(
-                        contextClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
-                    jobject classLoader = env->CallObjectMethod(app, getClassLoaderMethod);
-                    if (classLoader) {
-                        g_appClassLoader = env->NewGlobalRef(classLoader);
-                    }
-                }
-            }
-        }
+        g_appClassLoader = AppClassLoader(env);
         if (env->ExceptionCheck()) env->ExceptionClear();
 
         if (!g_appClassLoader) {
-            jclass bootClass = env->FindClass("com/bepinex/android/BootstrapActivity");
-            if (bootClass) {
-                jclass classClass = env->FindClass("java/lang/Class");
-                jmethodID getClMethod = env->GetMethodID(
-                    classClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
-                jobject classLoader = env->CallObjectMethod(bootClass, getClMethod);
-                if (classLoader) {
-                    g_appClassLoader = env->NewGlobalRef(classLoader);
-                }
-            }
+            g_appClassLoader = BootstrapClassLoader(env);
             if (env->ExceptionCheck()) env->ExceptionClear();
         }
 
         if (g_appClassLoader) {
             jclass clClass = env->FindClass("java/lang/ClassLoader");
-            g_loadClassMethod = env->GetMethodID(
-                clClass, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+            if (clClass) {
+                g_loadClassMethod = env->GetMethodID(
+                    clClass, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+            }
             LOGI("captured app ClassLoader %p (loadClass mid %p)",
                  g_appClassLoader, g_loadClassMethod);
         } else {

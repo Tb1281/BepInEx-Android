@@ -34,3 +34,6 @@ screenshots/
 /AGENTS.md
 /docs/agents/
 /skills-lock.json
+
+# Local reverse-engineering workspace (APKs, decompiled sources, run logs)
+/tmp/

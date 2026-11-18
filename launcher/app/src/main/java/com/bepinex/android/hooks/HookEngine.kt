@@ -37,7 +37,13 @@ object HookEngine {
      */
     fun hook(member: Member, callback: MethodHook): Boolean {
         hookers[member]?.let { return true }
-        (member as? AccessibleObject)?.isAccessible = true
+        try {
+            (member as? AccessibleObject)?.isAccessible = true
+        } catch (_: RuntimeException) {
+            // A restrictive SecurityManager or a framework member may refuse
+            // the accessibility change; LSPlant hooks the underlying jmethodID
+            // regardless.
+        }
         val hooker = Hooker(member, callback)
         if (hookers.putIfAbsent(member, hooker) != null) return true
         val backup = nativeHook(member, hooker, callbackMethod)

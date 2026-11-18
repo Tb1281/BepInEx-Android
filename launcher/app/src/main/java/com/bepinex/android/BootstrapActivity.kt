@@ -379,11 +379,16 @@ class BootstrapActivity : Activity() {
         gameContext: Context,
         useOriginalLibUnity: Boolean
     ): FusionConfig {
-        val gameLibDir = gameContext.applicationInfo.nativeLibraryDir
         val appLibDir = applicationInfo.nativeLibraryDir
 
         // Per-game internal data dir
         val appDataDir = BepInExPaths.getAppDataDir(targetPackage)
+
+        // Split installs can leave nativeLibraryDir empty and keep the game's
+        // libraries inside split_config.<abi>.apk; stage them so Fusion can
+        // load libunity/libil2cpp by absolute path.
+        val gameLibs = GameNativeLibraries.ensureAvailable(gameContext, appDataDir)
+        val gameLibDir = gameLibs.directory
 
         // Per-game storage root (FusionCore pattern)
         val dataOnSdCard = BepInExPaths.getGameRootDir(targetPackage)
@@ -418,12 +423,7 @@ class BootstrapActivity : Activity() {
         val copiedData = BepInExPaths.getCopiedDataDir(targetPackage)
         val dataUnity3d = File(copiedData, "data.unity3d")
         val dataStamp = File(copiedData, ".data-copy-version")
-        val currentStamp = try {
-            val pi = packageManager.getPackageInfo(targetPackage, 0)
-            "${androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pi)}:${pi.versionName}"
-        } catch (e: Exception) {
-            "unknown"
-        }
+        val currentStamp = PackageVersion.stamp(packageManager, targetPackage)
         val stamped = try { dataStamp.readText().trim() } catch (e: Exception) { "<none>" }
         if (!copiedData.exists() || copiedData.list()?.isEmpty() != false ||
             !dataUnity3d.exists() || stamped != currentStamp) {
@@ -525,6 +525,7 @@ class BootstrapActivity : Activity() {
             unityDataDirectory = copiedData.absolutePath,
             unityVersion = unityVersion,
             useOriginalLibUnity = useOriginalLibUnity,
+            gameUnityLibraryPath = gameLibs.unityLibraryPath,
             externalFilesDirectory = com.bepinex.android.fusion.PerGameStorage
                 .externalFilesDir(this, targetPackage, null)?.absolutePath
                 ?: (getExternalFilesDir(null)?.absolutePath ?: filesDir.absolutePath)

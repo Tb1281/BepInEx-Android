@@ -1,9 +1,11 @@
 /*
- * BepInEx.Android — libfusion.so public API
+ * BepInEx.Android - libfusion.so public API
  *
  * libfusion.so provides the core injection logic:
- *   1. fusion_stage_from_config_path() — reads config, hooks libunity, sets paths
- *   2. fusion_bootstrap_from_libmain() — installs il2cpp_init hook → CoreCLR → BepInEx
+ *   1. fusion_stage_from_config_path() - parses the config, writes the patched
+ *      libil2cpp.so copy and records the unity/il2cpp path overrides
+ *   2. fusion_bootstrap_from_libmain() - captures JavaVM/ClassLoader, hooks
+ *      libunity, loads IL2CPP, installs the il2cpp_init hook -> CoreCLR -> BepInEx
  *
  * libfusion has NO JNI_OnLoad. All entry points are pure C functions exported
  * with C linkage, resolved at runtime by libmain.so via dlopen/dlsym.
@@ -27,6 +29,7 @@ struct FusionConfig {
     std::string unityDataDir;
     std::string unityVersion;
     bool useOriginalLibUnity = false;
+    std::string gameUnityLibraryPath;  // "<apk>!/lib/<abi>/libunity.so" or empty
     std::string externalFilesDir;
 };
 
@@ -37,8 +40,11 @@ extern "C" {
 #endif
 
 /**
- * Stage 1: Read fusion config from file, set up hooks on libunity.so,
- * configure path overrides (unity, il2cpp, dotnet, BepInEx).
+ * Stage 1: Read the fusion config, stage the patched libil2cpp.so copy and
+ * record the unity/il2cpp path overrides.
+ *
+ * Deliberately does NOT dlopen or hook libunity.so: UnityPlayer is still
+ * constructing, and loading libunity this early crashes some games (PVZ).
  *
  * Called from libmain's load() BEFORE dlopen(libunity.so) and
  * dlopen(libil2cpp.so).
@@ -71,8 +77,8 @@ bool fusion_bootstrap_from_libmain(JNIEnv *env);
  * life of the process — reads it from here.
  */
 JavaVM *fusion_get_java_vm(void);
-jobject fusion_get_app_class_loader(void);
-jmethodID fusion_get_load_class_mid(void);
+jobject fusion_get_app_class_loader(void);  // captured once at bootstrap; valid until process teardown
+jmethodID fusion_get_load_class_mid(void);  // captured once at bootstrap; valid until process teardown
 
 /* ── Internal API (used between fusion .cpp files) ─────────────────── */
 

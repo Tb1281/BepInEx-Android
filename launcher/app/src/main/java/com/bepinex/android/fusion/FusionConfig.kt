@@ -31,6 +31,15 @@ data class FusionConfig(
     /** If true, use the game's original libunity.so instead of downloading a patched one */
     val useOriginalLibUnity: Boolean = false,
 
+    /**
+     * Resolved path to the game's libunity.so.
+     *
+     * This may be an uncompressed APK entry (`<apk>!/lib/<abi>/libunity.so`)
+     * for split installs, or a staged/native library path. Empty keeps the
+     * legacy gameLibraryDirectory-based resolution.
+     */
+    val gameUnityLibraryPath: String = "",
+
     /** App-specific external storage directory (context.getExternalFilesDir(null)) */
     val externalFilesDirectory: String = ""
 ) {
@@ -48,6 +57,7 @@ data class FusionConfig(
         appendLine("unityDataDirectory=${unityDataDirectory}")
         appendLine("unityVersion=${unityVersion}")
         appendLine("useOriginalLibUnity=${useOriginalLibUnity}")
+        appendLine("gameUnityLibraryPath=${gameUnityLibraryPath}")
         appendLine("externalFilesDirectory=${externalFilesDirectory}")
     }
 }
