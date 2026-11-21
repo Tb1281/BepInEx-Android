@@ -1,7 +1,7 @@
 name: sync-upstream
 on:
   schedule:
-    # Run once a day at 04:00 UTC (13:00 KST) to track upstream changes without exhausting minutes.
+    # Run a day at 04:00 UTC (13:00 KST) to track upstream changes without exhausting minutes.
     - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
